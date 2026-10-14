@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -47,5 +47,34 @@ describe('the lint config bans Bun', () => {
     const result = biomeCheck(name, source);
     expect(result.output).toContain(rule);
     expect(result.status).not.toBe(0);
+  });
+});
+
+function typecheck(name: string, source: string) {
+  const config = join(scratch, `tsconfig.${name}.json`);
+  writeFileSync(join(scratch, `${name}.ts`), source);
+  writeFileSync(
+    config,
+    JSON.stringify({ extends: '../../../tsconfig.base.json', files: [`${name}.ts`] }),
+  );
+  return run('tsc', ['-p', config]);
+}
+
+describe('TypeScript allows only Node types and erasable syntax', () => {
+  it('type-checks a module that uses Node globals', () => {
+    const result = typecheck('node-types', 'export const runtime: string = process.version;\n');
+    expect(result.output).not.toContain('error TS');
+    expect(result.status).toBe(0);
+  });
+
+  it('rejects an enum', () => {
+    const result = typecheck('enum', 'export enum Mode {\n  On,\n  Off,\n}\n');
+    expect(result.output).toContain('erasableSyntaxOnly');
+    expect(result.status).not.toBe(0);
+  });
+
+  it('loads only the Node type package', () => {
+    const base = JSON.parse(readFileSync(join(root, 'tsconfig.base.json'), 'utf8'));
+    expect(base.compilerOptions.types).toEqual(['node']);
   });
 });

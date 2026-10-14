@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, globSync, readdirSync, readFileSync } from 'node:fs';
+import { join, matchesGlob, posix } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import config from '../../vitest.config.ts';
 
@@ -21,14 +21,30 @@ describe('workspace packages', () => {
     expect(pkg.scripts?.typecheck).toBe('tsc -p .');
   });
 
-  it('every package with a test directory is a Vitest project root', () => {
-    const roots = (config.test?.projects ?? []).flatMap((entry) =>
-      typeof entry === 'object' && !(entry instanceof Promise) && entry.test?.root
-        ? [entry.test.root]
+  it('every test file under apps/ and packages/ is collected by a Vitest project', () => {
+    const projects = (config.test?.projects ?? []).flatMap((entry) =>
+      typeof entry === 'object' && !(entry instanceof Promise) && entry.test
+        ? [
+            {
+              root: entry.test.root ?? '.',
+              include: entry.test.include ?? [],
+              exclude: entry.test.exclude ?? [],
+            },
+          ]
         : [],
     );
-    const withTests = packages.filter((path) => existsSync(join(root, path, 'test')));
-    expect(withTests).toContain('apps/api');
-    expect(roots).toEqual(expect.arrayContaining(withTests));
+    const testFiles = globSync('{apps,packages}/*/**/*.test.{ts,tsx}', {
+      cwd: root,
+      exclude: (name) => name === 'node_modules',
+    });
+    const collected = (file: string) =>
+      projects.some(
+        (project) =>
+          project.include.some((pattern) => matchesGlob(file, posix.join(project.root, pattern))) &&
+          !project.exclude.some((pattern) => matchesGlob(file, posix.join(project.root, pattern))),
+      );
+    const uncollected = testFiles.filter((file) => !collected(file));
+    expect(testFiles).toContain('apps/api/test/env.test.ts');
+    expect(uncollected).toEqual([]);
   });
 });

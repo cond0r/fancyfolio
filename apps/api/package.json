@@ -6,11 +6,15 @@
     "node": "24.x"
   },
   "scripts": {
+    "dev": "node --watch src/server.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
     "@fancyfolio/contracts": "workspace:*",
     "hono": "^4.13.13",
     "valibot": "^1.5.0"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.4"
   }
 }

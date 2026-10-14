@@ -1,0 +1,14 @@
+{
+  "name": "@fancyfolio/api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "valibot": "^1.5.0"
+  }
+}

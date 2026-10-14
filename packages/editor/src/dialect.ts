@@ -24,7 +24,7 @@ import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Data, type Processor, type Transformer, unified } from 'unified';
 
-export type DialectFallback = 'column' | 'images' | 'depth' | 'directives' | 'cells';
+export type DialectFallback = 'column' | 'images' | 'depth' | 'directives' | 'cells' | 'references';
 
 declare module 'mdast' {
   interface CodeData {
@@ -90,10 +90,10 @@ function remarkGfmParts(this: Processor) {
   ];
 }
 
+const misorderedMessage = 'remarkDialect must be used after remark-parse';
 const guardedParsers = new WeakSet<object>();
 
 export function remarkDialect(this: Processor): Transformer<Root> {
-  const processor = this;
   remarkGfmParts.call(this);
   const data = this.data();
   data.settings = { ...data.settings, bullet: '-', emphasis: '*', rule: '-' };
@@ -109,8 +109,8 @@ export function remarkDialect(this: Processor): Transformer<Root> {
   ];
   remarkGuard.call(this);
   return () => {
-    if (processor.parser !== undefined && !guardedParsers.has(processor.parser)) {
-      throw new Error('remarkDialect must be used after remark-parse');
+    if (this.parser !== undefined && !guardedParsers.has(this.parser)) {
+      throw new Error(misorderedMessage);
     }
   };
 }
@@ -171,7 +171,15 @@ function remarkGuard(this: Processor) {
     { text: { 33: imageBudget } },
   ];
   const parse = this.parser;
-  if (parse === undefined) return;
+  if (parse === undefined) {
+    Object.defineProperty(this, 'parser', {
+      configurable: true,
+      enumerable: true,
+      get: () => misordered,
+      set: () => undefined,
+    });
+    return;
+  }
   const guarded: typeof parse = (document, file) => {
     try {
       const tree = parse(document, file);
@@ -185,6 +193,10 @@ function remarkGuard(this: Processor) {
   };
   guardedParsers.add(guarded);
   this.parser = guarded;
+}
+
+function misordered(): never {
+  throw new Error(misorderedMessage);
 }
 
 function isRoot(node: { type: string }): node is Root {
@@ -237,6 +249,9 @@ function mergeText<T extends Nodes>(node: T): T {
 
 function exceeds(tree: Root, characters: number): DialectFallback | undefined {
   let cells = 0;
+  let expansion = 0;
+  const definitions = new Map<string, number>();
+  const references: string[] = [];
   const stack: [Nodes, number][] = [[tree, 0]];
   for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
     const [node, depth] = next;
@@ -246,12 +261,18 @@ function exceeds(tree: Root, characters: number): DialectFallback | undefined {
       cells += node.children.length * Math.max(node.align?.length ?? 0, widest);
       if (cells > characters) return 'cells';
     }
+    if (node.type === 'definition') {
+      definitions.set(node.identifier, node.url.length + (node.title?.length ?? 0));
+    } else if (node.type === 'linkReference' || node.type === 'imageReference') {
+      references.push(node.identifier);
+    }
     if ('children' in node) {
       const children: Nodes[] = node.children;
       for (const child of children) stack.push([child, depth + 1]);
     }
   }
-  return undefined;
+  for (const identifier of references) expansion += definitions.get(identifier) ?? 0;
+  return expansion > characters ? 'references' : undefined;
 }
 
 export function remarkDirectiveAllowlist(options: { allow: readonly string[] }): Transformer<Root> {
@@ -269,7 +290,7 @@ function replaceUnknown(parent: Parents, allow: Set<string>) {
       replaceUnknown(child, allow);
       const open = openingLine(child);
       const content = child.children.filter((node: Nodes) => !isLabel(node));
-      return [textParagraph(open), ...content, textParagraph(/^:+/.exec(open)?.[0] ?? ':::')];
+      return [textParagraph(open), ...content, textParagraph(':::')];
     }
     if ('children' in child) replaceUnknown(child, allow);
     return [child];

@@ -135,6 +135,13 @@ const cellBodies: [string, string][] = [
   ['a 2,500 by 4,980 table in a fence', tblIn(2_500, 4_980)],
 ];
 
+const referenceBodies: [string, string][] = [
+  [
+    'a 9,970-character definition read 3,330 times',
+    `[r]: https://e.test/${'u'.repeat(9_970)}\n\n${'[r] '.repeat(3_330)}`,
+  ],
+];
+
 const fenceHonestBodies: [string, string][] = [
   ['5 closed containers', ':::a\nx\n:::\n\n'.repeat(5)],
   ['5 closed containers after paragraphs', 'para\n:::a\nx\n:::\n'.repeat(5)],
@@ -187,6 +194,17 @@ describe.each(pipelines)('%s', (_pipeline, parse) => {
 
   it.each(cellBodies)('turns %s into one code block marked cells', (_name, body) => {
     expect(parse(body)).toEqual(fallback(body, 'cells'));
+  });
+
+  it.each(referenceBodies)('turns %s into one code block marked references', (_name, body) => {
+    expect(parse(body)).toEqual(fallback(body, 'references'));
+  });
+
+  it('keeps 20 reference links to 20 short definitions', () => {
+    const defs = Array.from({ length: 20 }, (_, i) => `[r${i}]: https://e.test/${i} "t${i}"`);
+    const uses = Array.from({ length: 20 }, (_, i) => `see [link ${i}][r${i}]`);
+    const body = `${uses.join('\n\n')}\n\n${defs.join('\n')}\n`;
+    expect(JSON.stringify(parse(body))).not.toContain('dialectFallback');
   });
 
   it.each(fenceHonestBodies)('never falls back on %s', (_name, body) => {
@@ -280,6 +298,13 @@ describe('the dialect needs the guarded parser', () => {
       .use(remarkRehype)
       .use(rehypeStringify);
     expect(() => processor.processSync('a')).toThrow(
+      'remarkDialect must be used after remark-parse',
+    );
+  });
+
+  it('throws at parse when a parser is installed after it', () => {
+    const processor = unified().use(remarkDialect).use(remarkParse);
+    expect(() => processor.parse(`${'>'.repeat(200)}a`)).toThrow(
       'remarkDialect must be used after remark-parse',
     );
   });

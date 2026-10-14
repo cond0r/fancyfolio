@@ -75,7 +75,8 @@
                       "@fancyfolio/api/**",
                       "@fancyfolio/web",
                       "@fancyfolio/web/**",
-                      "**/apps/**"
+                      "**/apps/**",
+                      "node:*"
                     ],
                     "message": "The editor never imports a server package, the database or an app."
                   }

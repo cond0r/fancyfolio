@@ -1,0 +1,14 @@
+{
+  "name": "@fancyfolio/contracts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "valibot": "^1.5.0"
+  }
+}

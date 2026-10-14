@@ -72,28 +72,90 @@ const hostileBodies = [
   '::x{__proto__="polluted" constructor="c"}',
 ];
 
-const changedBlockHtml = new Map([
-  [':::callout\nnever closed\n\nmore', '<p>:::callout\nnever closed</p>\n<p>more\n:::</p>'],
-  [':::x\n\n:::', '<p>:::x\n:::</p>'],
+const inTreeHtml = new Map([
+  [
+    ':::callout{tone="note"}\nInside **bold** and `code`\n:::',
+    '<p>:::callout{tone="note"}</p>\n<p>Inside <strong>bold</strong> and <code>code</code></p>\n<p>:::</p>',
+  ],
+  [
+    '::::outer\n:::inner\nhi\n:::\n::::',
+    '<p>:::outer</p>\n<p>:::inner</p>\n<p>hi</p>\n<p>:::</p>\n<p>:::</p>',
+  ],
+  [
+    ':::callout\nnever closed\n\nmore',
+    '<p>:::callout</p>\n<p>never closed</p>\n<p>more</p>\n<p>:::</p>',
+  ],
+  [':::x[a *b*]\nin\n:::', '<p>:::x[a _b_]</p>\n<p>in</p>\n<p>:::</p>'],
+  [':::x\n\n:::', '<p>:::x</p>\n<p>:::</p>'],
   [':::x\n    indented\n:::', '<p>:::x</p>\n<pre><code>indented\n</code></pre>\n<p>:::</p>'],
-  [':::x\r\nin\r\n:::', '<p>:::x\nin\n:::</p>'],
+  [':::x\r\nin\r\n:::', '<p>:::x</p>\n<p>in</p>\n<p>:::</p>'],
+  [':::x\n- a\n:::', '<p>:::x</p>\n<ul>\n<li>a</li>\n</ul>\n<p>:::</p>'],
+  [
+    '- item\n\n  :::callout\n  inner\n  :::',
+    '<ul>\n<li>\n<p>item</p>\n<p>:::callout</p>\n<p>inner</p>\n<p>:::</p>\n</li>\n</ul>',
+  ],
+  ['  :::x\n  in\n  :::', '<p>:::x</p>\n<p>in</p>\n<p>:::</p>'],
+  [
+    'Before 😀\n\n:::x{a="😀"}\nin 😀\n:::\n\nafter',
+    '<p>Before 😀</p>\n<p>:::x{a="😀"}</p>\n<p>in 😀</p>\n<p>:::</p>\n<p>after</p>',
+  ],
+  [
+    '> :::callout\n> inner **b**\n> :::',
+    '<blockquote>\n<p>:::callout</p>\n<p>inner <strong>b</strong></p>\n<p>:::</p>\n</blockquote>',
+  ],
+  ['>:::x\n>in\n>:::', '<blockquote>\n<p>:::x</p>\n<p>in</p>\n<p>:::</p>\n</blockquote>'],
+  ['>\t:::x\n>\tin\n>\t:::', '<blockquote>\n<p>:::x</p>\n<p>in</p>\n<p>:::</p>\n</blockquote>'],
+  [
+    '> :::x\n>> deep\n> :::',
+    '<blockquote>\n<p>:::x</p>\n<blockquote>\n<p>deep</p>\n</blockquote>\n<p>:::</p>\n</blockquote>',
+  ],
+  [
+    '> > :::x\n> > y\n> > :::',
+    '<blockquote>\n<blockquote>\n<p>:::x</p>\n<p>y</p>\n<p>:::</p>\n</blockquote>\n</blockquote>',
+  ],
+  [
+    ' - a\n\n   :::x\n   in\n   :::',
+    '<ul>\n<li>\n<p>a</p>\n<p>:::x</p>\n<p>in</p>\n<p>:::</p>\n</li>\n</ul>',
+  ],
+  [
+    '1.  :::x\n    p1\n\n    p2\n    :::',
+    '<ol>\n<li>\n<p>:::x</p>\n<p>p1</p>\n<p>p2</p>\n<p>:::</p>\n</li>\n</ol>',
+  ],
+  [
+    '- :::x\n  p1\n\n      code\n  :::',
+    '<ul>\n<li>\n<p>:::x</p>\n<p>p1</p>\n<pre><code>code\n</code></pre>\n<p>:::</p>\n</li>\n</ul>',
+  ],
+  [
+    '> :::x\n> p1\n>\n> p2\n> :::',
+    '<blockquote>\n<p>:::x</p>\n<p>p1</p>\n<p>p2</p>\n<p>:::</p>\n</blockquote>',
+  ],
+  [
+    '- a\n  - b\n\n    :::x\n    in **b**\n    :::',
+    '<ul>\n<li>a\n<ul>\n<li>\n<p>b</p>\n<p>:::x</p>\n<p>in <strong>b</strong></p>\n<p>:::</p>\n</li>\n</ul>\n</li>\n</ul>',
+  ],
+  [
+    '> - a\n>\n>   :::x\n>   in\n>   :::',
+    '<blockquote>\n<ul>\n<li>\n<p>a</p>\n<p>:::x</p>\n<p>in</p>\n<p>:::</p>\n</li>\n</ul>\n</blockquote>',
+  ],
+  ['::x[label *em*]{a=1}', '<p>::x[label _em_]{a="1"}</p>'],
+  ['::x{a="&#91;y&#93;&#40;javascript:alert(1)&#41;"}', '<p>::x{a="[y](javascript:alert(1))"}</p>'],
 ]);
 
-describe('with an empty allowlist a block directive renders as its canonical source', () => {
-  it.each(blockBodies.filter((body) => !changedBlockHtml.has(body)))(
+describe('with an empty allowlist a block directive renders as its opening line and closing fence', () => {
+  it.each(blockBodies.filter((body) => !inTreeHtml.has(body)))(
     '%j renders the same HTML as CommonMark + GFM',
     (body) => {
       expect(render([], body)).toBe(String(gfmHtml.processSync(body)));
     },
   );
 
-  it.each([...changedBlockHtml])('%j renders its canonical source', (body, html) => {
+  it.each([...inTreeHtml])('%j renders in the tree', (body, html) => {
     expect(render([], body)).toBe(html);
   });
 
   it('still formats inline markdown inside a container', () => {
     expect(render([], ':::callout{tone="note"}\nInside **bold**\n:::')).toBe(
-      '<p>:::callout{tone="note"}\nInside <strong>bold</strong>\n:::</p>',
+      '<p>:::callout{tone="note"}</p>\n<p>Inside <strong>bold</strong></p>\n<p>:::</p>',
     );
   });
 
@@ -109,7 +171,8 @@ describe('with an empty allowlist a block directive renders as its canonical sou
 describe('a directive outside the allowlist carries no attribute into the HTML', () => {
   const exactHtml = new Map([
     [hostileBodies[0], '<p>::x{#a .evil onclick="alert(1)" style="color:red"}</p>'],
-    [hostileBodies[3], '<p>:::x{#a .evil onmouseover="alert(1)"}\nb\n:::</p>'],
+    [hostileBodies[2], '<p>::x[&#x3C;img src=x onerror=alert(1)>]{src="data:text/html,x"}</p>'],
+    [hostileBodies[3], '<p>:::x{#a .evil onmouseover="alert(1)"}</p>\n<p>b</p>\n<p>:::</p>'],
     [hostileBodies[4], '<p>::x{constructor="c"}</p>'],
   ]);
 
@@ -135,10 +198,9 @@ describe('an allowlisted name stays a directive', () => {
     expect(transformed(['metric'], body).children).toEqual([
       { type: 'leafDirective', name: 'metric', attributes: { value: '3x' }, children: [] },
       { type: 'paragraph', children: [{ type: 'text', value: '::other{a="1"}' }] },
-      {
-        type: 'paragraph',
-        children: [{ type: 'text', value: ':::callout\n::metric{value="2"}\n:::' }],
-      },
+      { type: 'paragraph', children: [{ type: 'text', value: ':::callout' }] },
+      { type: 'leafDirective', name: 'metric', attributes: { value: '2' }, children: [] },
+      { type: 'paragraph', children: [{ type: 'text', value: ':::' }] },
       {
         type: 'containerDirective',
         name: 'metric',
@@ -164,24 +226,18 @@ it('renders a directive without a source position as its canonical source', () =
   });
 });
 
-it('keeps references inside an unknown container as text', () => {
+it('resolves references inside an unknown container like any markdown', () => {
   const body = ':::x\nSee [the docs][d] and [^n].\n:::\n\n[d]: https://example.test\n\n[^n]: note';
-  expect(render([], body).startsWith('<p>:::x\nSee [the docs][d] and [^n].\n:::</p>')).toBe(true);
-});
-
-it('re-parses the canonical source through the guarded parser', () => {
-  const body = `:::x\n${'>'.repeat(60)} a\n:::`;
-  expect(parseMarkdown(body).children[0]?.type).toBe('containerDirective');
   const html = render([], body);
-  expect(html.startsWith('<pre><code>:::x\n')).toBe(true);
-  expect(html).not.toContain('<blockquote>');
+  expect(html).toContain('<a href="https://example.test">the docs</a>');
+  expect(html.startsWith('<p>:::x</p>\n<p>See ')).toBe(true);
 });
 
 it('reads the source of a body given as bytes', () => {
   const body = 'Before 😀\n\n:::x{a="😀"}\nin 😀\n:::';
   const bytes = new TextEncoder().encode(body);
   const processor = dialect([]).use(remarkRehype).use(rehypeStringify);
-  expect(String(processor.processSync(bytes))).toBe(String(gfmHtml.processSync(body)));
+  expect(String(processor.processSync(bytes))).toBe(render([], body));
 });
 
 const canonicalCorpus = [
@@ -221,5 +277,101 @@ describe('an unknown directive renders as its canonical source', () => {
     const saved = stringifyMarkdown(parseMarkdown(body));
     expect(render([], body)).toBe(render([], saved));
     expect(render(['callout', 'metric'], body)).toBe(render(['callout', 'metric'], saved));
+  });
+});
+
+const linkWithScript = /<[a-z][^>]*\shref="javascript:/i;
+const attributeFromText = /<[a-z][^>]*\s(on\w+|style|class|id|src|href)=/i;
+
+describe('directive text never becomes an attribute or a script link', () => {
+  const xssBodies = [
+    ...hostileBodies,
+    ':::x{onload=alert(1)}\n<iframe src="javascript:alert(1)"></iframe>\n:::',
+    '::x{__proto__="p" constructor="c" prototype="p" hasOwnProperty="h"}',
+    '::x{a="&lt;script&gt;" b="&#x6a;avascript:alert(1)"}',
+    '::x{a="&lt;img src=x onerror=alert(1)&gt;"}',
+    '::x{a="&#91;y&#93;&#40;javascript:alert(1)&#41;"}',
+    '::x{a="&#91;y&#93;&#40;https://evil.test&#41;"}',
+    '::x[&#91;y&#93;&#40;javascript:alert(1)&#41;]',
+    '::x[&lt;b onclick=1&gt;]',
+    '::x{a="x&#10;<script>alert(1)</script>"}',
+    '::x{a="x&#10;&#10;<script>alert(1)</script>"}',
+    '::x{a="x&#10;# heading"}',
+    '::x{a="x&#10;&#10;:::y&#10;in"}',
+    '::x{a="&#10;&#10;[z]: javascript:alert(1)&#10;&#10;[q][z]"}',
+    ':::x\n&lt;script&gt;\n:::',
+  ];
+
+  it.each(xssBodies)('%j renders no script link and no attribute from text', (body) => {
+    const html = render([], body);
+    expect(html).not.toMatch(linkWithScript);
+    expect(html).not.toMatch(attributeFromText);
+  });
+
+  it('renders no script link for 2,000 seeded random bodies', () => {
+    const tokens = [
+      '::',
+      ':::',
+      '::::',
+      'x',
+      'y',
+      '{a=1}',
+      '{#i .c b="&#91;q&#93;&#40;javascript:1&#41;"}',
+      '[l]',
+      '[&lt;b&gt;]',
+      '\n',
+      '\n\n',
+      '> ',
+      '- ',
+      '[^1]: ',
+      '|',
+      '-|-',
+      '`',
+      '*',
+      '_',
+      '&#10;',
+      '<b>',
+      '"',
+      "'",
+      '}',
+      '{',
+      '\r\n',
+      '2*3*4',
+      '![a](b)',
+      '    ',
+    ];
+    let seed = 777;
+    const next = (n: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    const processor = dialect(['y']).use(remarkRehype).use(rehypeStringify);
+    let scriptLinks = 0;
+    for (let i = 0; i < 2000; i++) {
+      let body = '';
+      for (let j = 1 + next(20); j > 0; j--) body += tokens[next(tokens.length)];
+      if (linkWithScript.test(String(processor.processSync(body)))) scriptLinks++;
+    }
+    expect(scriptLinks).toBe(0);
+  });
+});
+
+describe('a table inside an unknown container keeps its size', () => {
+  const tblIn = (columns: number, rows: number) =>
+    ':::b\n' +
+    'a|'.repeat(columns - 1) +
+    'a\n' +
+    '-|'.repeat(columns - 1) +
+    '-\n' +
+    'a\n'.repeat(rows) +
+    ':::';
+
+  it('pads no row to the header width', () => {
+    const { children } = transformed([], tblIn(248, 490));
+    expect(children.map((child) => child.type)).toEqual(['paragraph', 'table', 'paragraph']);
+    const table = children[1];
+    if (table?.type !== 'table') throw new Error('no table');
+    expect(table.children).toHaveLength(491);
+    expect(table.children[1]?.children).toHaveLength(1);
   });
 });

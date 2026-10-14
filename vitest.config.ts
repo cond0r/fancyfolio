@@ -12,6 +12,7 @@ export default defineConfig({
           include: ['test/**/*.test.ts'],
         },
       },
+      { test: { name: 'editor', root: 'packages/editor', include: ['test/**/*.test.ts'] } },
     ],
   },
 });

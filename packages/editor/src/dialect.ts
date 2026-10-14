@@ -1,5 +1,10 @@
 import type { Nodes, Parents, Root } from 'mdast';
-import { directiveFromMarkdown, directiveToMarkdown } from 'mdast-util-directive';
+import {
+  type ContainerDirective,
+  directiveFromMarkdown,
+  directiveToMarkdown,
+  type LeafDirective,
+} from 'mdast-util-directive';
 import { gfmFootnoteFromMarkdown, gfmFootnoteToMarkdown } from 'mdast-util-gfm-footnote';
 import {
   gfmStrikethroughFromMarkdown,
@@ -160,7 +165,6 @@ function fallback(document: string, reason: DialectFallback): Root {
 
 const dialectParser = unified().use(remarkParse).use(remarkDialect).freeze();
 const dialectSerializer = unified().use(remarkStringify).use(remarkDialect).freeze();
-const plainParser = unified().use(remarkParse).use(remarkGfmParts).use(remarkGuard).freeze();
 
 export function parseMarkdown(markdown: string): Root {
   return dialectParser.parse(markdown);
@@ -211,14 +215,37 @@ export function remarkDirectiveAllowlist(options: { allow: readonly string[] }):
 function replaceUnknown(parent: Parents, allow: Set<string>) {
   const children: Nodes[] = parent.children;
   const replaced = children.flatMap((child): Nodes[] => {
-    if (
-      (child.type === 'leafDirective' || child.type === 'containerDirective') &&
-      !allow.has(child.name)
-    ) {
-      return plainParser.parse(stringifyMarkdown({ type: 'root', children: [child] })).children;
+    if (child.type === 'leafDirective' && !allow.has(child.name)) {
+      return [textParagraph(openingLine(child))];
+    }
+    if (child.type === 'containerDirective' && !allow.has(child.name)) {
+      replaceUnknown(child, allow);
+      const open = openingLine(child);
+      const content = child.children.filter((node: Nodes) => !isLabel(node));
+      return [textParagraph(open), ...content, textParagraph(/^:+/.exec(open)?.[0] ?? ':::')];
     }
     if ('children' in child) replaceUnknown(child, allow);
     return [child];
   });
   (parent as { children: Nodes[] }).children = replaced;
+}
+
+function openingLine(node: LeafDirective | ContainerDirective): string {
+  const { type, name, attributes } = node;
+  const label =
+    node.type === 'leafDirective'
+      ? node.children
+      : node.children.filter((child: Nodes) => isLabel(child));
+  const copy = { type, name, attributes, children: label } as LeafDirective | ContainerDirective;
+  return stringifyMarkdown({ type: 'root', children: [copy] }).split('\n')[0] ?? '';
+}
+
+function isLabel(node: Nodes): boolean {
+  return (
+    node.data !== undefined && 'directiveLabel' in node.data && node.data.directiveLabel === true
+  );
+}
+
+function textParagraph(value: string): Nodes {
+  return { type: 'paragraph', children: [{ type: 'text', value }] };
 }

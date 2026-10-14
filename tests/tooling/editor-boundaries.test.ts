@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -27,11 +27,62 @@ function lintAt(path: string, source: string) {
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
+function typecheckAt(files: Record<string, string>) {
+  const tree = mkdtempSync(join(tmpdir(), 'ff-tsc-'));
+  tempTrees.push(tree);
+  writeFileSync(join(tree, 'package.json'), '{"type":"module"}\n');
+  const base = JSON.parse(readFileSync(join(root, 'tsconfig.base.json'), 'utf8'));
+  base.compilerOptions.types = [];
+  writeFileSync(join(tree, 'tsconfig.base.json'), JSON.stringify(base));
+  const config = 'packages/editor/tsconfig.json';
+  mkdirSync(dirname(join(tree, config)), { recursive: true });
+  copyFileSync(join(root, config), join(tree, config));
+  for (const [path, source] of Object.entries(files)) {
+    mkdirSync(dirname(join(tree, path)), { recursive: true });
+    writeFileSync(join(tree, path), source);
+  }
+  const result = spawnSync(join(root, 'node_modules', '.bin', 'tsc'), ['-p', 'packages/editor'], {
+    cwd: tree,
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if (result.error) throw result.error;
+  if (result.status === null) throw new Error(`tsc stopped by signal ${result.signal}`);
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
+describe('a relative import cannot leave packages/editor', () => {
+  it('compiles a file that imports nothing outside', () => {
+    const result = typecheckAt({ 'packages/editor/src/dialect.ts': 'export const ok = 1;\n' });
+    expect(result.output).toBe('');
+    expect(result.status).toBe(0);
+  });
+
+  it('refuses the dialect importing the database package by path', () => {
+    const result = typecheckAt({
+      'packages/editor/src/dialect.ts':
+        "import { db } from '../../db/src/client.ts';\n\nexport const value = db;\n",
+      'packages/db/src/client.ts': 'export const db = 1;\n',
+    });
+    expect(result.output).toContain('TS6059');
+    expect(result.status).not.toBe(0);
+  });
+
+  it('refuses the core model importing the contracts package by path', () => {
+    const result = typecheckAt({
+      'packages/editor/src/core/model.ts':
+        "import { LIMITS } from '../../../contracts/src/index.ts';\n\nexport const value = LIMITS;\n",
+      'packages/contracts/src/index.ts': 'export const LIMITS = { a: 1 };\n',
+    });
+    expect(result.output).toContain('TS6059');
+    expect(result.status).not.toBe(0);
+  });
+});
+
 const dialectModule = 'packages/editor/src/dialect.ts';
 
 describe(`${dialectModule} imports no React, Jotai, DOM or workspace module`, () => {
-  const message =
-    'The dialect stays free of React, Jotai, the DOM, servers and workspace packages.';
+  const message = 'The dialect imports only its own parser and serializer packages.';
 
   it('passes the parser packages it needs', () => {
     const result = lintAt(
@@ -54,6 +105,13 @@ describe(`${dialectModule} imports no React, Jotai, DOM or workspace module`, ()
     '@fancyfolio/db',
     'postgres',
     '../../../apps/web/lib/blocks.ts',
+    './core/model.ts',
+    '../../db/src/client.ts',
+    '../../contracts/src/index.ts',
+    'node:fs',
+    'unified/lib/index.js',
+    'remark-gfm',
+    'micromark-extension-gfm-autolink-literal',
   ])('refuses %s', (specifier) => {
     const result = lintAt(
       dialectModule,
@@ -64,22 +122,52 @@ describe(`${dialectModule} imports no React, Jotai, DOM or workspace module`, ()
     expect(result.status).not.toBe(0);
   });
 
-  it.each(['window', 'document', 'navigator', 'DOMParser', 'Bun'])(
-    'refuses the %s global',
-    (name) => {
-      const result = lintAt(dialectModule, `export const value = ${name};\n`);
-      expect(result.output).toContain('lint/style/noRestrictedGlobals');
-      expect(result.output).toContain(name);
-      expect(result.status).not.toBe(0);
-    },
-  );
+  it.each([
+    'window',
+    'document',
+    'navigator',
+    'DOMParser',
+    'Bun',
+    'globalThis',
+    'fetch',
+    'XMLHttpRequest',
+    'WebSocket',
+    'EventSource',
+    'global',
+    'self',
+    'process',
+    'require',
+    'frames',
+    'parent',
+    'top',
+    'location',
+  ])('refuses the %s global', (name) => {
+    const result = lintAt(dialectModule, `export const value = ${name};\n`);
+    expect(result.output).toContain('lint/style/noRestrictedGlobals');
+    expect(result.output).toContain(name);
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each([
+    'globalThis.document',
+    'global.fetch',
+    "self.fetch('https://example.test')",
+    'process.env.SECRET',
+    "require('node:fs')",
+    'location.href',
+    "new EventSource('x')",
+  ])('refuses the expression %s', (expression) => {
+    const result = lintAt(dialectModule, `export const value = ${expression};\n`);
+    expect(result.output).toContain('lint/style/noRestrictedGlobals');
+    expect(result.status).not.toBe(0);
+  });
 
   it.each(['bun', 'bun:test'])('still refuses %s', (specifier) => {
     const result = lintAt(
       dialectModule,
       `import * as banned from '${specifier}';\n\nexport const value = banned;\n`,
     );
-    expect(result.output).toContain('Node is the runtime');
+    expect(result.output).toContain(message);
     expect(result.status).not.toBe(0);
   });
 });

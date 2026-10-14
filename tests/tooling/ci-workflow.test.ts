@@ -13,8 +13,8 @@ const bunJob = workflow.slice(bunStart);
 const steps = workflow.split(/\n {6}- /);
 
 describe('the CI workflow', () => {
-  it('runs on pull requests with a read-only token', () => {
-    expect(workflow).toMatch(/^on:\n {2}pull_request:\n/m);
+  it('runs on pull requests and pushes to main with a read-only token', () => {
+    expect(workflow).toMatch(/^on:\n {2}pull_request:\n {2}push:\n {4}branches: \[main\]\n\n/m);
     expect(workflow).toMatch(/^permissions:\n {2}contents: read\n\n/m);
     expect(workflow.match(/^\s*permissions:/gm)).toHaveLength(1);
   });

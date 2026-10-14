@@ -49,7 +49,7 @@ describe('the CI workflow', () => {
       'pnpm exec biome ci',
       'pnpm typecheck',
       'pnpm test',
-      'pnpm audit --prod --audit-level high',
+      'pnpm audit --audit-level high',
     ]) {
       expect(checkJob).toContain(`- run: ${step}\n`);
     }

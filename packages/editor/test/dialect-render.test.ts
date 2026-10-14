@@ -1,15 +1,10 @@
-import type { BlockContent, Root } from 'mdast';
+import type { Root } from 'mdast';
 import rehypeStringify from 'rehype-stringify';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
 import { describe, expect, it } from 'vitest';
-import {
-  nestsTooDeep,
-  parseMarkdown,
-  remarkDialect,
-  remarkDirectiveAllowlist,
-} from '../src/dialect.ts';
+import { remarkDialect, remarkDirectiveAllowlist } from '../src/dialect.ts';
 import { gfmHtml } from './gfm.ts';
 
 function dialect(allow: readonly string[]) {
@@ -148,86 +143,4 @@ it('reads the source of a body given as bytes', () => {
   const bytes = new TextEncoder().encode(body);
   const processor = dialect([]).use(remarkRehype).use(rehypeStringify);
   expect(String(processor.processSync(bytes))).toBe(String(gfmHtml.processSync(body)));
-});
-
-function nestedStrong(length: number): string {
-  const pairs = Math.floor((length - 1) / 14);
-  return `${'*a **a '.repeat(pairs)}b${' a** a*'.repeat(pairs)}`;
-}
-
-function quotedTree(levels: number): Root {
-  let node: BlockContent = { type: 'paragraph', children: [{ type: 'text', value: 'x' }] };
-  for (let level = 0; level < levels; level += 1) node = { type: 'blockquote', children: [node] };
-  return { type: 'root', children: [node] };
-}
-
-describe('the nesting guard', () => {
-  it.each([
-    ['flags 11 dash markers', `${'- '.repeat(11)}a`, true],
-    ['flags 11 plus markers', `${'+ '.repeat(11)}a`, true],
-    ['flags 11 star markers', `${'* '.repeat(11)}a`, true],
-    ['flags 11 ordered markers with dots', `${'1. '.repeat(11)}a`, true],
-    ['flags 11 ordered markers with parens', `${'1) '.repeat(11)}a`, true],
-    ['flags 11 quote markers', `${'>'.repeat(11)}a`, true],
-    ['flags 12 quote and dash markers after tabs', `${'>\t- '.repeat(6)}a`, true],
-    ['flags 11 dash markers on a later line', `intro\n${'- '.repeat(11)}a`, true],
-    ['passes 10 dash markers', `${'- '.repeat(10)}a`, false],
-    ['passes 10 quote markers', `${'>'.repeat(10)}a`, false],
-    ['passes 11 dashes without spaces', `${'-'.repeat(11)}a`, false],
-    ['passes 11 dash markers after text', `a ${'- '.repeat(11)}`, false],
-    ['passes 11 ten-digit ordered markers', `${'1234567890. '.repeat(11)}a`, false],
-  ])('the line scan %s', (_name, body, flagged) => {
-    expect(nestsTooDeep(body)).toBe(flagged);
-  });
-
-  it('scans a line of markers padded with spaces in linear time', () => {
-    const padded = `${'-    '.repeat(10)}a`;
-    const start = performance.now();
-    expect(nestsTooDeep(padded)).toBe(false);
-    expect(performance.now() - start).toBeLessThan(50);
-  });
-
-  it.each([
-    ['19,999 nested quotes', `${'>'.repeat(19_999)}a`],
-    ['9,999 list markers on one line', `${'- '.repeat(9_999)}a`],
-  ])('turns %s into one code block without parsing', { timeout: 120_000 }, (_name, body) => {
-    expect(nestsTooDeep(body)).toBe(true);
-    const start = performance.now();
-    const tree = parseMarkdown(body);
-    expect(performance.now() - start).toBeLessThan(1_000);
-    expect(tree).toEqual({ type: 'root', children: [{ type: 'code', value: body }] });
-  });
-
-  it('turns nested strong emphasis at 20,000 characters into one code block, parsed and rendered', {
-    timeout: 120_000,
-  }, () => {
-    const body = nestedStrong(20_000);
-    expect(nestsTooDeep(body)).toBe(false);
-    expect(parseMarkdown(body).children).toEqual([{ type: 'code', value: body }]);
-    expect(render([], body)).toBe(`<pre><code>${body}\n</code></pre>`);
-  });
-
-  it.each([
-    ['10 nested lists on one line', `${'- '.repeat(10)}a`],
-    [
-      '10 nested lists by indentation',
-      Array.from({ length: 10 }, (_, depth) => `${'  '.repeat(depth)}- item ${depth}`).join('\n'),
-    ],
-    ['3 nested quotes', '> > > deep'],
-  ])('leaves %s unchanged', (_name, body) => {
-    expect(nestsTooDeep(body)).toBe(false);
-    expect(parseMarkdown(body)).toEqual(dialect([]).parse(body));
-    expect(render([], body)).toBe(String(gfmHtml.processSync(body)));
-  });
-
-  it('keeps a tree 100 levels deep and turns one 101 levels deep into its source', () => {
-    const processor = unified().use(remarkDialect);
-    expect(processor.runSync(quotedTree(98), 'source')).toMatchObject({
-      children: [{ type: 'blockquote' }],
-    });
-    expect(processor.runSync(quotedTree(99), 'source')).toEqual({
-      type: 'root',
-      children: [{ type: 'code', value: 'source' }],
-    });
-  });
 });

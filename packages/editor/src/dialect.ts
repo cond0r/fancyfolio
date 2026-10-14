@@ -17,10 +17,45 @@ import { gfmTable } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
-import { type Processor, type Transformer, unified } from 'unified';
+import { type Data, type Processor, type Transformer, unified } from 'unified';
+
+export type DialectFallback = 'column' | 'images' | 'depth';
+
+declare module 'mdast' {
+  interface CodeData {
+    dialectFallback?: DialectFallback;
+  }
+}
+
+type MicromarkExtension = NonNullable<Data['micromarkExtensions']>[number];
+type Construct = Exclude<
+  NonNullable<NonNullable<MicromarkExtension['document']>[string]>,
+  unknown[]
+>;
 
 const maxDepth = 100;
-const nestedMarkers = /^(?:[ \t]*(?:>|[-+*][ \t]|\d{1,9}[.)][ \t])){11}/m;
+const maxColumn = 100;
+const maxImageStarts = 100;
+const containerStarts = [42, 43, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 62, 91];
+
+class DialectGuardStop extends Error {
+  readonly reason: DialectFallback;
+
+  constructor(reason: DialectFallback) {
+    super(reason);
+    this.reason = reason;
+  }
+}
+
+const columnGuard: Construct = {
+  name: 'dialectColumnGuard',
+  tokenize(_effects, _ok, nok) {
+    return (code) => {
+      if (this.now().column > maxColumn) throw new DialectGuardStop('column');
+      return nok(code);
+    };
+  },
+};
 
 function remarkGfmParts(this: Processor) {
   const data = this.data();
@@ -47,7 +82,7 @@ function remarkGfmParts(this: Processor) {
   ];
 }
 
-export function remarkDialect(this: Processor): Transformer<Root> {
+export function remarkDialect(this: Processor) {
   remarkGfmParts.call(this);
   const data = this.data();
   data.settings = { ...data.settings, bullet: '-', emphasis: '_', rule: '-' };
@@ -61,8 +96,65 @@ export function remarkDialect(this: Processor): Transformer<Root> {
       unsafe: toMarkdown.unsafe?.filter((rule) => ![rule.inConstruct].flat().includes('phrasing')),
     },
   ];
-  return (tree, file) => {
-    guard(tree, String(file));
+  remarkGuard.call(this);
+}
+
+function remarkGuard(this: Processor) {
+  const imageStarts = new WeakMap<object, number>();
+  const imageBudget: Construct = {
+    name: 'dialectImageBudget',
+    tokenize(effects, _ok, nok) {
+      return (code) => {
+        effects.enter('labelImage');
+        effects.consume(code);
+        return (next) => {
+          if (next === 91) {
+            const starts = (imageStarts.get(this) ?? 0) + 1;
+            if (starts > maxImageStarts) throw new DialectGuardStop('images');
+            imageStarts.set(this, starts);
+          }
+          return nok(next);
+        };
+      };
+    },
+  };
+  const data = this.data();
+  data.micromarkExtensions = [
+    ...(data.micromarkExtensions ?? []),
+    {
+      document: Object.fromEntries(
+        containerStarts.map((code): [number, Construct] => [code, columnGuard]),
+      ),
+    },
+    { text: { 33: imageBudget } },
+  ];
+  const parse = this.parser;
+  if (parse === undefined) return;
+  this.parser = (document, file) => {
+    try {
+      const tree = parse(document, file);
+      return isRoot(tree) && deeperThan(tree, maxDepth) ? fallback(document, 'depth') : tree;
+    } catch (error) {
+      if (error instanceof DialectGuardStop) return fallback(document, error.reason);
+      throw error;
+    }
+  };
+}
+
+function isRoot(node: { type: string }): node is Root {
+  return node.type === 'root';
+}
+
+function fallback(document: string, reason: DialectFallback): Root {
+  return {
+    type: 'root',
+    children: [
+      {
+        type: 'code',
+        value: document.replace(/\r\n?/g, '\n'),
+        data: { dialectFallback: reason },
+      },
+    ],
   };
 }
 
@@ -70,26 +162,12 @@ const dialectParser = unified().use(remarkParse).use(remarkDialect).freeze();
 const dialectSerializer = unified().use(remarkStringify).use(remarkDialect).freeze();
 const plainParser = unified().use(remarkParse).use(remarkGfmParts).freeze();
 
-export function nestsTooDeep(markdown: string): boolean {
-  return nestedMarkers.test(markdown);
-}
-
 export function parseMarkdown(markdown: string): Root {
-  const tree: Root = nestsTooDeep(markdown)
-    ? { type: 'root', children: [] }
-    : dialectParser.parse(markdown);
-  return guard(tree, markdown);
+  return dialectParser.parse(markdown);
 }
 
 export function stringifyMarkdown(tree: Root): string {
   return dialectSerializer.stringify(tree);
-}
-
-function guard(tree: Root, source: string): Root {
-  if (nestsTooDeep(source) || deeperThan(tree, maxDepth)) {
-    tree.children = [{ type: 'code', value: source }];
-  }
-  return tree;
 }
 
 function deeperThan(tree: Root, limit: number): boolean {

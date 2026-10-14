@@ -167,7 +167,27 @@ export function parseMarkdown(markdown: string): Root {
 }
 
 export function stringifyMarkdown(tree: Root): string {
-  return dialectSerializer.stringify(tree);
+  return dialectSerializer.stringify(mergeText(structuredClone(tree)));
+}
+
+function mergeText(tree: Root): Root {
+  const stack: Nodes[] = [tree];
+  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    if (!('children' in node)) continue;
+    const merged: Nodes[] = [];
+    for (const child of node.children as Nodes[]) {
+      if ((child.type === 'text' || child.type === 'html') && child.value === '') continue;
+      const last = merged.at(-1);
+      if (child.type === 'text' && last?.type === 'text') {
+        merged[merged.length - 1] = { type: 'text', value: last.value + child.value };
+      } else {
+        merged.push(child);
+      }
+    }
+    (node as { children: Nodes[] }).children = merged;
+    stack.push(...merged);
+  }
+  return tree;
 }
 
 function deeperThan(tree: Root, limit: number): boolean {

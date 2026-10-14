@@ -1,4 +1,4 @@
-import type { Root } from 'mdast';
+import type { PhrasingContent, Root } from 'mdast';
 import rehypeStringify from 'rehype-stringify';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
@@ -195,5 +195,60 @@ describe('a bare URL or email address stays text', () => {
       'https://example.test',
       'https://example.test',
     ]);
+  });
+});
+
+const t = (value: string): PhrasingContent => ({ type: 'text', value });
+const para = (...children: PhrasingContent[]) => ({ type: 'paragraph' as const, children });
+const rootOf = (...children: Root['children']): Root => ({ type: 'root', children });
+
+const adjacentText: [string, Root, string][] = [
+  ['root', rootOf(para(t(':'), t(':metric{value="1"}'))), ':\\:metric{value="1"}\n'],
+  ['container name', rootOf(para(t('::'), t(':callout'))), '::\\:callout\n'],
+  [
+    'blockquote',
+    rootOf({ type: 'blockquote', children: [para(t(':'), t(':metric'))] }),
+    '> :\\:metric\n',
+  ],
+  [
+    'list item',
+    rootOf({
+      type: 'list',
+      ordered: false,
+      spread: false,
+      children: [{ type: 'listItem', spread: false, children: [para(t('::'), t(':callout'))] }],
+    }),
+    '- ::\\:callout\n',
+  ],
+  [
+    'footnote definition',
+    rootOf(para(t('a'), { type: 'footnoteReference', identifier: '1', label: '1' }), {
+      type: 'footnoteDefinition',
+      identifier: '1',
+      label: '1',
+      children: [para(t(':'), t(':metric'))],
+    }),
+    'a[^1]\n\n[^1]: :\\:metric\n',
+  ],
+  [
+    'after a break',
+    rootOf(para(t('a'), { type: 'break' }, t(':'), t(':metric'))),
+    'a\\\n:\\:metric\n',
+  ],
+  ['after a newline', rootOf(para(t('a\n:'), t(':metric'))), 'a\n:\\:metric\n'],
+  [
+    'across an empty html node',
+    rootOf(para(t(':'), { type: 'html', value: '' }, t(':metric'))),
+    ':\\:metric\n',
+  ],
+];
+
+describe('adjacent text nodes never serialize as a live directive', () => {
+  it.each(adjacentText)('%s', (_name, tree, expected) => {
+    const before = structuredClone(tree);
+    const markdown = stringifyMarkdown(tree);
+    expect(markdown).toBe(expected);
+    expect(directives(parseMarkdown(markdown))).toEqual([]);
+    expect(tree).toEqual(before);
   });
 });

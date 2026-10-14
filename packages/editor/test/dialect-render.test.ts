@@ -4,7 +4,12 @@ import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
 import { describe, expect, it } from 'vitest';
-import { remarkDialect, remarkDirectiveAllowlist } from '../src/dialect.ts';
+import {
+  parseMarkdown,
+  remarkDialect,
+  remarkDirectiveAllowlist,
+  stringifyMarkdown,
+} from '../src/dialect.ts';
 import { gfmHtml } from './gfm.ts';
 
 function dialect(allow: readonly string[]) {
@@ -67,9 +72,23 @@ const hostileBodies = [
   '::x{__proto__="polluted" constructor="c"}',
 ];
 
-describe('with an empty allowlist a block directive renders as its source parsed as GFM', () => {
-  it.each(blockBodies)('%j renders the same HTML as CommonMark + GFM', (body) => {
-    expect(render([], body)).toBe(String(gfmHtml.processSync(body)));
+const changedBlockHtml = new Map([
+  [':::callout\nnever closed\n\nmore', '<p>:::callout\nnever closed</p>\n<p>more\n:::</p>'],
+  [':::x\n\n:::', '<p>:::x\n:::</p>'],
+  [':::x\n    indented\n:::', '<p>:::x</p>\n<pre><code>indented\n</code></pre>\n<p>:::</p>'],
+  [':::x\r\nin\r\n:::', '<p>:::x\nin\n:::</p>'],
+]);
+
+describe('with an empty allowlist a block directive renders as its canonical source', () => {
+  it.each(blockBodies.filter((body) => !changedBlockHtml.has(body)))(
+    '%j renders the same HTML as CommonMark + GFM',
+    (body) => {
+      expect(render([], body)).toBe(String(gfmHtml.processSync(body)));
+    },
+  );
+
+  it.each([...changedBlockHtml])('%j renders its canonical source', (body, html) => {
+    expect(render([], body)).toBe(html);
   });
 
   it('still formats inline markdown inside a container', () => {
@@ -88,9 +107,15 @@ describe('with an empty allowlist a block directive renders as its source parsed
 });
 
 describe('a directive outside the allowlist carries no attribute into the HTML', () => {
-  it.each(hostileBodies)('%j renders as plain GFM with no attribute on any tag', (body) => {
+  const exactHtml = new Map([
+    [hostileBodies[0], '<p>::x{#a .evil onclick="alert(1)" style="color:red"}</p>'],
+    [hostileBodies[3], '<p>:::x{#a .evil onmouseover="alert(1)"}\nb\n:::</p>'],
+    [hostileBodies[4], '<p>::x{constructor="c"}</p>'],
+  ]);
+
+  it.each(hostileBodies)('%j renders with no attribute on any tag', (body) => {
     const html = render([], body);
-    expect(html).toBe(String(gfmHtml.processSync(body)));
+    expect(html).toBe(exactHtml.get(body) ?? String(gfmHtml.processSync(body)));
     expect(html).not.toMatch(
       /<[a-z][^>]*\s(onclick|onmouseover|onerror|class|id|style|href|src)=/i,
     );
@@ -128,14 +153,28 @@ describe('an allowlisted name stays a directive', () => {
   });
 });
 
-it('refuses a directive without a source position', () => {
+it('renders a directive without a source position as its canonical source', () => {
   const tree: Root = {
     type: 'root',
     children: [{ type: 'leafDirective', name: 'x', attributes: {}, children: [] }],
   };
-  expect(() => unified().use(remarkDirectiveAllowlist, { allow: [] }).runSync(tree)).toThrow(
-    'A directive without a source position cannot render as its source',
-  );
+  expect(unified().use(remarkDirectiveAllowlist, { allow: [] }).runSync(tree)).toMatchObject({
+    type: 'root',
+    children: [{ type: 'paragraph', children: [{ type: 'text', value: '::x' }] }],
+  });
+});
+
+it('keeps references inside an unknown container as text', () => {
+  const body = ':::x\nSee [the docs][d] and [^n].\n:::\n\n[d]: https://example.test\n\n[^n]: note';
+  expect(render([], body).startsWith('<p>:::x\nSee [the docs][d] and [^n].\n:::</p>')).toBe(true);
+});
+
+it('re-parses the canonical source through the guarded parser', () => {
+  const body = `:::x\n${'>'.repeat(60)} a\n:::`;
+  expect(parseMarkdown(body).children[0]?.type).toBe('containerDirective');
+  const html = render([], body);
+  expect(html.startsWith('<pre><code>:::x\n')).toBe(true);
+  expect(html).not.toContain('<blockquote>');
 });
 
 it('reads the source of a body given as bytes', () => {
@@ -143,4 +182,44 @@ it('reads the source of a body given as bytes', () => {
   const bytes = new TextEncoder().encode(body);
   const processor = dialect([]).use(remarkRehype).use(rehypeStringify);
   expect(String(processor.processSync(bytes))).toBe(String(gfmHtml.processSync(body)));
+});
+
+const canonicalCorpus = [
+  ...blockBodies,
+  ...hostileBodies,
+  'Claim[^1].\n\n[^1]: Note\n\n    :::callout\n    inside\n    :::',
+  'Claim[^1].\n\n[^1]: :::callout\n    inside\n    :::',
+  '-\t:::x\n\tin\n\t:::',
+  '- a\n\n\t:::x\n\tin\n\t:::',
+  '10. a\n\n    :::x\n    in\n    :::',
+  '> - a\n>\n>   :::x\n>   in\n  :::',
+  '   > :::x\n   > in\n   > :::',
+  '> :::x\n>     code\n> :::',
+  '- :::x\n  ```\n  a\n    b\n  ```\n  :::',
+  '- > :::x\n  > in\n  > :::',
+  '- :::callout\n  ::x\n  :::',
+  '> ::x{a="1"}',
+  ':::x\n| a |\n| - |\n| 1 |\n:::',
+  ':::x\n```\ncode\n:::',
+  '> :::x\r\n> in\r\n> :::',
+  '> :::x\nlazy\n> :::',
+  '::metric{a="1" a="2"}',
+  '::metric{value=\'say "hi"\'}',
+  ':::callout\n```\n:::\n```\n:::',
+  'Claim[^1].\n\n[^1]: Note\n\n    :::callout\n    p1\n\n    p2\n    :::',
+  '\uFEFF::x{a=1}',
+  '\uFEFF:::x\nin\n:::\n\nafter',
+  '> :::x\r> in\r> :::',
+  '- :::x\r  in\r  :::',
+  '\uFEFF\n::x\n\ntext',
+  '::constructor',
+  '::__proto__{a=1}',
+];
+
+describe('an unknown directive renders as its canonical source', () => {
+  it.each(canonicalCorpus)('%j renders the same after one save', (body) => {
+    const saved = stringifyMarkdown(parseMarkdown(body));
+    expect(render([], body)).toBe(render([], saved));
+    expect(render(['callout', 'metric'], body)).toBe(render(['callout', 'metric'], saved));
+  });
 });

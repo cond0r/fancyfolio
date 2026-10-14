@@ -41,5 +41,112 @@
         }
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/editor/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db",
+                      "@fancyfolio/db/**",
+                      "postgres",
+                      "postgres/**",
+                      "drizzle-orm",
+                      "drizzle-orm/**",
+                      "@vercel/blob",
+                      "@vercel/blob/**",
+                      "better-auth",
+                      "better-auth/**",
+                      "@fancyfolio/api",
+                      "@fancyfolio/api/**",
+                      "@fancyfolio/web",
+                      "@fancyfolio/web/**",
+                      "**/apps/**"
+                    ],
+                    "message": "The editor never imports a server package, the database or an app."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/editor/src/dialect.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db",
+                      "@fancyfolio/db/**",
+                      "postgres",
+                      "postgres/**",
+                      "drizzle-orm",
+                      "drizzle-orm/**",
+                      "@vercel/blob",
+                      "@vercel/blob/**",
+                      "better-auth",
+                      "better-auth/**",
+                      "@fancyfolio/api",
+                      "@fancyfolio/api/**",
+                      "@fancyfolio/web",
+                      "@fancyfolio/web/**",
+                      "**/apps/**",
+                      "react",
+                      "react/**",
+                      "react-dom",
+                      "react-dom/**",
+                      "jotai",
+                      "jotai/**",
+                      "@fancyfolio/**"
+                    ],
+                    "message": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages."
+                  }
+                ]
+              }
+            },
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "Bun": "Node is the runtime: the Bun global is not available.",
+                  "window": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages.",
+                  "document": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages.",
+                  "navigator": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages.",
+                  "DOMParser": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -94,40 +94,26 @@
             "noRestrictedImports": {
               "level": "error",
               "options": {
-                "paths": {
-                  "bun": "Node is the runtime: use node: built-ins or an npm package."
-                },
                 "patterns": [
                   {
-                    "group": ["bun:*"],
-                    "message": "Node is the runtime: Bun built-in modules are not available."
-                  },
-                  {
                     "group": [
-                      "@fancyfolio/db",
-                      "@fancyfolio/db/**",
-                      "postgres",
-                      "postgres/**",
-                      "drizzle-orm",
-                      "drizzle-orm/**",
-                      "@vercel/blob",
-                      "@vercel/blob/**",
-                      "better-auth",
-                      "better-auth/**",
-                      "@fancyfolio/api",
-                      "@fancyfolio/api/**",
-                      "@fancyfolio/web",
-                      "@fancyfolio/web/**",
-                      "**/apps/**",
-                      "react",
-                      "react/**",
-                      "react-dom",
-                      "react-dom/**",
-                      "jotai",
-                      "jotai/**",
-                      "@fancyfolio/**"
+                      "**",
+                      "!mdast",
+                      "!mdast-util-directive",
+                      "!mdast-util-gfm-footnote",
+                      "!mdast-util-gfm-strikethrough",
+                      "!mdast-util-gfm-table",
+                      "!mdast-util-gfm-task-list-item",
+                      "!micromark-extension-directive",
+                      "!micromark-extension-gfm-footnote",
+                      "!micromark-extension-gfm-strikethrough",
+                      "!micromark-extension-gfm-table",
+                      "!micromark-extension-gfm-task-list-item",
+                      "!remark-parse",
+                      "!remark-stringify",
+                      "!unified"
                     ],
-                    "message": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages."
+                    "message": "The dialect imports only its own parser and serializer packages."
                   }
                 ]
               }
@@ -137,10 +123,23 @@
               "options": {
                 "deniedGlobals": {
                   "Bun": "Node is the runtime: the Bun global is not available.",
-                  "window": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages.",
-                  "document": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages.",
-                  "navigator": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages.",
-                  "DOMParser": "The dialect stays free of React, Jotai, the DOM, servers and workspace packages."
+                  "globalThis": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "global": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "self": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "frames": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "parent": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "top": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "process": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "require": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "fetch": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "XMLHttpRequest": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "WebSocket": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "EventSource": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "location": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "window": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "document": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "navigator": "The dialect does no I/O and reads no DOM or runtime global.",
+                  "DOMParser": "The dialect does no I/O and reads no DOM or runtime global."
                 }
               }
             }

@@ -1,6 +1,45 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-  "formatter": { "indentStyle": "space", "lineWidth": 100 },
-  "javascript": { "formatter": { "quoteStyle": "single" } }
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single"
+    }
+  },
+  "linter": {
+    "rules": {
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "bun": "Node is the runtime: use node: built-ins or an npm package."
+            },
+            "patterns": [
+              {
+                "group": ["bun:*"],
+                "message": "Node is the runtime: Bun built-in modules are not available."
+              }
+            ]
+          }
+        },
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "Bun": "Node is the runtime: the Bun global is not available."
+            }
+          }
+        }
+      }
+    }
+  }
 }

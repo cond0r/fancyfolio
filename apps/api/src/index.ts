@@ -1,4 +1,3 @@
-import './env.ts';
 import { Hono } from 'hono';
 import { health } from './routes/health.ts';
 

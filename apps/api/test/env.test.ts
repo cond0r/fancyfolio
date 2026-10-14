@@ -1,7 +1,7 @@
 import { inspect } from 'node:util';
 import * as v from 'valibot';
 import { describe, expect, it } from 'vitest';
-import { apiEnv, parseEnv } from '../src/env.ts';
+import { localEnv, parseEnv } from '../src/env.ts';
 
 function refusal(run: () => unknown): Error {
   try {
@@ -14,15 +14,15 @@ function refusal(run: () => unknown): Error {
 
 describe('parseEnv', () => {
   it('defaults PORT to 3001 and reads a valid PORT as a number', () => {
-    expect(parseEnv(apiEnv, {})).toEqual({ PORT: 3001 });
-    expect(parseEnv(apiEnv, { PORT: '8080', UNRELATED: 'x' })).toEqual({ PORT: 8080 });
-    expect(parseEnv(apiEnv, { PORT: '65535' })).toEqual({ PORT: 65535 });
+    expect(parseEnv(localEnv, {})).toEqual({ PORT: 3001 });
+    expect(parseEnv(localEnv, { PORT: '8080', UNRELATED: 'x' })).toEqual({ PORT: 8080 });
+    expect(parseEnv(localEnv, { PORT: '65535' })).toEqual({ PORT: 65535 });
   });
 
   it.each(['', 'abc', '0', '65536', '30.5', ' 3001', '-1', '0x10'])(
     'refuses PORT=%j as malformed',
     (value) => {
-      expect(refusal(() => parseEnv(apiEnv, { PORT: value })).message).toBe(
+      expect(refusal(() => parseEnv(localEnv, { PORT: value })).message).toBe(
         'Invalid environment: PORT (malformed)',
       );
     },
@@ -38,7 +38,7 @@ describe('parseEnv', () => {
   it('names every invalid variable once, in schema order', () => {
     const schema = v.object({
       API_TOKEN: v.pipe(v.string(), v.minLength(8), v.regex(/^tok_/)),
-      PORT: apiEnv.entries.PORT,
+      PORT: localEnv.entries.PORT,
     });
     expect(refusal(() => parseEnv(schema, { API_TOKEN: 'x', PORT: 'abc' })).message).toBe(
       'Invalid environment: API_TOKEN (malformed), PORT (malformed)',

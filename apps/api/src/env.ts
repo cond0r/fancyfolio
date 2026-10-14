@@ -12,7 +12,7 @@ export function parseEnv<TSchema extends v.ObjectSchema<v.ObjectEntries, undefin
   throw new Error(`Invalid environment: ${[...new Set(names)].join(', ')}`);
 }
 
-export const apiEnv = v.object({
+export const localEnv = v.object({
   PORT: v.pipe(
     v.optional(v.string(), '3001'),
     v.digits(),
@@ -21,5 +21,3 @@ export const apiEnv = v.object({
     v.maxValue(65535),
   ),
 });
-
-export const env = parseEnv(apiEnv, process.env);

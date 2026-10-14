@@ -102,11 +102,11 @@ describe('GET /api/health', () => {
 });
 
 describe('the app module', () => {
-  it('validates the environment when it is imported', async () => {
+  it('does not read PORT when it is imported', async () => {
     vi.stubEnv('PORT', 'not-a-port-Q7');
     vi.resetModules();
-    await expect(import('../src/index.ts')).rejects.toThrow(
-      'Invalid environment: PORT (malformed)',
-    );
+    const { default: fresh } = await import('../src/index.ts');
+    const res = await fresh.request('/api/health');
+    expect(res.status).toBe(200);
   });
 });

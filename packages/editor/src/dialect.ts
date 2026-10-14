@@ -90,7 +90,10 @@ function remarkGfmParts(this: Processor) {
   ];
 }
 
-export function remarkDialect(this: Processor) {
+const guardedParsers = new WeakSet<object>();
+
+export function remarkDialect(this: Processor): Transformer<Root> {
+  const processor = this;
   remarkGfmParts.call(this);
   const data = this.data();
   data.settings = { ...data.settings, bullet: '-', emphasis: '*', rule: '-' };
@@ -105,6 +108,11 @@ export function remarkDialect(this: Processor) {
     },
   ];
   remarkGuard.call(this);
+  return () => {
+    if (processor.parser !== undefined && !guardedParsers.has(processor.parser)) {
+      throw new Error('remarkDialect must be used after remark-parse');
+    }
+  };
 }
 
 function remarkGuard(this: Processor) {
@@ -164,7 +172,7 @@ function remarkGuard(this: Processor) {
   ];
   const parse = this.parser;
   if (parse === undefined) return;
-  this.parser = (document, file) => {
+  const guarded: typeof parse = (document, file) => {
     try {
       const tree = parse(document, file);
       if (!isRoot(tree)) return tree;
@@ -175,6 +183,8 @@ function remarkGuard(this: Processor) {
       throw error;
     }
   };
+  guardedParsers.add(guarded);
+  this.parser = guarded;
 }
 
 function isRoot(node: { type: string }): node is Root {
@@ -187,7 +197,7 @@ function fallback(document: string, reason: DialectFallback): Root {
     children: [
       {
         type: 'code',
-        value: document.replace(/\r\n?/g, '\n'),
+        value: document.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'),
         data: { dialectFallback: reason },
       },
     ],
@@ -202,27 +212,27 @@ export function parseMarkdown(markdown: string): Root {
 }
 
 export function stringifyMarkdown(tree: Root): string {
-  return dialectSerializer.stringify(mergeText(structuredClone(tree)));
+  const [only] = tree.children;
+  if (tree.children.length === 1 && only?.type === 'code' && only.data?.dialectFallback) {
+    return only.value;
+  }
+  return dialectSerializer.stringify(mergeText(tree));
 }
 
-function mergeText(tree: Root): Root {
-  const stack: Nodes[] = [tree];
-  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
-    if (!('children' in node)) continue;
-    const merged: Nodes[] = [];
-    for (const child of node.children as Nodes[]) {
-      if ((child.type === 'text' || child.type === 'html') && child.value === '') continue;
-      const last = merged.at(-1);
-      if (child.type === 'text' && last?.type === 'text') {
-        merged[merged.length - 1] = { type: 'text', value: last.value + child.value };
-      } else {
-        merged.push(child);
-      }
+function mergeText<T extends Nodes>(node: T): T {
+  if (!('children' in node)) return node;
+  const children: Nodes[] = [];
+  for (const child of node.children as Nodes[]) {
+    const copy = mergeText(child);
+    if ((copy.type === 'text' || copy.type === 'html') && copy.value === '') continue;
+    const last = children.at(-1);
+    if (copy.type === 'text' && last?.type === 'text') {
+      children[children.length - 1] = { type: 'text', value: last.value + copy.value };
+    } else {
+      children.push(copy);
     }
-    (node as { children: Nodes[] }).children = merged;
-    stack.push(...merged);
   }
-  return tree;
+  return { ...node, children };
 }
 
 function exceeds(tree: Root, characters: number): DialectFallback | undefined {

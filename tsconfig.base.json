@@ -4,6 +4,7 @@
     "module": "nodenext",
     "strict": true,
     "types": ["node"],
+    "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "rewriteRelativeImportExtensions": true,
     "noEmit": true,

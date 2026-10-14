@@ -194,6 +194,7 @@ describe('packages/editor imports no server package, database or app', () => {
     'better-auth',
     'better-auth/react',
     '@fancyfolio/api',
+    'node:fs',
     '@fancyfolio/web/lib/blocks',
     '../../../../apps/web/lib/blocks.ts',
   ])('refuses %s', (specifier) => {

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -74,7 +74,10 @@ function typecheck(name: string, source: string) {
   writeFileSync(join(scratch, `${name}.ts`), source);
   writeFileSync(
     config,
-    JSON.stringify({ extends: join(root, 'tsconfig.base.json'), files: [`${name}.ts`] }),
+    JSON.stringify({
+      extends: join(root, 'tests', 'tooling', 'tsconfig.json'),
+      files: [`${name}.ts`],
+    }),
   );
   return run('tsc', ['-p', config]);
 }
@@ -92,8 +95,9 @@ describe('TypeScript allows only Node types and erasable syntax', () => {
     expect(result.status).not.toBe(0);
   });
 
-  it('loads only the Node type package', () => {
-    const base = JSON.parse(readFileSync(join(root, 'tsconfig.base.json'), 'utf8'));
-    expect(base.compilerOptions.types).toEqual(['node']);
+  it('rejects the Bun global', () => {
+    const result = typecheck('bun-global', 'export const version = Bun.version;\n');
+    expect(result.output).toContain("Cannot find name 'Bun'");
+    expect(result.status).not.toBe(0);
   });
 });

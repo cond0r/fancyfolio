@@ -44,14 +44,14 @@ function typecheckAt(files: Record<string, string>) {
   const result = spawnSync(join(root, 'node_modules', '.bin', 'tsc'), ['-p', 'packages/editor'], {
     cwd: tree,
     encoding: 'utf8',
-    timeout: 60_000,
+    timeout: 20_000,
   });
   if (result.error) throw result.error;
   if (result.status === null) throw new Error(`tsc stopped by signal ${result.signal}`);
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
-describe('a relative import cannot leave packages/editor', () => {
+describe('a relative import cannot leave packages/editor', { timeout: 30_000 }, () => {
   it('compiles a file that imports nothing outside', () => {
     const result = typecheckAt({ 'packages/editor/src/dialect.ts': 'export const ok = 1;\n' });
     expect(result.output).toBe('');

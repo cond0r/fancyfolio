@@ -301,3 +301,14 @@ describe('table pipes are not aligned on save', () => {
     expect(stringifyMarkdown(parseMarkdown(body))).toBe(expected);
   });
 });
+
+describe('writing markdown copies parents', () => {
+  it('writes a tree whose node carries a function in data and leaves it untouched', () => {
+    const paragraph = para(t(':'), t(':metric'));
+    Object.assign(paragraph, { data: { hook: () => 1 } });
+    const root: Root = { type: 'root', children: [paragraph] };
+    expect(stringifyMarkdown(root)).toBe(':\\:metric\n');
+    expect(root.children[0]).toBe(paragraph);
+    expect(paragraph.children).toHaveLength(2);
+  });
+});

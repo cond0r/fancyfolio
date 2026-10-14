@@ -2,7 +2,7 @@ import type { Root } from 'mdast';
 import rehypeStringify from 'rehype-stringify';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
-import { type Processor, unified } from 'unified';
+import { type Data, type Processor, unified } from 'unified';
 import { describe, expect, it } from 'vitest';
 import {
   parseMarkdown,
@@ -85,7 +85,13 @@ function honestTable(columns: number, rows: number): string {
 function fallback(body: string, reason: string) {
   return {
     type: 'root',
-    children: [{ type: 'code', value: body, data: { dialectFallback: reason } }],
+    children: [
+      {
+        type: 'code',
+        value: body.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'),
+        data: { dialectFallback: reason },
+      },
+    ],
   };
 }
 
@@ -248,14 +254,38 @@ const savedBodies: [string, string][] = [
   ['501 badges', badges(501).join(' ')],
 ];
 
-describe('a guarded field saves as plain code that renders the same', () => {
+describe('a guarded field saves back to its source', () => {
   it.each(savedBodies)('with %s', (_name, body) => {
     const once = stringifyMarkdown(parseMarkdown(body));
+    expect(once).toBe(body.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'));
     expect(render(once)).toBe(render(body));
-    expect(stringifyMarkdown(parseMarkdown(once))).toBe(once);
-    const [first] = parseMarkdown(once).children;
+    const [first] = parseMarkdown(body).children;
+    const reason = first?.type === 'code' ? first.data?.dialectFallback : undefined;
+    expect(reason).toBeDefined();
+    expect(parseMarkdown(once)).toEqual(fallback(once, String(reason)));
+  });
+
+  it('parses a plain fenced block without guard data', () => {
+    const [first] = parseMarkdown('```\nx\n```').children;
     expect(first?.type).toBe('code');
     expect(first?.data).toBeUndefined();
+  });
+});
+
+describe('the dialect needs the guarded parser', () => {
+  it('throws when a parser is installed after it', () => {
+    const processor = unified()
+      .use(remarkDialect)
+      .use(remarkParse)
+      .use(remarkRehype)
+      .use(rehypeStringify);
+    expect(() => processor.processSync('a')).toThrow(
+      'remarkDialect must be used after remark-parse',
+    );
+  });
+
+  it('does not throw after remark-parse', () => {
+    expect(() => render('a')).not.toThrow();
   });
 });
 
@@ -279,33 +309,69 @@ describe('the guard never hides a failure or throws on a field', () => {
   );
 });
 
-function elapsed(body: string): number {
-  const start = performance.now();
-  parseMarkdown(body);
-  return performance.now() - start;
+type MicromarkExtension = NonNullable<Data['micromarkExtensions']>[number];
+type Construct = Exclude<
+  NonNullable<NonNullable<MicromarkExtension['document']>[string]>,
+  unknown[]
+>;
+
+let steps = 0;
+const counter: Construct = {
+  name: 'stepCounter',
+  tokenize(_effects, _ok, nok) {
+    return (code) => {
+      steps += 1;
+      return nok(code);
+    };
+  },
+};
+
+function countSteps(this: Processor) {
+  const data = this.data();
+  const counted = Object.fromEntries(
+    [42, 43, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 62, 91].map(
+      (code): [number, Construct] => [code, counter],
+    ),
+  );
+  data.micromarkExtensions = [
+    ...(data.micromarkExtensions ?? []),
+    { document: counted, flow: { 58: counter }, text: { 33: counter } },
+  ];
 }
 
-describe('parse cost grows at most linearly', () => {
-  it.each([
-    ['a line of dash markers', (length: number) => `${'- '.repeat(length / 2 - 1)}a`],
-    ['a line of star markers', (length: number) => `${'* '.repeat(length / 2 - 1)}a`],
-    [
-      'dash markers after a footnote label',
-      (length: number) => `[^a]: ${'- '.repeat(length / 2 - 4)}a`,
-    ],
-    [
-      'dash markers after a byte order mark',
-      (length: number) => `\uFEFF${'- '.repeat(length / 2 - 1)}a`,
-    ],
-  ])('%s at 20,000 characters takes at most 3 times as long as at 10,000', (_name, make) => {
-    const short = make(10_000);
-    const long = make(20_000);
-    let shortBest = Number.POSITIVE_INFINITY;
-    let longBest = Number.POSITIVE_INFINITY;
-    for (let sample = 0; sample < 5; sample += 1) {
-      shortBest = Math.min(shortBest, elapsed(short));
-      longBest = Math.min(longBest, elapsed(long));
-    }
-    expect(longBest / shortBest).toBeLessThanOrEqual(3);
+function stepsFor(body: string): number {
+  steps = 0;
+  unified().use(remarkParse).use(remarkDialect).use(countSteps).parse(body);
+  return steps;
+}
+
+const costBodies: [string, (length: number) => string][] = [
+  ['a line of dash markers', (n) => `${'- '.repeat(n / 2 - 1)}a`],
+  ['dash markers after a footnote label', (n) => `[^a]: ${'- '.repeat(n / 2 - 4)}a`],
+  ['dash markers after a byte order mark', (n) => `\uFEFF${'- '.repeat(n / 2 - 1)}a`],
+  [
+    'nested images',
+    (n) => {
+      const depth = Math.floor((n - 1) / 6);
+      return `${'!['.repeat(depth)}a${'](u)'.repeat(depth)}`;
+    },
+  ],
+  ['fence lines', (n) => ':::a\n'.repeat(n / 5)],
+];
+
+describe('parse cost does not grow with a guarded field', () => {
+  it.each(costBodies)(
+    '%s takes the same steps at 20,000 as at 10,000 characters',
+    (_name, make) => {
+      const short = make(10_000);
+      const long = make(20_000);
+      expect(stepsFor(long)).toBe(stepsFor(short));
+      expect(parseMarkdown(long).children[0]?.data).toBeDefined();
+    },
+  );
+
+  it('counts more steps for a longer honest body', () => {
+    const make = (n: number) => '> a\n\n'.repeat(n / 5);
+    expect(stepsFor(make(20_000))).toBeGreaterThan(stepsFor(make(10_000)));
   });
 });

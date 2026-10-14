@@ -10,11 +10,29 @@ const checkStart = workflow.indexOf('\n  check:\n');
 const bunStart = workflow.indexOf('\n  bun:\n');
 const checkJob = workflow.slice(checkStart, bunStart);
 const bunJob = workflow.slice(bunStart);
+const steps = workflow.split(/\n {6}- /);
 
 describe('the CI workflow', () => {
   it('runs on pull requests with a read-only token', () => {
     expect(workflow).toMatch(/^on:\n {2}pull_request:\n/m);
-    expect(workflow).toContain('\npermissions:\n  contents: read\n');
+    expect(workflow).toMatch(/^permissions:\n {2}contents: read\n\n/m);
+    expect(workflow.match(/^\s*permissions:/gm)).toHaveLength(1);
+  });
+
+  it('never runs on pull_request_target or workflow_run', () => {
+    expect(workflow).not.toMatch(/pull_request_target|workflow_run/);
+  });
+
+  it('keeps the token out of every checkout', () => {
+    const checkouts = steps.filter((step) => step.includes('uses: actions/checkout@'));
+    expect(checkouts.length).toBeGreaterThan(0);
+    for (const step of checkouts) expect(step).toMatch(/^ +persist-credentials: false$/m);
+  });
+
+  it('passes no expression into a run step', () => {
+    const runSteps = steps.filter((step) => /(^|\n)\s*run:/.test(step));
+    expect(runSteps.length).toBeGreaterThan(0);
+    for (const step of runSteps) expect(step).not.toMatch(/\$\{\{/);
   });
 
   it('pins every action to a full commit SHA', () => {

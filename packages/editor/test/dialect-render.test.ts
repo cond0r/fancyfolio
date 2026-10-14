@@ -85,7 +85,7 @@ const inTreeHtml = new Map([
     ':::callout\nnever closed\n\nmore',
     '<p>:::callout</p>\n<p>never closed</p>\n<p>more</p>\n<p>:::</p>',
   ],
-  [':::x[a *b*]\nin\n:::', '<p>:::x[a _b_]</p>\n<p>in</p>\n<p>:::</p>'],
+  [':::x[a *b*]\nin\n:::', '<p>:::x[a *b*]</p>\n<p>in</p>\n<p>:::</p>'],
   [':::x\n\n:::', '<p>:::x</p>\n<p>:::</p>'],
   [':::x\n    indented\n:::', '<p>:::x</p>\n<pre><code>indented\n</code></pre>\n<p>:::</p>'],
   [':::x\r\nin\r\n:::', '<p>:::x</p>\n<p>in</p>\n<p>:::</p>'],
@@ -137,7 +137,7 @@ const inTreeHtml = new Map([
     '> - a\n>\n>   :::x\n>   in\n>   :::',
     '<blockquote>\n<ul>\n<li>\n<p>a</p>\n<p>:::x</p>\n<p>in</p>\n<p>:::</p>\n</li>\n</ul>\n</blockquote>',
   ],
-  ['::x[label *em*]{a=1}', '<p>::x[label _em_]{a="1"}</p>'],
+  ['::x[label *em*]{a=1}', '<p>::x[label *em*]{a="1"}</p>'],
   ['::x{a="&#91;y&#93;&#40;javascript:alert(1)&#41;"}', '<p>::x{a="[y](javascript:alert(1))"}</p>'],
 ]);
 

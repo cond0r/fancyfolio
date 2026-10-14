@@ -85,7 +85,7 @@ function remarkGfmParts(this: Processor) {
     ...(data.toMarkdownExtensions ?? []),
     gfmFootnoteToMarkdown(),
     gfmStrikethroughToMarkdown(),
-    gfmTableToMarkdown(),
+    gfmTableToMarkdown({ tablePipeAlign: false }),
     gfmTaskListItemToMarkdown(),
   ];
 }
@@ -93,7 +93,7 @@ function remarkGfmParts(this: Processor) {
 export function remarkDialect(this: Processor) {
   remarkGfmParts.call(this);
   const data = this.data();
-  data.settings = { ...data.settings, bullet: '-', emphasis: '_', rule: '-' };
+  data.settings = { ...data.settings, bullet: '-', emphasis: '*', rule: '-' };
   const toMarkdown = directiveToMarkdown();
   data.micromarkExtensions = [...(data.micromarkExtensions ?? []), { flow: directive().flow }];
   data.fromMarkdownExtensions = [...(data.fromMarkdownExtensions ?? []), directiveFromMarkdown()];

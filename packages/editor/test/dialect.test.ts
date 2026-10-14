@@ -155,7 +155,7 @@ describe('block directives', () => {
 
 describe('GFM and the canonical style', () => {
   const canonical =
-    '- [x] done\n- [ ] open\n\n_em_ and **strong** and `code`\n\n---\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n~~gone~~\n\n1. one\n2. two\n\n> quote\n\n```ts\nconst a = 1;\n```\n\n[link](https://example.test) and <https://example.test>\n\n::metric{value="3x"}\n\n:::callout{tone="note"}\nInside **bold**\n:::\n';
+    '- [x] done\n- [ ] open\n\n*em* and **strong** and `code`\n\n---\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n~~gone~~\n\n1. one\n2. two\n\n> quote\n\n```ts\nconst a = 1;\n```\n\n[link](https://example.test) and <https://example.test>\n\n::metric{value="3x"}\n\n:::callout{tone="note"}\nInside **bold**\n:::\n';
 
   it('renders GFM tables, strikethrough and task lists like CommonMark + those GFM parts', () => {
     const body = '| a |\n| - |\n| b |\n\n~~gone~~\n\n- [x] done';
@@ -170,9 +170,9 @@ describe('GFM and the canonical style', () => {
     expect(stringifyMarkdown(parseMarkdown(canonical))).toBe(canonical);
   });
 
-  it('writes - bullets, _ emphasis and --- rules, stable after one pass', () => {
+  it('writes - bullets, * emphasis and --- rules, stable after one pass', () => {
     const once = stringifyMarkdown(parseMarkdown('* a\n\n*em* __s__\n\n***'));
-    expect(once).toBe('- a\n\n_em_ **s**\n\n---\n');
+    expect(once).toBe('- a\n\n*em* **s**\n\n---\n');
     expect(stringifyMarkdown(parseMarkdown(once))).toBe(once);
   });
 });
@@ -250,5 +250,54 @@ describe('adjacent text nodes never serialize as a live directive', () => {
     expect(markdown).toBe(expected);
     expect(directives(parseMarkdown(markdown))).toEqual([]);
     expect(tree).toEqual(before);
+  });
+});
+
+describe('emphasis is written with * and never as character references', () => {
+  it.each([
+    ['2*3*4', '2*3*4\n'],
+    ['un*frigging*believable', 'un*frigging*believable\n'],
+    ['snake_case_name', undefined],
+    [
+      '_em_ and *em* and __strong__ and **strong**',
+      '*em* and *em* and **strong** and **strong**\n',
+    ],
+    ['a *b* c', undefined],
+    ['foo*bar*', undefined],
+    ['*foo*bar', undefined],
+    ['x **y** z', undefined],
+    ['***both***', undefined],
+    ['see *a*, *b*.', undefined],
+    ['file_name.md and *x*', undefined],
+    ['(*x*)', undefined],
+    ['"_y_"', '"*y*"\n'],
+    ['_a_b', undefined],
+    ['a_b_', undefined],
+    ['* not a list item *', undefined],
+    ['mid**word**strong', undefined],
+  ])('%j', (body, expected) => {
+    const markdown = stringifyMarkdown(parseMarkdown(body));
+    expect(markdown).not.toMatch(/&#x/);
+    if (expected !== undefined) expect(markdown).toBe(expected);
+    expect(withoutPositions(parseMarkdown(markdown))).toEqual(
+      withoutPositions(parseMarkdown(body)),
+    );
+  });
+});
+
+describe('table pipes are not aligned on save', () => {
+  it('keeps a 9,000-character cell table near its source size', () => {
+    const body = `| ${'h'.repeat(9_000)} | b |\n|-|-|\n${'| a | b |\n'.repeat(1_000)}`;
+    expect(stringifyMarkdown(parseMarkdown(body)).length).toBeLessThanOrEqual(19_100);
+  });
+
+  it.each([
+    ['| a | bbb |\n|-|-|\n| ccccc | d |', '| a | bbb |\n| - | - |\n| ccccc | d |\n'],
+    [
+      '| Left | Center | Right |\n|:-----|:------:|------:|\n| `a\\|b` | x | 1 |',
+      '| Left | Center | Right |\n| :- | :-: | -: |\n| `a\\|b` | x | 1 |\n',
+    ],
+  ])('%j', (body, expected) => {
+    expect(stringifyMarkdown(parseMarkdown(body))).toBe(expected);
   });
 });

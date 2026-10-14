@@ -24,7 +24,7 @@ import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Data, type Processor, type Transformer, unified } from 'unified';
 
-export type DialectFallback = 'column' | 'images' | 'depth';
+export type DialectFallback = 'column' | 'images' | 'depth' | 'directives' | 'cells';
 
 declare module 'mdast' {
   interface CodeData {
@@ -38,9 +38,12 @@ type Construct = Exclude<
   unknown[]
 >;
 
+type State = ReturnType<Construct['tokenize']>;
+
 const maxDepth = 100;
 const maxColumn = 100;
-const maxImageStarts = 100;
+const maxImageStarts = 500;
+const maxFenceLines = 10;
 const containerStarts = [42, 43, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 62, 91];
 
 class DialectGuardStop extends Error {
@@ -123,9 +126,35 @@ function remarkGuard(this: Processor) {
       };
     },
   };
+  const fenceLines = new WeakMap<object, Set<number>>();
+  const fenceCount: Construct = {
+    name: 'dialectFenceCount',
+    tokenize(effects, _ok, nok) {
+      let colons = 0;
+      const count: State = (code) => {
+        if (code === 58) {
+          effects.consume(code);
+          colons += 1;
+          return count;
+        }
+        if (colons >= 3) {
+          const lines = fenceLines.get(this.parser) ?? new Set<number>();
+          lines.add(this.now().line);
+          fenceLines.set(this.parser, lines);
+          if (lines.size > maxFenceLines) throw new DialectGuardStop('directives');
+        }
+        return nok(code);
+      };
+      return (code) => {
+        effects.enter('data');
+        return count(code);
+      };
+    },
+  };
   const data = this.data();
   data.micromarkExtensions = [
     ...(data.micromarkExtensions ?? []),
+    { flow: { 58: fenceCount } },
     {
       document: Object.fromEntries(
         containerStarts.map((code): [number, Construct] => [code, columnGuard]),
@@ -138,7 +167,9 @@ function remarkGuard(this: Processor) {
   this.parser = (document, file) => {
     try {
       const tree = parse(document, file);
-      return isRoot(tree) && deeperThan(tree, maxDepth) ? fallback(document, 'depth') : tree;
+      if (!isRoot(tree)) return tree;
+      const reason = exceeds(tree, document.length);
+      return reason === undefined ? tree : fallback(document, reason);
     } catch (error) {
       if (error instanceof DialectGuardStop) return fallback(document, error.reason);
       throw error;
@@ -194,17 +225,23 @@ function mergeText(tree: Root): Root {
   return tree;
 }
 
-function deeperThan(tree: Root, limit: number): boolean {
+function exceeds(tree: Root, characters: number): DialectFallback | undefined {
+  let cells = 0;
   const stack: [Nodes, number][] = [[tree, 0]];
   for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
     const [node, depth] = next;
-    if (depth > limit) return true;
+    if (depth > maxDepth) return 'depth';
+    if (node.type === 'table') {
+      const widest = node.children.reduce((most, row) => Math.max(most, row.children.length), 0);
+      cells += node.children.length * Math.max(node.align?.length ?? 0, widest);
+      if (cells > characters) return 'cells';
+    }
     if ('children' in node) {
       const children: Nodes[] = node.children;
       for (const child of children) stack.push([child, depth + 1]);
     }
   }
-  return false;
+  return undefined;
 }
 
 export function remarkDirectiveAllowlist(options: { allow: readonly string[] }): Transformer<Root> {

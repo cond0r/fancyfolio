@@ -366,12 +366,10 @@ describe('a table inside an unknown container keeps its size', () => {
     'a\n'.repeat(rows) +
     ':::';
 
-  it('pads no row to the header width', () => {
-    const { children } = transformed([], tblIn(248, 490));
-    expect(children.map((child) => child.type)).toEqual(['paragraph', 'table', 'paragraph']);
-    const table = children[1];
-    if (table?.type !== 'table') throw new Error('no table');
-    expect(table.children).toHaveLength(491);
-    expect(table.children[1]?.children).toHaveLength(1);
+  it('turns a 2,500 by 4,980 table into one code block', () => {
+    const body = tblIn(2_500, 4_980);
+    const [first] = parseMarkdown(body).children;
+    expect(first?.type === 'code' ? first.data?.dialectFallback : undefined).toBe('cells');
+    expect(render([], body)).toMatch(/^<pre><code>/);
   });
 });

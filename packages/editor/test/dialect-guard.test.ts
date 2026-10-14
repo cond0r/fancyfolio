@@ -69,6 +69,19 @@ function stars(count: number): string {
   return `${'*'.repeat(count)}a${'*'.repeat(count)}`;
 }
 
+function tblTop(columns: number, rows: number): string {
+  return `${'a|'.repeat(columns - 1)}a\n${'-|'.repeat(columns - 1)}-\n${'a\n'.repeat(rows)}`;
+}
+
+function tblIn(columns: number, rows: number): string {
+  return `:::b\n${tblTop(columns, rows)}:::`;
+}
+
+function honestTable(columns: number, rows: number): string {
+  const row = (cell: string) => `|${Array.from({ length: columns }, () => cell).join('|')}|\n`;
+  return row('a') + row('-') + row('b').repeat(rows);
+}
+
 function fallback(body: string, reason: string) {
   return {
     type: 'root',
@@ -100,7 +113,28 @@ const columnBodies: [string, string][] = [
 const imageBodies: [string, string][] = [
   ['3,333 nested images', `${'!['.repeat(3_333)}a${'](u)'.repeat(3_333)}`],
   ['3,999 nested images with empty destinations', `${'!['.repeat(3_999)}a${']()'.repeat(3_999)}`],
-  ['101 badges on one line', badges(101).join(' ')],
+  ['501 badges on one line', badges(501).join(' ')],
+  ['501 image starts with text', 'Hello![ '.repeat(501)],
+];
+
+const directiveBodies: [string, string][] = [
+  ['11 fence lines', ':::a\n'.repeat(11)],
+  ['4,000 fence lines', ':::a\n'.repeat(4_000)],
+  ['11 fence lines over 9,000 lines', ':::a\n'.repeat(11) + 'x\n'.repeat(9_000)],
+];
+
+const cellBodies: [string, string][] = [
+  ['a 2,500 by 4,980 table', tblTop(2_500, 4_980)],
+  ['a 248 by 490 table', tblTop(248, 490)],
+  ['a 2,500 by 4,980 table in a fence', tblIn(2_500, 4_980)],
+];
+
+const fenceHonestBodies: [string, string][] = [
+  ['5 closed containers', ':::a\nx\n:::\n\n'.repeat(5)],
+  ['5 closed containers after paragraphs', 'para\n:::a\nx\n:::\n'.repeat(5)],
+  ['5 closed containers in a list', '- a\n  :::x\n  in\n  :::\n'.repeat(5)],
+  ['6 fence lines after paragraphs', 'p\n:::a\n'.repeat(6)],
+  ['10 open fences over 9,000 lines', ':::a\n'.repeat(10) + 'x\n'.repeat(9_000)],
 ];
 
 const depthBodies: [string, string][] = [
@@ -130,12 +164,27 @@ describe.each(pipelines)('%s', (_pipeline, parse) => {
     expect(parse(body)).toEqual(fallback(body, 'images'));
   });
 
-  it('keeps 100 badges as one paragraph of 100 images', () => {
-    const [paragraph, ...rest] = parse(badges(100).join(' ')).children;
+  it.each([
+    ['500 badges on one line', badges(500).join(' '), 500],
+    ['400 soft-wrapped badges', badges(400).join('\n'), 400],
+  ])('keeps %s as one paragraph of images', (_name, body, count) => {
+    const [paragraph, ...rest] = parse(body).children;
     expect(rest).toEqual([]);
     expect(paragraph?.type).toBe('paragraph');
     const images = paragraph?.type === 'paragraph' ? paragraph.children : [];
-    expect(images.filter((child) => child.type === 'image')).toHaveLength(100);
+    expect(images.filter((child) => child.type === 'image')).toHaveLength(count);
+  });
+
+  it.each(directiveBodies)('turns %s into one code block marked directives', (_name, body) => {
+    expect(parse(body)).toEqual(fallback(body, 'directives'));
+  });
+
+  it.each(cellBodies)('turns %s into one code block marked cells', (_name, body) => {
+    expect(parse(body)).toEqual(fallback(body, 'cells'));
+  });
+
+  it.each(fenceHonestBodies)('never falls back on %s', (_name, body) => {
+    expect(JSON.stringify(parse(body))).not.toContain('dialectFallback');
   });
 
   it('keeps 300 images across paragraphs', () => {
@@ -174,7 +223,11 @@ const honestBodies: [string, string][] = [
   ],
   ['3 nested quotes', '> > > quote'],
   ['10 dash markers', `${'- '.repeat(10)}a`],
-  ['100 badges', badges(100).join(' ')],
+  ['500 badges', badges(500).join(' ')],
+  ['400 soft-wrapped badges', badges(400).join('\n')],
+  ['a backtick fence holding 50 fence lines', `\`\`\`\n${':::a\n'.repeat(50)}\`\`\``],
+  ['a 50 by 120 table', honestTable(50, 120)],
+  ['a 10 by 500 table', honestTable(10, 500)],
   ['300 images across paragraphs', badges(300).join('\n\n')],
 ];
 
@@ -192,7 +245,7 @@ const savedBodies: [string, string][] = [
   ['a fence before deep quotes', `\`\`\`\ncode\n\`\`\`\n${'>'.repeat(120)}a\n`],
   ['trailing blank lines', `${'>'.repeat(120)}a\n\n\n`],
   ['198 stars', stars(198)],
-  ['101 badges', badges(101).join(' ')],
+  ['501 badges', badges(501).join(' ')],
 ];
 
 describe('a guarded field saves as plain code that renders the same', () => {
@@ -218,7 +271,7 @@ describe('the guard never hides a failure or throws on a field', () => {
     expect(() => processor.parse('a')).toThrow('parser failed');
   });
 
-  it.each([...columnBodies, ...imageBodies, ...depthBodies])(
+  it.each([...columnBodies, ...imageBodies, ...depthBodies, ...directiveBodies, ...cellBodies])(
     'renders %s as one code block through the allowlist',
     (_name, body) => {
       expect(renderAllowingNone(body)).toMatch(/^<pre><code>/);

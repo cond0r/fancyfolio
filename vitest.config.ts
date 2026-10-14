@@ -10,7 +10,6 @@ export default defineConfig({
           name: 'api',
           root: 'apps/api',
           include: ['test/**/*.test.ts'],
-          env: { PORT: '3001' },
         },
       },
     ],

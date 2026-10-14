@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 const root = join(import.meta.dirname, '..', '..');
-const scratch = mkdtempSync(join(import.meta.dirname, 'guard-run-'));
+const scratchParent = join(import.meta.dirname, '.scratch');
+mkdirSync(scratchParent, { recursive: true });
+const scratch = mkdtempSync(join(scratchParent, 'guard-run-'));
 
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
@@ -14,15 +16,32 @@ function run(bin: string, args: string[]) {
   const result = spawnSync(join(root, 'node_modules', '.bin', bin), args, {
     cwd: root,
     encoding: 'utf8',
+    timeout: 20_000,
   });
+  if (result.error) throw result.error;
+  if (result.status === null) throw new Error(`${bin} stopped by signal ${result.signal}`);
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
 function biomeCheck(name: string, source: string) {
   const file = join(scratch, name);
   writeFileSync(file, source);
-  return run('biome', ['check', '--colors=off', file]);
+  return run('biome', ['check', '--vcs-enabled=false', '--colors=off', file]);
 }
+
+describe('the guard runner', () => {
+  it('fails when a tool cannot start', () => {
+    expect(() => run('missing-tool', [])).toThrow('ENOENT');
+  });
+
+  it('leaves fixtures that the project Biome run ignores', () => {
+    const file = join(scratch, 'leftover.ts');
+    writeFileSync(file, 'export const version = Bun.version;\n');
+    const result = run('biome', ['check', '--colors=off', file]);
+    expect(result.output).toContain('These paths were provided but ignored');
+    expect(result.output).not.toContain('lint/');
+  });
+});
 
 describe('the lint config bans Bun', () => {
   it('passes a Node-only module', () => {
@@ -55,7 +74,7 @@ function typecheck(name: string, source: string) {
   writeFileSync(join(scratch, `${name}.ts`), source);
   writeFileSync(
     config,
-    JSON.stringify({ extends: '../../../tsconfig.base.json', files: [`${name}.ts`] }),
+    JSON.stringify({ extends: join(root, 'tsconfig.base.json'), files: [`${name}.ts`] }),
   );
   return run('tsc', ['-p', config]);
 }

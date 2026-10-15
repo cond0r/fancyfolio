@@ -2,10 +2,12 @@ import { join } from 'node:path';
 import { parseEnv } from '@fancyfolio/contracts';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import type { Sql } from 'postgres';
 import * as v from 'valibot';
 import type { TestProject } from 'vitest/node';
 import { roleEnv, setRolePasswords } from '../scripts/roles.ts';
 import { connect, loopbackHosts, parseDatabaseUrl } from '../src/client.ts';
+import { authTables } from './auth-tables.ts';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -20,6 +22,11 @@ declare module 'vitest' {
 }
 
 const migrations = join(import.meta.dirname, '..', 'drizzle');
+const targetEnv = v.object({
+  TARGET_DATABASE_URL: v.pipe(v.string(), v.url()),
+  TARGET_POOLER_URL: v.pipe(v.string(), v.url()),
+  ...roleEnv.entries,
+});
 
 export function roleUrl(base: string, role: string, password: string, pooler = false): string {
   const url = new URL(base);
@@ -27,6 +34,34 @@ export function roleUrl(base: string, role: string, password: string, pooler = f
   url.username = pooler ? [role, ...ref].join('.') : role;
   url.password = encodeURIComponent(password);
   return url.href;
+}
+
+async function holdsAuthRows(owner: Sql): Promise<boolean> {
+  const held = authTables
+    .map((table) => owner`exists (select from ${owner(table)})`)
+    .reduce((either, next) => owner`${either} or ${next}`);
+  const [row] = await owner<{ held: boolean }[]>`select ${held} as held`;
+  return row.held;
+}
+
+async function useTarget(project: TestProject): Promise<undefined> {
+  const env = parseEnv(targetEnv, process.env);
+  const owner = connect(env.TARGET_DATABASE_URL);
+  try {
+    const [{ bypass }] = await owner<{ bypass: boolean }[]>`
+      select rolsuper or rolbypassrls as bypass from pg_roles where rolname = current_user
+    `;
+    const writable = bypass && !(await holdsAuthRows(owner));
+    project.provide('db', {
+      mode: 'target',
+      ownerUrl: env.TARGET_DATABASE_URL,
+      appUrl: roleUrl(env.TARGET_POOLER_URL, 'ff_app', env.FF_APP_PASSWORD, true),
+      authUrl: roleUrl(env.TARGET_POOLER_URL, 'ff_auth', env.FF_AUTH_PASSWORD, true),
+      writable,
+    });
+  } finally {
+    await owner.end();
+  }
 }
 
 async function migrateTestDatabase(ownerUrl: string): Promise<void> {
@@ -55,7 +90,10 @@ async function migrateTestDatabase(ownerUrl: string): Promise<void> {
   }
 }
 
-export default async function setup(project: TestProject): Promise<() => Promise<void>> {
+export default async function setup(
+  project: TestProject,
+): Promise<(() => Promise<void>) | undefined> {
+  if (process.env.TARGET_DATABASE_URL !== undefined) return useTarget(project);
   const env = parseEnv(
     v.object({ TEST_DATABASE_URL: v.pipe(v.string(), v.url()), ...roleEnv.entries }),
     process.env,

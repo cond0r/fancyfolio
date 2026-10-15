@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
 import postgres from 'postgres';
-import { describe, expect, inject, it } from 'vitest';
+import { afterAll, describe, expect, inject, it } from 'vitest';
 import { setRolePasswords } from '../scripts/roles.ts';
 import { connect, connectionOptions } from '../src/client.ts';
 import { roleUrl } from './setup.ts';
@@ -203,5 +203,156 @@ describe.runIf(inject('db').mode === 'local')('db:roles', () => {
     } finally {
       await app.end();
     }
+  });
+});
+
+describe.runIf(inject('db').mode === 'local')('the target mode', () => {
+  const { ownerUrl } = inject('db');
+  const owner = connect(ownerUrl);
+  const target = {
+    TARGET_DATABASE_URL: ownerUrl,
+    TARGET_POOLER_URL: ownerUrl,
+    FF_APP_PASSWORD: process.env.FF_APP_PASSWORD ?? '',
+    FF_AUTH_PASSWORD: process.env.FF_AUTH_PASSWORD ?? '',
+  };
+
+  afterAll(() => owner.end());
+
+  async function state() {
+    const [row] = await owner`
+      select
+        (select oid::int from pg_database where datname = current_database()) as database,
+        (select count(*)::int from drizzle.__drizzle_migrations) as migrations,
+        (select count(*)::int from public.users) as users
+    `;
+    return row;
+  }
+
+  it('leaves a pending migration pending and the role passwords unchanged', async () => {
+    const scratch = new URL(ownerUrl);
+    scratch.pathname = '/fancyfolio_test_target';
+    await owner`drop database if exists fancyfolio_test_target with (force)`;
+    await owner`create database fancyfolio_test_target`;
+    const pending = connect(scratch.href);
+    const asApp = connect(roleUrl(ownerUrl, 'ff_app', target.FF_APP_PASSWORD));
+    try {
+      const migrated = run('pnpm', ['--silent', 'db:migrate'], {
+        OWNER_DATABASE_URL: scratch.href,
+      });
+      expect(migrated.status, migrated.output).toBe(0);
+      await pending`
+        update drizzle.__drizzle_migrations set created_at = created_at - 1
+        where id = (select max(id) from drizzle.__drizzle_migrations)
+      `;
+      const journal = () =>
+        pending`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`;
+      const before = await journal();
+      const targeted = runDbSuites(
+        {
+          TARGET_DATABASE_URL: scratch.href,
+          TARGET_POOLER_URL: scratch.href,
+          FF_APP_PASSWORD: 'c'.repeat(32),
+          FF_AUTH_PASSWORD: 'd'.repeat(32),
+        },
+        'roles',
+      );
+      expect(targeted.output).toContain('Test Files  1 passed (1)');
+      expect(targeted.status).toBe(0);
+      expect(await journal()).toEqual(before);
+      const [{ name }] = await asApp<{ name: string }[]>`select current_user as name`;
+      expect(name).toBe('ff_app');
+    } finally {
+      await Promise.all([pending.end(), asApp.end()]);
+      await owner`drop database if exists fancyfolio_test_target with (force)`;
+    }
+  });
+
+  it('creates and migrates nothing and leaves no row behind on an empty database', async () => {
+    const before = await state();
+    const run = runDbSuites(target, 'catalog', 'auth-privileges', 'client');
+    expect(run.output).toContain('Test Files  3 passed (3)');
+    expect(run.status).toBe(0);
+    expect(await state()).toEqual({ ...before, users: 0 });
+  });
+
+  function expectWritesRefused(env = target) {
+    const writes = runDbSuites(env, 'auth-privileges');
+    expect(writes.status).toBe(1);
+    expect(writes.output).toContain('Refused: the target database may hold auth rows');
+    const catalog = runDbSuites(env, 'catalog');
+    expect(catalog.output).toContain('Test Files  1 passed (1)');
+    expect(catalog.status).toBe(0);
+  }
+
+  it.each([
+    {
+      table: 'users',
+      insert: () =>
+        owner`insert into users (name, email) values ('Tomas Lindqvist', 'tomas@example.test')`,
+      remove: () => owner`delete from users where email = 'tomas@example.test'`,
+    },
+    {
+      table: 'rate_limits',
+      insert: () =>
+        owner`insert into rate_limits (key, count, last_request) values ('rate-probe', 1, 0)`,
+      remove: () => owner`delete from rate_limits where key = 'rate-probe'`,
+    },
+  ])(
+    'refuses the write suites while the database holds a $table row',
+    async ({ insert, remove }) => {
+      try {
+        await insert();
+        expectWritesRefused();
+      } finally {
+        await remove();
+      }
+    },
+  );
+
+  it('ignores a table the write suites never touch, even one the owner cannot read', async () => {
+    try {
+      await owner`create table provider_probe (id int)`;
+      await owner`insert into provider_probe values (1)`;
+      await owner`grant select on provider_probe to ff_auth`;
+      await owner`revoke all on provider_probe from current_user`;
+      const run = runDbSuites(target, 'auth-privileges');
+      expect(run.output).toContain('Test Files  1 passed (1)');
+      expect(run.status).toBe(0);
+    } finally {
+      await owner`drop table if exists provider_probe`;
+    }
+  });
+
+  it('refuses the write suites when the owner cannot bypass RLS', async () => {
+    const password = 'probe-owner-password-not-secret-01';
+    try {
+      await owner`drop role if exists ff_probe_owner`;
+      await owner.begin(async (tx) => {
+        await tx`select set_config('ff.probe_password', ${password}, true)`;
+        await tx`
+          do $$ begin
+            execute format(
+              'create role ff_probe_owner login nobypassrls password %L',
+              current_setting('ff.probe_password')
+            );
+          end $$
+        `;
+      });
+      expectWritesRefused({
+        ...target,
+        TARGET_DATABASE_URL: roleUrl(ownerUrl, 'ff_probe_owner', password),
+      });
+    } finally {
+      await owner`drop role if exists ff_probe_owner`;
+    }
+  });
+
+  it('connects the runtime roles through the pooler URL with its user suffix', () => {
+    const pooler = new URL(ownerUrl);
+    pooler.username = `${pooler.username}.abcdef`;
+    const run = runDbSuites({ ...target, TARGET_POOLER_URL: pooler.href }, 'client');
+    expect(run.status).toBe(1);
+    expect(run.output).toContain('ff_app.abcdef');
+    expect(run.output).toContain('Tests  2 failed (2)');
   });
 });

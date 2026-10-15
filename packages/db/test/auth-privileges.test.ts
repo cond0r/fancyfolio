@@ -1,11 +1,17 @@
 import type { Sql, TransactionSql } from 'postgres';
-import { afterAll, describe, expect, inject, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { authTables } from './auth-tables.ts';
 
-const { appUrl, authUrl } = inject('db');
+const { appUrl, authUrl, writable } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
+
+beforeAll(() => {
+  if (!writable) {
+    throw new Error('Refused: the target database may hold auth rows; run only the catalog suite');
+  }
+});
 
 afterAll(async () => {
   await Promise.all([app.end(), auth.end()]);

@@ -198,6 +198,15 @@ importers:
         specifier: ^2.1.4
         version: 2.1.5(hono@4.13.13)
 
+  apps/web:
+    dependencies:
+      '@fancyfolio/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      valibot:
+        specifier: ^1.5.0
+        version: 1.5.0(typescript@7.0.2)
+
   packages/contracts:
     dependencies:
       valibot:

@@ -44,6 +44,268 @@
   },
   "overrides": [
     {
+      "includes": ["apps/web/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package.",
+                  "@fancyfolio/db": "Only apps/api talks to the database.",
+                  "postgres": "Only apps/api talks to the database.",
+                  "drizzle-orm": "Only apps/api talks to the database.",
+                  "pg": "Only apps/api talks to the database.",
+                  "@fancyfolio/api": "apps/api is a server: reach it over HTTP.",
+                  "@vercel/blob": "Only apps/api talks to Vercel Blob.",
+                  "better-auth": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react.",
+                  "@fancyfolio/editor": "The editor loads only on the case-study edit route and the playground."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db/**",
+                      "postgres/**",
+                      "drizzle-orm/**",
+                      "pg/**",
+                      "**/packages/db",
+                      "**/packages/db/**"
+                    ],
+                    "message": "Only apps/api talks to the database."
+                  },
+                  {
+                    "group": ["@fancyfolio/api/**", "**/apps/api", "**/apps/api/**"],
+                    "message": "apps/api is a server: reach it over HTTP."
+                  },
+                  {
+                    "group": ["@vercel/blob/**"],
+                    "message": "Only apps/api talks to Vercel Blob."
+                  },
+                  {
+                    "group": [
+                      "better-auth/**",
+                      "!better-auth/client",
+                      "!better-auth/client/**",
+                      "!better-auth/react",
+                      "better-auth/**/..",
+                      "better-auth/**/../**",
+                      "@better-auth/**"
+                    ],
+                    "message": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react."
+                  },
+                  {
+                    "group": ["@fancyfolio/editor/**"],
+                    "message": "The editor loads only on the case-study edit route and the playground."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/lib/markdown.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package.",
+                  "@fancyfolio/db": "Only apps/api talks to the database.",
+                  "postgres": "Only apps/api talks to the database.",
+                  "drizzle-orm": "Only apps/api talks to the database.",
+                  "pg": "Only apps/api talks to the database.",
+                  "@fancyfolio/api": "apps/api is a server: reach it over HTTP.",
+                  "@vercel/blob": "Only apps/api talks to Vercel Blob.",
+                  "better-auth": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react.",
+                  "@fancyfolio/editor": "The editor loads only on the case-study edit route and the playground."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db/**",
+                      "postgres/**",
+                      "drizzle-orm/**",
+                      "pg/**",
+                      "**/packages/db",
+                      "**/packages/db/**"
+                    ],
+                    "message": "Only apps/api talks to the database."
+                  },
+                  {
+                    "group": ["@fancyfolio/api/**", "**/apps/api", "**/apps/api/**"],
+                    "message": "apps/api is a server: reach it over HTTP."
+                  },
+                  {
+                    "group": ["@vercel/blob/**"],
+                    "message": "Only apps/api talks to Vercel Blob."
+                  },
+                  {
+                    "group": [
+                      "better-auth/**",
+                      "!better-auth/client",
+                      "!better-auth/client/**",
+                      "!better-auth/react",
+                      "better-auth/**/..",
+                      "better-auth/**/../**",
+                      "@better-auth/**"
+                    ],
+                    "message": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react."
+                  },
+                  {
+                    "group": ["@fancyfolio/editor/**", "!@fancyfolio/editor/dialect"],
+                    "message": "The editor loads only on the case-study edit route and the playground."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/web/app/(app)/dashboard/case-studies/\\[id\\]/**",
+        "apps/web/app/(app)/playground/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package.",
+                  "@fancyfolio/db": "Only apps/api talks to the database.",
+                  "postgres": "Only apps/api talks to the database.",
+                  "drizzle-orm": "Only apps/api talks to the database.",
+                  "pg": "Only apps/api talks to the database.",
+                  "@fancyfolio/api": "apps/api is a server: reach it over HTTP.",
+                  "@vercel/blob": "Only apps/api talks to Vercel Blob.",
+                  "better-auth": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db/**",
+                      "postgres/**",
+                      "drizzle-orm/**",
+                      "pg/**",
+                      "**/packages/db",
+                      "**/packages/db/**"
+                    ],
+                    "message": "Only apps/api talks to the database."
+                  },
+                  {
+                    "group": ["@fancyfolio/api/**", "**/apps/api", "**/apps/api/**"],
+                    "message": "apps/api is a server: reach it over HTTP."
+                  },
+                  {
+                    "group": ["@vercel/blob/**"],
+                    "message": "Only apps/api talks to Vercel Blob."
+                  },
+                  {
+                    "group": [
+                      "better-auth/**",
+                      "!better-auth/client",
+                      "!better-auth/client/**",
+                      "!better-auth/react",
+                      "better-auth/**/..",
+                      "better-auth/**/../**",
+                      "@better-auth/**"
+                    ],
+                    "message": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/contracts/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package.",
+                  "@fancyfolio/db": "Only apps/api talks to the database.",
+                  "postgres": "Only apps/api talks to the database.",
+                  "drizzle-orm": "Only apps/api talks to the database.",
+                  "pg": "Only apps/api talks to the database.",
+                  "@fancyfolio/api": "apps/api is a server: reach it over HTTP.",
+                  "@vercel/blob": "Only apps/api talks to Vercel Blob.",
+                  "better-auth": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react.",
+                  "hono": "Contracts stay framework-free: the web and the CLI import them."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db/**",
+                      "postgres/**",
+                      "drizzle-orm/**",
+                      "pg/**",
+                      "**/packages/db",
+                      "**/packages/db/**"
+                    ],
+                    "message": "Only apps/api talks to the database."
+                  },
+                  {
+                    "group": ["@fancyfolio/api/**", "**/apps/api", "**/apps/api/**"],
+                    "message": "apps/api is a server: reach it over HTTP."
+                  },
+                  {
+                    "group": ["@vercel/blob/**"],
+                    "message": "Only apps/api talks to Vercel Blob."
+                  },
+                  {
+                    "group": [
+                      "better-auth/**",
+                      "!better-auth/client",
+                      "!better-auth/client/**",
+                      "!better-auth/react",
+                      "better-auth/**/..",
+                      "better-auth/**/../**",
+                      "@better-auth/**"
+                    ],
+                    "message": "Only apps/api runs the Better Auth server; use better-auth/client or better-auth/react."
+                  },
+                  {
+                    "group": ["hono/**", "@hono/**"],
+                    "message": "Contracts stay framework-free: the web and the CLI import them."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["packages/editor/**"],
       "linter": {
         "rules": {

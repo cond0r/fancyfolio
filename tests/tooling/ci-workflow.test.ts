@@ -59,6 +59,17 @@ describe('the CI workflow', () => {
     expect(checkJob).not.toContain('continue-on-error');
   });
 
+  it('creates the owner and the Supabase roles the database suites check against', () => {
+    for (const role of [
+      "create role fancyfolio_owner login nosuperuser createdb createrole bypassrls password 'ci-owner-password-not-secret'",
+      'create role anon nologin noinherit',
+      'create role authenticated nologin noinherit',
+      'create role service_role nologin noinherit bypassrls',
+    ]) {
+      expect(checkJob).toContain(`-c "${role}"`);
+    }
+  });
+
   it('builds the web and runs the smoke spec on Chromium with dummy env and no secrets', () => {
     expect(e2eStart).toBeGreaterThan(checkStart);
     expect(e2eJob).toContain(
@@ -79,7 +90,7 @@ describe('the CI workflow', () => {
 
   it('runs the same tests under Bun without blocking the pull request', () => {
     expect(bunJob).toContain('    continue-on-error: true\n');
-    expect(bunJob).toContain('- run: bun --bun run test\n');
+    expect(bunJob).toContain("- run: bun --bun run test --project '!db'\n");
     expect(workflow.match(/continue-on-error/g)).toHaveLength(1);
   });
 });

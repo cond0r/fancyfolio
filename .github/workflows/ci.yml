@@ -11,6 +11,10 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_URL: postgres://fancyfolio_owner:ci-owner-password-not-secret@127.0.0.1:5432/fancyfolio_test
+      FF_APP_PASSWORD: ci-app-password-not-secret-000000
+      FF_AUTH_PASSWORD: ci-auth-password-not-secret-00000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -22,6 +26,16 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - run: sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+      - run: echo 'create_main_cluster = false' | sudo tee -a /etc/postgresql-common/createcluster.conf
+      - run: sudo apt-get install -y postgresql-17
+      - run: sudo pg_createcluster 17 ci --port 5432 --start
+      - run: >-
+          sudo -u postgres psql -v ON_ERROR_STOP=1
+          -c "create role fancyfolio_owner login nosuperuser createdb createrole bypassrls password 'ci-owner-password-not-secret'"
+          -c "create role anon nologin noinherit"
+          -c "create role authenticated nologin noinherit"
+          -c "create role service_role nologin noinherit bypassrls"
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome ci
       - run: pnpm typecheck
@@ -68,4 +82,4 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: pnpm install --frozen-lockfile
-      - run: bun --bun run test
+      - run: bun --bun run test --project '!db'

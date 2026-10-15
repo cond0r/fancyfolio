@@ -7,8 +7,10 @@ const workflow = readFileSync(
   'utf8',
 );
 const checkStart = workflow.indexOf('\n  check:\n');
+const e2eStart = workflow.indexOf('\n  e2e:\n');
 const bunStart = workflow.indexOf('\n  bun:\n');
-const checkJob = workflow.slice(checkStart, bunStart);
+const checkJob = workflow.slice(checkStart, e2eStart);
+const e2eJob = workflow.slice(e2eStart, bunStart);
 const bunJob = workflow.slice(bunStart);
 const steps = workflow.split(/\n {6}- /);
 
@@ -37,13 +39,14 @@ describe('the CI workflow', () => {
 
   it('pins every action to a full commit SHA', () => {
     const refs = [...workflow.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((match) => match[1]);
-    expect(refs.length).toBeGreaterThanOrEqual(7);
+    expect(refs.length).toBeGreaterThanOrEqual(10);
     for (const ref of refs) expect(ref).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
   });
 
   it('runs install, Biome, types, tests and the audit in the blocking job', () => {
     expect(checkStart).toBeGreaterThan(0);
-    expect(bunStart).toBeGreaterThan(checkStart);
+    expect(e2eStart).toBeGreaterThan(checkStart);
+    expect(bunStart).toBeGreaterThan(e2eStart);
     for (const step of [
       'pnpm install --frozen-lockfile',
       'pnpm exec biome ci',
@@ -54,6 +57,24 @@ describe('the CI workflow', () => {
       expect(checkJob).toContain(`- run: ${step}\n`);
     }
     expect(checkJob).not.toContain('continue-on-error');
+  });
+
+  it('builds the web and runs the smoke spec on Chromium with dummy env and no secrets', () => {
+    expect(e2eStart).toBeGreaterThan(checkStart);
+    expect(e2eJob).toContain(
+      '    env:\n      API_URL: http://127.0.0.1:3201\n      ROOT_DOMAIN: localhost\n      NEXT_TELEMETRY_DISABLED: 1\n',
+    );
+    for (const step of [
+      'pnpm install --frozen-lockfile',
+      'pnpm exec playwright install --with-deps --only-shell chromium',
+      'pnpm build',
+      'pnpm e2e',
+    ]) {
+      expect(e2eJob).toContain(`- run: ${step}\n`);
+    }
+    expect(e2eJob.indexOf('- run: pnpm build\n')).toBeLessThan(e2eJob.indexOf('- run: pnpm e2e\n'));
+    expect(e2eJob).not.toContain('continue-on-error');
+    expect(workflow).not.toContain('secrets.');
   });
 
   it('runs the same tests under Bun without blocking the pull request', () => {

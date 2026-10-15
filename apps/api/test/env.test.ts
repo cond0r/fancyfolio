@@ -1,7 +1,8 @@
 import { inspect } from 'node:util';
+import { parseEnv } from '@fancyfolio/contracts';
 import * as v from 'valibot';
 import { describe, expect, it } from 'vitest';
-import { localEnv, parseEnv } from '../src/env.ts';
+import { localEnv } from '../src/env.ts';
 
 function refusal(run: () => unknown): Error {
   try {

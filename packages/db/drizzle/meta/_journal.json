@@ -8,6 +8,20 @@
       "when": 1792085774571,
       "tag": "0000_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792086816799,
+      "tag": "0001_auth-tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792086830279,
+      "tag": "0002_auth-rls-and-revokes",
+      "breakpoints": true
     }
   ]
 }

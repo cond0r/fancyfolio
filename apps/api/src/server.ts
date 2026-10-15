@@ -1,5 +1,6 @@
+import { parseEnv } from '@fancyfolio/contracts';
 import { serve } from '@hono/node-server';
-import { localEnv, parseEnv } from './env.ts';
+import { localEnv } from './env.ts';
 import app from './index.ts';
 
 const { PORT } = parseEnv(localEnv, process.env);

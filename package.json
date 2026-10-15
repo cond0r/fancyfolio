@@ -9,13 +9,14 @@
   "scripts": {
     "check": "biome check .",
     "check:fix": "biome check --write .",
-    "typecheck": "tsc -p tests/tooling && pnpm -r --if-present run typecheck",
+    "typecheck": "tsc -p tests/tooling && tsc -p tests/e2e && pnpm -r --if-present run typecheck",
     "test": "vitest run",
     "build": "pnpm -r --if-present run build",
-    "e2e": "pnpm -r --if-present run e2e"
+    "e2e": "playwright test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@playwright/test": "^1.64.0",
     "@types/node": "^24.19.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",

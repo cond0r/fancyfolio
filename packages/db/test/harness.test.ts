@@ -15,10 +15,12 @@ const U = 'postgres://fancyfolio_owner:unused@127.0.0.1:1/fancyfolio_test';
 const P = { FF_APP_PASSWORD: 'a'.repeat(32), FF_AUTH_PASSWORD: 'b'.repeat(32) };
 
 function run(command: string, args: string[], env: Record<string, string | undefined>, cwd = root) {
-  const clean = Object.entries(process.env).filter(([name]) => !inheritedDbEnv.test(name));
+  const clean = Object.entries(process.env).filter(
+    ([name]) => !inheritedDbEnv.test(name) && name !== 'FORCE_COLOR',
+  );
   const child = spawnSync(command, args, {
     cwd,
-    env: { ...Object.fromEntries(clean), ...env },
+    env: { ...Object.fromEntries(clean), NO_COLOR: '1', ...env },
     encoding: 'utf8',
     timeout: 25_000,
   });

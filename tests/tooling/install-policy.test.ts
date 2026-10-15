@@ -20,6 +20,6 @@ describe('the install policy', () => {
     expect(pnpmConfig('minimumReleaseAgeStrict')).toBe('true');
     expect(pnpmConfig('trustPolicy')).toBe('no-downgrade');
     expect(pnpmConfig('minimumReleaseAgeExclude')).toBe('undefined');
-    expect(pnpmConfig('trustPolicyExclude')).toBe('undefined');
+    expect(pnpmConfig('trustPolicyExclude')).toBe('[\n  "semver@6.3.1"\n]');
   });
 });

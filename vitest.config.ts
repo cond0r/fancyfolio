@@ -21,7 +21,15 @@ export default defineConfig({
           env: { API_URL: 'http://127.0.0.1:3201', ROOT_DOMAIN: 'localhost' },
         },
       },
-      { test: { name: 'db', root: 'packages/db', include: ['test/**/*.test.ts'] } },
+      {
+        test: {
+          name: 'db',
+          root: 'packages/db',
+          include: ['test/**/*.test.ts'],
+          globalSetup: ['test/setup.ts'],
+          fileParallelism: false,
+        },
+      },
     ],
   },
 });

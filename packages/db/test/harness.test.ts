@@ -1,0 +1,207 @@
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { inspect } from 'node:util';
+import postgres from 'postgres';
+import { describe, expect, inject, it } from 'vitest';
+import { setRolePasswords } from '../scripts/roles.ts';
+import { connect, connectionOptions } from '../src/client.ts';
+import { roleUrl } from './setup.ts';
+
+const root = join(import.meta.dirname, '..', '..', '..');
+const rolesMigration = join(import.meta.dirname, '..', 'drizzle', '0000_roles.sql');
+const inheritedDbEnv =
+  /^(VITEST|TARGET_|FF_)|^(TEST_DATABASE_URL|OWNER_DATABASE_URL|DATABASE_CA_CERT)$/;
+const U = 'postgres://fancyfolio_owner:unused@127.0.0.1:1/fancyfolio_test';
+const P = { FF_APP_PASSWORD: 'a'.repeat(32), FF_AUTH_PASSWORD: 'b'.repeat(32) };
+
+function run(command: string, args: string[], env: Record<string, string | undefined>, cwd = root) {
+  const clean = Object.entries(process.env).filter(([name]) => !inheritedDbEnv.test(name));
+  const child = spawnSync(command, args, {
+    cwd,
+    env: { ...Object.fromEntries(clean), ...env },
+    encoding: 'utf8',
+    timeout: 25_000,
+  });
+  return { status: child.status, output: `${child.stdout}${child.stderr}` };
+}
+
+function runNode(args: string[], env: Record<string, string | undefined>) {
+  return run(process.execPath, args, env);
+}
+
+function runDbSuites(env: Record<string, string | undefined>, ...files: string[]) {
+  return runNode(['node_modules/vitest/vitest.mjs', 'run', '--project', 'db', ...files], env);
+}
+
+it('puts the role and the encoded password into the URL, the user suffix kept only for the pooler', () => {
+  expect(
+    roleUrl(
+      'postgres://postgres.abcdef:owner@pooler.example.test:6543/postgres',
+      'ff_app',
+      'p@ss/w:rd',
+      true,
+    ),
+  ).toBe('postgres://ff_app.abcdef:p%40ss%2Fw%3Ard@pooler.example.test:6543/postgres');
+  expect(roleUrl('postgres://first.last:pw@127.0.0.1:5432/fancyfolio_test', 'ff_auth', 'x')).toBe(
+    'postgres://ff_auth:x@127.0.0.1:5432/fancyfolio_test',
+  );
+  expect(decodeURIComponent(new URL(roleUrl(U, 'ff_app', 'abc%41%zz')).password)).toBe('abc%41%zz');
+});
+
+it.each(['db:roles', 'db:migrate'])('%s refuses to run without an owner URL', (script) => {
+  const child = run('pnpm', ['--silent', script], {});
+  expect(child.status).toBe(1);
+  expect(child.output).toContain('Invalid environment: OWNER_DATABASE_URL (missing)');
+});
+
+it('drizzle-kit has no credentials, so push cannot reach a database', () => {
+  const child = run(
+    join(root, 'packages', 'db', 'node_modules', '.bin', 'drizzle-kit'),
+    ['push', '--force'],
+    { OWNER_DATABASE_URL: U },
+    join(root, 'packages', 'db'),
+  );
+  expect(child.status).toBe(1);
+  expect(child.output).toContain('Either connection "url" or "host", "database" are required');
+  expect(child.output).not.toContain('ECONNREFUSED');
+});
+
+describe.runIf(inject('db').mode === 'local')('the local harness', () => {
+  it('fails instead of skipping when Postgres is unreachable', () => {
+    const run = runDbSuites({ TEST_DATABASE_URL: U, ...P }, 'catalog');
+    expect(run.status).toBe(1);
+    expect(run.output).toContain('ECONNREFUSED');
+    expect(run.output).not.toContain('skipped');
+  });
+
+  it('names every missing variable', () => {
+    const run = runDbSuites({}, 'catalog');
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      'Invalid environment: TEST_DATABASE_URL (missing), FF_APP_PASSWORD (missing), FF_AUTH_PASSWORD (missing)',
+    );
+  });
+
+  it('refuses any database but fancyfolio_test before connecting', () => {
+    const run = runDbSuites(
+      { TEST_DATABASE_URL: 'postgres://fancyfolio_owner:unused@127.0.0.1:1/fancyfolio_dev', ...P },
+      'catalog',
+    );
+    expect(run.status).toBe(1);
+    expect(run.output).toContain('TEST_DATABASE_URL must name the fancyfolio_test database');
+    expect(run.output).not.toContain('ECONNREFUSED');
+  });
+
+  it('refuses a host that is not loopback before connecting', () => {
+    const run = runDbSuites(
+      {
+        TEST_DATABASE_URL: 'postgres://fancyfolio_owner:unused@db.example.test:1/fancyfolio_test',
+        ...P,
+      },
+      'catalog',
+    );
+    expect(run.status).toBe(1);
+    expect(run.output).toContain('TEST_DATABASE_URL must point at a loopback host');
+    expect(run.output).not.toContain('ENOTFOUND');
+  });
+
+  it('refuses connection parameters in the query before connecting', () => {
+    const run = runDbSuites({ TEST_DATABASE_URL: `${U}?database=fancyfolio_dev`, ...P }, 'catalog');
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      'Database URL must be postgres://user:password@host[:port]/database',
+    );
+    expect(run.output).not.toContain('ECONNREFUSED');
+  });
+
+  it('refuses a second run while this one holds the lock', () => {
+    const run = runDbSuites(
+      {
+        TEST_DATABASE_URL: inject('db').ownerUrl,
+        FF_APP_PASSWORD: process.env.FF_APP_PASSWORD,
+        FF_AUTH_PASSWORD: process.env.FF_AUTH_PASSWORD,
+      },
+      'catalog',
+    );
+    expect(run.status).toBe(1);
+    expect(run.output).toContain('Another database test run holds the fancyfolio_test lock');
+    expect(run.output).not.toContain('close timed out');
+  });
+});
+
+describe.runIf(inject('db').mode === 'local')('the roles migration', () => {
+  it('runs again on existing roles, resets attributes changed by hand and keeps logins', async () => {
+    const owner = connect(inject('db').ownerUrl);
+    try {
+      await owner`alter role ff_app bypassrls createdb createrole`;
+      await owner`alter role ff_resolver login bypassrls createdb createrole`;
+      await owner.file(rolesMigration);
+      const roles = await owner`
+        select rolname, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole from pg_roles
+        where rolname in ('ff_app', 'ff_auth', 'ff_resolver') order by rolname
+      `;
+      expect(roles).toEqual(
+        ['ff_app', 'ff_auth', 'ff_resolver'].map((rolname) => ({
+          rolname,
+          rolcanlogin: rolname !== 'ff_resolver',
+          rolbypassrls: false,
+          rolcreatedb: false,
+          rolcreaterole: false,
+        })),
+      );
+    } finally {
+      await owner`alter role ff_app nobypassrls nocreatedb nocreaterole`;
+      await owner`alter role ff_resolver nologin nobypassrls nocreatedb nocreaterole`;
+      await owner.end();
+    }
+  });
+});
+
+describe.runIf(inject('db').mode === 'local')('db:roles', () => {
+  it('leaves no helper function on the connection that set the passwords', async () => {
+    const owner = postgres({ ...connectionOptions(inject('db').ownerUrl, process.env), max: 1 });
+    try {
+      await setRolePasswords(owner, process.env);
+      const [{ helpers }] = await owner<{ helpers: number }[]>`
+        select count(*)::int as helpers from pg_proc where pronamespace = pg_my_temp_schema()
+      `;
+      expect(helpers).toBe(0);
+    } finally {
+      await owner.end();
+    }
+  });
+
+  it('turns login on for runtime roles left NOLOGIN, as a fresh migration creates them', async () => {
+    const owner = connect(inject('db').ownerUrl);
+    try {
+      await owner`alter role ff_app nologin`;
+      await owner`alter role ff_auth nologin`;
+      await setRolePasswords(owner, process.env);
+      const roles = await owner`
+        select rolname, rolcanlogin from pg_roles
+        where rolname in ('ff_app', 'ff_auth') order by rolname
+      `;
+      expect(roles).toEqual([
+        { rolname: 'ff_app', rolcanlogin: true },
+        { rolname: 'ff_auth', rolcanlogin: true },
+      ]);
+    } finally {
+      await owner`alter role ff_app login`;
+      await owner`alter role ff_auth login`;
+      await owner.end();
+    }
+  });
+
+  it('names the role and hides the verifier when ALTER ROLE is refused', async () => {
+    const app = connect(inject('db').appUrl);
+    try {
+      const error = await setRolePasswords(app, process.env).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        message: 'Could not set the login password for ff_app (SQLSTATE 42501)',
+      });
+      expect(inspect(error, { depth: 10, showHidden: true })).not.toContain('SCRAM-SHA-256');
+    } finally {
+      await app.end();
+    }
+  });
+});

@@ -16,7 +16,7 @@ declare module 'vitest' {
       ownerUrl: string;
       appUrl: string;
       authUrl: string;
-      writable: boolean;
+      writeRefusal: string | null;
     };
   }
 }
@@ -36,28 +36,38 @@ export function roleUrl(base: string, role: string, password: string, pooler = f
   return url.href;
 }
 
-async function holdsAuthRows(owner: Sql): Promise<boolean> {
-  const held = authTables
+async function writeRefusal(owner: Sql): Promise<string | null> {
+  const [{ bypass }] = await owner<{ bypass: boolean }[]>`
+    select rolsuper or rolbypassrls as bypass from pg_roles where rolname = current_user
+  `;
+  if (!bypass) {
+    return 'the target owner role lacks BYPASSRLS, so forced RLS hides rows from it; run only the catalog suite';
+  }
+  const tables = authTables.map((table) => `public.${table}`);
+  const missing = await owner<{ name: string }[]>`
+    select name from unnest(${owner.array(tables)}::text[]) as name
+    where to_regclass(name) is null order by name
+  `;
+  if (missing.length > 0) {
+    return `the target database lacks ${missing.map(({ name }) => name).join(', ')}; migrate it first`;
+  }
+  const held = tables
     .map((table) => owner`exists (select from ${owner(table)})`)
     .reduce((either, next) => owner`${either} or ${next}`);
   const [row] = await owner<{ held: boolean }[]>`select ${held} as held`;
-  return row.held;
+  return row.held ? 'the target database holds auth rows; run only the catalog suite' : null;
 }
 
 async function useTarget(project: TestProject): Promise<undefined> {
   const env = parseEnv(targetEnv, process.env);
   const owner = connect(env.TARGET_DATABASE_URL);
   try {
-    const [{ bypass }] = await owner<{ bypass: boolean }[]>`
-      select rolsuper or rolbypassrls as bypass from pg_roles where rolname = current_user
-    `;
-    const writable = bypass && !(await holdsAuthRows(owner));
     project.provide('db', {
       mode: 'target',
       ownerUrl: env.TARGET_DATABASE_URL,
       appUrl: roleUrl(env.TARGET_POOLER_URL, 'ff_app', env.FF_APP_PASSWORD, true),
       authUrl: roleUrl(env.TARGET_POOLER_URL, 'ff_auth', env.FF_AUTH_PASSWORD, true),
-      writable,
+      writeRefusal: await writeRefusal(owner),
     });
   } finally {
     await owner.end();
@@ -133,7 +143,7 @@ export default async function setup(
     ownerUrl: env.TEST_DATABASE_URL,
     appUrl: roleUrl(env.TEST_DATABASE_URL, 'ff_app', env.FF_APP_PASSWORD),
     authUrl: roleUrl(env.TEST_DATABASE_URL, 'ff_auth', env.FF_AUTH_PASSWORD),
-    writable: true,
+    writeRefusal: null,
   });
   return close;
 }

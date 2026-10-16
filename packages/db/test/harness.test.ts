@@ -277,14 +277,14 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     expect(await state()).toEqual({ ...before, users: 0 });
   });
 
-  function expectWritesRefused(env = target) {
-    const writes = runDbSuites(env, 'auth-privileges');
-    expect(writes.status).toBe(1);
-    expect(writes.output).toContain('Refused: the target database may hold auth rows');
-    const catalog = runDbSuites(env, 'catalog');
-    expect(catalog.output).toContain('Test Files  1 passed (1)');
-    expect(catalog.status).toBe(0);
+  function expectWritesRefused(reason: string, env = target) {
+    const run = runDbSuites(env, 'auth-privileges', 'catalog');
+    expect(run.output).toContain('Test Files  1 failed | 1 passed (2)');
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(`Refused: ${reason}; run only the catalog suite`);
   }
+
+  const heldRows = 'the target database holds auth rows';
 
   it.each([
     {
@@ -304,12 +304,27 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     async ({ insert, remove }) => {
       try {
         await insert();
-        expectWritesRefused();
+        expectWritesRefused(heldRows);
       } finally {
         await remove();
       }
     },
   );
+
+  it("counts the auth rows in public even when the owner's own schema shadows a table", async () => {
+    const [{ name }] = await owner<{ name: string }[]>`select current_user as name`;
+    try {
+      await owner`create schema ${owner(name)}`;
+      await owner`create table ${owner(`${name}.users`)} (id int)`;
+      await owner`
+        insert into public.users (name, email) values ('Tomas Lindqvist', 'tomas@example.test')
+      `;
+      expectWritesRefused(heldRows);
+    } finally {
+      await owner`drop schema if exists ${owner(name)} cascade`;
+      await owner`delete from public.users where email = 'tomas@example.test'`;
+    }
+  });
 
   it('ignores a table the write suites never touch, even one the owner cannot read', async () => {
     try {
@@ -325,27 +340,50 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     }
   });
 
-  it('refuses the write suites when the owner cannot bypass RLS', async () => {
-    const password = 'probe-owner-password-not-secret-01';
+  it('refuses the write suites when forced RLS hides the rows from an owner without BYPASSRLS', async () => {
+    const probePassword = 'probe-owner-password-not-secret-01';
     try {
       await owner`drop role if exists ff_probe_owner`;
       await owner.begin(async (tx) => {
-        await tx`select set_config('ff.probe_password', ${password}, true)`;
         await tx`
-          do $$ begin
-            execute format(
-              'create role ff_probe_owner login nobypassrls password %L',
-              current_setting('ff.probe_password')
-            );
-          end $$
+          create function pg_temp.create_probe_owner(secret text) returns void
+          language plpgsql as $$
+          begin
+            execute format('create role ff_probe_owner login nobypassrls password %L', secret);
+          end
+          $$
         `;
+        await tx`select pg_temp.create_probe_owner(${probePassword})`;
       });
-      expectWritesRefused({
-        ...target,
-        TARGET_DATABASE_URL: roleUrl(ownerUrl, 'ff_probe_owner', password),
-      });
+      expectWritesRefused(
+        'the target owner role lacks BYPASSRLS, so forced RLS hides rows from it',
+        {
+          ...target,
+          TARGET_DATABASE_URL: roleUrl(ownerUrl, 'ff_probe_owner', probePassword),
+        },
+      );
     } finally {
       await owner`drop role if exists ff_probe_owner`;
+    }
+  });
+
+  it('names the missing auth tables instead of crashing on an unmigrated database', async () => {
+    const scratch = new URL(ownerUrl);
+    scratch.pathname = '/fancyfolio_test_target';
+    await owner`drop database if exists fancyfolio_test_target with (force)`;
+    await owner`create database fancyfolio_test_target`;
+    try {
+      const run = runDbSuites(
+        { ...target, TARGET_DATABASE_URL: scratch.href, TARGET_POOLER_URL: scratch.href },
+        'auth-privileges',
+      );
+      expect(run.status).toBe(1);
+      expect(run.output).toContain(
+        'Refused: the target database lacks public.accounts, public.apikeys, public.rate_limits, public.sessions, public.users, public.verifications; migrate it first',
+      );
+      expect(run.output).not.toContain('42P01');
+    } finally {
+      await owner`drop database if exists fancyfolio_test_target with (force)`;
     }
   });
 

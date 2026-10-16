@@ -11,7 +11,10 @@ import { authTables } from './auth-tables.ts';
 const app = connect(inject('db').appUrl);
 const runtimeRoles = ['ff_app', 'ff_auth', 'ff_resolver'];
 const supabaseRoles = ['anon', 'authenticated', 'service_role'];
-const tenantTables = ['tenants'];
+const contentTables = ['case_studies', 'experiences', 'profiles', 'projects'];
+const tenantTables = ['tenants', ...contentTables];
+const scoped = '(tenant_id = ( SELECT app.tenant_id() AS tenant_id))';
+const owned = `(${scoped} AND ( SELECT app.is_owner() AS is_owner))`;
 
 const probes = [..."az09-AZ_. \n\t'%/\\", 'é', 'а', 'ı', '​', 'ａ', '\u{1f600}'];
 const corpus = [
@@ -249,10 +252,11 @@ describe('tables and privileges', () => {
     expect(grants).toEqual([{ grantee: 'ff_app', privileges: 'INSERT,SELECT' }]);
   });
 
-  it('lets only ff_app run the context functions, as the caller with an empty search_path', async () => {
+  it('lists every function in app with its owner, mode, empty search_path and executors', async () => {
     const functions = await app`
-      select p.proname as name, p.prosecdef as definer, p.provolatile as volatility,
-        p.proconfig as config,
+      select p.proname as name,
+        case when p.proowner = n.nspowner then 'migrator' else p.proowner::regrole::text end as owner,
+        p.prosecdef as definer, p.provolatile as volatility, p.proconfig as config,
         array(
           select e.grantee::regrole::text
           from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) e
@@ -262,15 +266,111 @@ describe('tables and privileges', () => {
       where n.nspname = 'app'
       order by p.proname
     `;
-    expect(functions).toEqual(
-      ['is_owner', 'tenant_id', 'user_id'].map((name) => ({
-        name,
-        definer: false,
-        volatility: 's',
-        config: ['search_path=""'],
-        executors: ['ff_app'],
+    const fn = (name: string, volatility: string, executors: string[]) => ({
+      name,
+      owner: 'migrator',
+      definer: false,
+      volatility,
+      config: ['search_path=""'],
+      executors,
+    });
+    expect(functions).toEqual([
+      fn('clear_source_hash', 'v', []),
+      fn('is_owner', 's', ['ff_app']),
+      fn('links_valid', 'i', ['ff_app']),
+      fn('tags_valid', 'i', ['ff_app']),
+      fn('tenant_id', 's', ['ff_app']),
+      fn('touch', 'v', []),
+      fn('user_id', 's', ['ff_app']),
+    ]);
+  });
+
+  it('gives each content table one read and one owner-only write policy for ff_app', async () => {
+    const policies = await app`
+      select tablename, policyname, roles::text[] as roles, cmd, permissive, qual, with_check
+      from pg_policies where schemaname = 'public' and tablename in ${app(contentTables)}
+      order by tablename, policyname
+    `;
+    expect(policies).toEqual(
+      contentTables.flatMap((tablename) => [
+        {
+          tablename,
+          policyname: `${tablename}_select`,
+          roles: ['ff_app'],
+          cmd: 'SELECT',
+          permissive: 'PERMISSIVE',
+          qual:
+            tablename === 'case_studies'
+              ? `(${scoped} AND ((published_at IS NOT NULL) OR ( SELECT app.is_owner() AS is_owner)))`
+              : scoped,
+          with_check: null,
+        },
+        {
+          tablename,
+          policyname: `${tablename}_write`,
+          roles: ['ff_app'],
+          cmd: 'ALL',
+          permissive: 'PERMISSIVE',
+          qual: owned,
+          with_check: owned,
+        },
+      ]),
+    );
+  });
+
+  it('grants the content tables to ff_app, profiles without DELETE', async () => {
+    const grants = await app`
+      select c.relname as table, a.grantee::regrole::text as grantee,
+        string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
+      from pg_class c join pg_namespace n on n.oid = c.relnamespace,
+        aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+      where n.nspname = 'public' and c.relname in ${app(contentTables)} and a.grantee <> c.relowner
+      group by c.relname, a.grantee order by c.relname
+    `;
+    expect(grants).toEqual(
+      contentTables.map((table) => ({
+        table,
+        grantee: 'ff_app',
+        privileges: table === 'profiles' ? 'INSERT,SELECT,UPDATE' : 'DELETE,INSERT,SELECT,UPDATE',
       })),
     );
+  });
+
+  it('keeps updated_at in BEFORE INSERT OR UPDATE and source_hash in BEFORE UPDATE row triggers', async () => {
+    const triggers = await app`
+      select c.relname as table, t.tgname as name, t.tgfoid::regproc::text as function, t.tgtype
+      from pg_trigger t join pg_class c on c.oid = t.tgrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and not t.tgisinternal order by c.relname, t.tgname
+    `;
+    const beforeUpdateRow = 1 | 2 | 16;
+    const beforeInsertOrUpdateRow = beforeUpdateRow | 4;
+    expect(triggers).toEqual([
+      {
+        table: 'case_studies',
+        name: 'case_studies_clear_source_hash',
+        function: 'app.clear_source_hash',
+        tgtype: beforeUpdateRow,
+      },
+      ...contentTables.map((table) => ({
+        table,
+        name: `${table}_touch`,
+        function: 'app.touch',
+        tgtype: beforeInsertOrUpdateRow,
+      })),
+    ]);
+  });
+
+  it('links a case study to an experience of its own tenant, nulling only the link on delete', async () => {
+    const [link] = await app`
+      select pg_get_constraintdef(oid) as definition from pg_constraint
+      where conrelid = to_regclass('public.case_studies') and contype = 'f'
+        and conname = 'case_studies_experience_fk'
+    `;
+    expect(link).toEqual({
+      definition:
+        'FOREIGN KEY (tenant_id, experience_id) REFERENCES experiences(tenant_id, id) ON DELETE SET NULL (experience_id)',
+    });
   });
 
   it('grants nothing in public or app to PUBLIC, anon, authenticated or service_role', () => {

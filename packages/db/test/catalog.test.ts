@@ -6,6 +6,7 @@ import { authTables } from './auth-tables.ts';
 const app = connect(inject('db').appUrl);
 const runtimeRoles = ['ff_app', 'ff_auth', 'ff_resolver'];
 const supabaseRoles = ['anon', 'authenticated', 'service_role'];
+const tenantTables = ['tenants'];
 
 type Grant = { schema: string; kind: string; name: string; grantee: string; privilege: string };
 
@@ -24,6 +25,14 @@ describe('roles', () => {
     const [{ major }] =
       await app`select current_setting('server_version_num')::int / 10000 as major`;
     expect(major).toBe(17);
+  });
+
+  it('keeps role settings off the runtime roles in every database', async () => {
+    const settings = await app`
+      select r.rolname, s.setconfig from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
+      where r.rolname in ${app(runtimeRoles)}
+    `;
+    expect(settings).toEqual([]);
   });
 
   it('keeps the runtime roles off superuser and BYPASSRLS, and the resolver off login', async () => {
@@ -119,7 +128,9 @@ describe('tables and privileges', () => {
       where n.nspname in ('public', 'app') and c.relkind in ('r', 'p')
       order by c.relname
     `;
-    expect(tables.map((table) => table.name)).toEqual(expect.arrayContaining(authTables));
+    expect(tables.map((table) => table.name)).toEqual(
+      expect.arrayContaining([...authTables, ...tenantTables]),
+    );
     expect(tables.filter((table) => !table.guarded)).toEqual([]);
   });
 
@@ -166,6 +177,68 @@ describe('tables and privileges', () => {
         table,
         grantee: 'ff_auth',
         privileges: 'DELETE,INSERT,SELECT,UPDATE',
+      })),
+    );
+  });
+
+  it('gives tenants one SELECT and one INSERT policy for ff_app, scoped by the context', async () => {
+    const policies = await app`
+      select policyname, roles::text[] as roles, cmd, permissive, qual, with_check
+      from pg_policies where schemaname = 'public' and tablename = 'tenants'
+      order by policyname
+    `;
+    expect(policies).toEqual([
+      {
+        policyname: 'tenants_insert',
+        roles: ['ff_app'],
+        cmd: 'INSERT',
+        permissive: 'PERMISSIVE',
+        qual: null,
+        with_check:
+          '((id = ( SELECT app.tenant_id() AS tenant_id)) AND (owner_id = ( SELECT app.user_id() AS user_id)))',
+      },
+      {
+        policyname: 'tenants_select',
+        roles: ['ff_app'],
+        cmd: 'SELECT',
+        permissive: 'PERMISSIVE',
+        qual: '((id = ( SELECT app.tenant_id() AS tenant_id)) OR (owner_id = ( SELECT app.user_id() AS user_id)))',
+        with_check: null,
+      },
+    ]);
+  });
+
+  it('grants tenants to ff_app for SELECT and INSERT only', async () => {
+    const grants = await app`
+      select a.grantee::regrole::text as grantee,
+        string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
+      from pg_class c, aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+      where c.oid = to_regclass('public.tenants') and a.grantee <> c.relowner
+      group by a.grantee
+    `;
+    expect(grants).toEqual([{ grantee: 'ff_app', privileges: 'INSERT,SELECT' }]);
+  });
+
+  it('lets only ff_app run the context functions, as the caller with an empty search_path', async () => {
+    const functions = await app`
+      select p.proname as name, p.prosecdef as definer, p.provolatile as volatility,
+        p.proconfig as config,
+        array(
+          select e.grantee::regrole::text
+          from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) e
+          where e.grantee <> p.proowner order by 1
+        ) as executors
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'app'
+      order by p.proname
+    `;
+    expect(functions).toEqual(
+      ['is_owner', 'tenant_id', 'user_id'].map((name) => ({
+        name,
+        definer: false,
+        volatility: 's',
+        config: ['search_path=""'],
+        executors: ['ff_app'],
       })),
     );
   });
@@ -230,6 +303,15 @@ describe('tables and privileges', () => {
       where r.rolname in ${app(runtimeRoles)} and has_schema_privilege(r.oid, s.schema, 'CREATE')
     `;
     expect(creators).toEqual([]);
+  });
+
+  it('keeps the runtime roles from creating temporary tables that shadow public ones', async () => {
+    const temporary = await app`
+      select rolname from pg_roles
+      where rolname in ${app(runtimeRoles)}
+        and has_database_privilege(oid, current_database(), 'TEMPORARY')
+    `;
+    expect(temporary).toEqual([]);
   });
 
   it('sets default privileges so new tables, sequences and functions in public and app go to nobody else', async () => {

@@ -46,9 +46,10 @@ export async function setRolePasswords(
   const env = parseEnv(roleEnv, source);
   await sql.begin(async (tx) => {
     await tx`
-      create or replace function pg_temp.set_login_password(role_name text, verifier text)
+      create function app.set_login_password(role_name text, verifier text)
       returns void
       language plpgsql
+      set search_path = ''
       as $$
       begin
         execute format('alter role %I with login password %L', role_name, verifier);
@@ -57,12 +58,12 @@ export async function setRolePasswords(
     `;
     await setLoginPassword(
       'ff_app',
-      tx`select pg_temp.set_login_password('ff_app', ${scramVerifier(env.FF_APP_PASSWORD)})`,
+      tx`select app.set_login_password('ff_app', ${scramVerifier(env.FF_APP_PASSWORD)})`,
     );
     await setLoginPassword(
       'ff_auth',
-      tx`select pg_temp.set_login_password('ff_auth', ${scramVerifier(env.FF_AUTH_PASSWORD)})`,
+      tx`select app.set_login_password('ff_auth', ${scramVerifier(env.FF_AUTH_PASSWORD)})`,
     );
-    await tx`drop function pg_temp.set_login_password(text, text)`;
+    await tx`drop function app.set_login_password(text, text)`;
   });
 }

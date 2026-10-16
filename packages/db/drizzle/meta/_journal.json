@@ -22,6 +22,20 @@
       "when": 1792086830279,
       "tag": "0002_auth-rls-and-revokes",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792130090195,
+      "tag": "0003_tenants",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792130090583,
+      "tag": "0004_tenants-rls",
+      "breakpoints": true
     }
   ]
 }

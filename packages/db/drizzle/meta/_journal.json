@@ -43,6 +43,20 @@
       "when": 1792130287212,
       "tag": "0005_subdomain-check",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792146132874,
+      "tag": "0006_content",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792146151227,
+      "tag": "0007_content-rls",
+      "breakpoints": true
     }
   ]
 }

@@ -3,12 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
     "./dialect": "./src/dialect.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "jotai": "3.0.1",
     "mdast-util-directive": "^3.1.1",
     "mdast-util-gfm-footnote": "^2.1.0",
     "mdast-util-gfm-strikethrough": "^2.0.1",

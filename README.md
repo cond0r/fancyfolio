@@ -8,7 +8,7 @@ Works today:
 
 - The Postgres schema for tenants, profiles, experience, projects, case studies and custom domains, with Drizzle migrations and forced row-level security on every tenant table.
 - A read-only HTTP API: `GET /api/health`, `GET /api/v1/sites/:key` and `GET /api/v1/sites/:key/case-studies/:slug`, which serve one portfolio, looked up by its subdomain or a verified custom domain.
-- The Markdown dialect the editor will use, as a parser and serializer package.
+- The editor core, with no user interface yet: the Markdown dialect, a block model with invertible ops, lossless load and save, and a Jotai store with undo.
 - The web app's landing page.
 
 Next: sign-up and sign-in, the dashboard with its Markdown editor, public portfolio pages on subdomains, attaching custom domains and image uploads.
@@ -29,10 +29,27 @@ apps/web            Next.js front end; opens no database connection
 apps/api            Hono API; the only process that opens a database connection
 packages/db         Drizzle schema, SQL migrations, database roles and the tenant-context helper
 packages/contracts  Valibot schemas: the API's response shapes and the env parsing both apps use
-packages/editor     Markdown dialect for the editor
+packages/editor     Editor core: Markdown dialect, block model, ops, load and save, store with undo
 ```
 
 Tenant isolation lives in the database. Every tenant table carries a `tenant_id` and forced row-level security policies. The API connects as `ff_app`, a role without `BYPASSRLS`, and reaches tenant data only through `withTenant`, which runs each unit of work in a transaction that sets `app.tenant_id` with `set_config(..., true)`. `withTenant` refuses to run on a role that has `SUPERUSER` or `BYPASSRLS`. Better Auth's tables are reachable only by `ff_auth`.
+
+### The editor package
+
+`packages/editor` holds the editor core. It runs without React, the DOM or I/O; the caller passes in the clock and the block ids.
+
+- **Dialect.** One parser and serializer for every Markdown body: CommonMark with GFM tables, strikethrough, task lists, footnotes and block directives. A body past its parser limits, such as nesting depth or table size, reads as one block of literal source.
+- **Blocks and ops.** A document is an ordered list of blocks with ids: paragraphs, headings and raw blocks. Five ops change it: insert text, delete a range, split a block, merge blocks and set a block's type. Each op returns its exact inverse, and an op that does not fit the document is refused before anything changes.
+- **Load and save.** `load` turns a body into blocks and keeps each block's source. `save` writes an unedited document back byte for byte. After an edit, it parses the new body at most twice and returns it only if every block reads back as it is in the document. Otherwise it returns a refusal that names the block or the parser limit, and the document stays as it was.
+- **Store and undo.** `createEditor` keeps the blocks in a vanilla Jotai store, one atom per block, so an op updates only the blocks it changes. Undo and redo replay the inverses. Typing in one block is one undo step until a pause of more than a second, a typed newline or 2 seconds from its first keystroke. The history keeps 500 steps.
+
+Limits:
+
+- Only paragraphs and headings of plain text are edited as text. Everything else (lists, quotes, code, tables, HTML, images, links, emphasis, directives) loads as a raw block that holds its exact source.
+- Text never moves between a raw block and a text block, and raw source is never cut in two or joined to other raw source.
+- A save is refused, not repaired, when a block would read differently in the new body. Showing that refusal on the block is up to the user interface.
+- `load` refuses a body with a NUL character or a lone surrogate.
+- There is no typing, rendering, collaboration or storage yet.
 
 ## Development
 

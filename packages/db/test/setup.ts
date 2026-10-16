@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEnv } from '@fancyfolio/contracts';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -22,6 +23,19 @@ declare module 'vitest' {
 }
 
 const migrations = join(import.meta.dirname, '..', 'drizzle');
+const journalSchema = v.object({ entries: v.array(v.object({ when: v.number() })) });
+
+export function latestMigration(journalText: string): string {
+  const head = v.parse(journalSchema, JSON.parse(journalText)).entries.at(-1);
+  if (head === undefined) {
+    throw new Error('the migration journal has no entries; generate a migration first');
+  }
+  return String(head.when);
+}
+
+const journalHead = latestMigration(
+  readFileSync(join(migrations, 'meta', '_journal.json'), 'utf8'),
+);
 const targetEnv = v.object({
   TARGET_DATABASE_URL: v.pipe(v.string(), v.url()),
   TARGET_POOLER_URL: v.pipe(v.string(), v.url()),
@@ -43,16 +57,22 @@ async function writeRefusal(owner: Sql): Promise<string | null> {
   if (!bypass) {
     return 'the target owner role lacks BYPASSRLS, so forced RLS hides rows from it; run only the catalog suite';
   }
-  const tables = authTables.map((table) => `public.${table}`);
-  const missing = await owner<{ name: string }[]>`
-    select name from unnest(${owner.array(tables)}::text[]) as name
-    where to_regclass(name) is null order by name
+  const [{ migrated }] = await owner<{ migrated: boolean }[]>`
+    select to_regclass('drizzle.__drizzle_migrations') is not null as migrated
   `;
-  if (missing.length > 0) {
-    return `the target database lacks ${missing.map(({ name }) => name).join(', ')}; migrate it first`;
+  const [{ latest }] = migrated
+    ? await owner<{ latest: string | null }[]>`
+        select max(created_at)::text as latest from drizzle.__drizzle_migrations
+      `
+    : [{ latest: null }];
+  if (latest !== null && Number(latest) > Number(journalHead)) {
+    return 'the target database holds migrations this checkout lacks; run the suites from the checkout that applied them';
   }
-  const held = tables
-    .map((table) => owner`exists (select from ${owner(table)})`)
+  if (latest !== journalHead) {
+    return "the target database is not at this checkout's latest migration; migrate it first";
+  }
+  const held = authTables
+    .map((table) => owner`exists (select from ${owner(`public.${table}`)})`)
     .reduce((either, next) => owner`${either} or ${next}`);
   const [row] = await owner<{ held: boolean }[]>`select ${held} as held`;
   return row.held ? 'the target database holds auth rows; run only the catalog suite' : null;

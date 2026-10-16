@@ -6,7 +6,7 @@ import postgres from 'postgres';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { setRolePasswords } from '../scripts/roles.ts';
 import { connect, connectionOptions } from '../src/client.ts';
-import { roleUrl } from './setup.ts';
+import { latestMigration, roleUrl } from './setup.ts';
 
 const root = join(import.meta.dirname, '..', '..', '..');
 const rolesMigration = join(import.meta.dirname, '..', 'drizzle', '0000_roles.sql');
@@ -50,6 +50,15 @@ it('puts the role and the encoded password into the URL, the user suffix kept on
     'postgres://ff_auth:x@127.0.0.1:5432/fancyfolio_test',
   );
   expect(decodeURIComponent(new URL(roleUrl(U, 'ff_app', 'abc%41%zz')).password)).toBe('abc%41%zz');
+});
+
+it('takes the last journal entry as the head and refuses a journal without entries', () => {
+  expect(latestMigration('{"entries":[{"when":1700000000000},{"when":1700000000001}]}')).toBe(
+    '1700000000001',
+  );
+  expect(() => latestMigration('{"entries":[]}')).toThrow(
+    'the migration journal has no entries; generate a migration first',
+  );
 });
 
 it.each(['db:roles', 'db:migrate'])('%s refuses to run without an owner URL', (script) => {
@@ -272,6 +281,8 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     FF_AUTH_PASSWORD: process.env.FF_AUTH_PASSWORD ?? '',
   };
 
+  const writeSuites = ['auth-privileges', 'isolation', 'with-tenant', 'parity'];
+
   afterAll(() => owner.end());
 
   async function state() {
@@ -279,7 +290,8 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       select
         (select oid::int from pg_database where datname = current_database()) as database,
         (select count(*)::int from drizzle.__drizzle_migrations) as migrations,
-        (select count(*)::int from public.users) as users
+        (select count(*)::int from public.users) as users,
+        (select count(*)::int from public.tenants) as tenants
     `;
     return row;
   }
@@ -325,15 +337,15 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
 
   it('creates and migrates nothing and leaves no row behind on an empty database', async () => {
     const before = await state();
-    const run = runDbSuites(target, 'catalog', 'auth-privileges', 'client');
-    expect(run.output).toContain('Test Files  3 passed (3)');
+    const run = runDbSuites(target, ...writeSuites, 'catalog', 'client');
+    expect(run.output).toContain('Test Files  6 passed (6)');
     expect(run.status).toBe(0);
-    expect(await state()).toEqual({ ...before, users: 0 });
+    expect(await state()).toEqual({ ...before, users: 0, tenants: 0 });
   });
 
   function expectWritesRefused(reason: string, env = target) {
-    const run = runDbSuites(env, 'auth-privileges', 'catalog');
-    expect(run.output).toContain('Test Files  1 failed | 1 passed (2)');
+    const run = runDbSuites(env, ...writeSuites, 'catalog');
+    expect(run.output).toContain('Test Files  4 failed | 1 passed (5)');
     expect(run.status).toBe(1);
     expect(run.output).toContain(`Refused: ${reason}; run only the catalog suite`);
   }
@@ -421,20 +433,59 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     }
   });
 
-  it('names the missing auth tables instead of crashing on an unmigrated database', async () => {
+  const behindRefusal =
+    "Refused: the target database is not at this checkout's latest migration; migrate it first";
+  const aheadRefusal =
+    'Refused: the target database holds migrations this checkout lacks; run the suites from the checkout that applied them';
+
+  it.each([
+    ['an unmigrated database', behindRefusal, async () => {}],
+    [
+      'a database behind the journal',
+      behindRefusal,
+      async (url: string) => {
+        const migrated = run('pnpm', ['--silent', 'db:migrate'], { OWNER_DATABASE_URL: url });
+        expect(migrated.status, migrated.output).toBe(0);
+        const behind = connect(url);
+        try {
+          await behind`drop table public.tenants cascade`;
+          await behind`delete from drizzle.__drizzle_migrations where id > 3`;
+        } finally {
+          await behind.end();
+        }
+      },
+    ],
+    [
+      'a database ahead of the journal',
+      aheadRefusal,
+      async (url: string) => {
+        const migrated = run('pnpm', ['--silent', 'db:migrate'], { OWNER_DATABASE_URL: url });
+        expect(migrated.status, migrated.output).toBe(0);
+        const later = connect(url);
+        try {
+          await later`
+            insert into drizzle.__drizzle_migrations (hash, created_at)
+            select 'later', max(created_at) + 1 from drizzle.__drizzle_migrations
+          `;
+        } finally {
+          await later.end();
+        }
+      },
+    ],
+  ])('refuses the write suites on %s, naming why', async (_case, refusal, prepare) => {
     const scratch = new URL(ownerUrl);
     scratch.pathname = '/fancyfolio_test_target';
     await owner`drop database if exists fancyfolio_test_target with (force)`;
     await owner`create database fancyfolio_test_target`;
     try {
+      await prepare(scratch.href);
       const run = runDbSuites(
         { ...target, TARGET_DATABASE_URL: scratch.href, TARGET_POOLER_URL: scratch.href },
-        'auth-privileges',
+        ...writeSuites,
       );
+      expect(run.output).toContain('Test Files  4 failed (4)');
       expect(run.status).toBe(1);
-      expect(run.output).toContain(
-        'Refused: the target database lacks public.accounts, public.apikeys, public.rate_limits, public.sessions, public.users, public.verifications; migrate it first',
-      );
+      expect(run.output).toContain(refusal);
       expect(run.output).not.toContain('42P01');
     } finally {
       await owner`drop database if exists fancyfolio_test_target with (force)`;

@@ -409,6 +409,19 @@
           }
         }
       }
+    },
+    {
+      "includes": ["apps/api/src/**", "packages/db/src/**"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noUnsafeTypeAssertion": "error"
+          },
+          "suspicious": {
+            "noExplicitAny": "error"
+          }
+        }
+      }
     }
   ]
 }

@@ -5,6 +5,7 @@ export default defineConfig({
     testTimeout: 30_000,
     projects: [
       { test: { name: 'tooling', include: ['tests/tooling/**/*.test.ts'] } },
+      { test: { name: 'contracts', root: 'packages/contracts', include: ['test/**/*.test.ts'] } },
       {
         test: {
           name: 'api',

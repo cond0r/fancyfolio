@@ -16,6 +16,11 @@ export function seeded(seed: number): Random {
   return { int, pick: (items) => items[int(items.length)] as (typeof items)[number] };
 }
 
+export function counter(prefix = 'b'): () => string {
+  let next = 0;
+  return () => `${prefix}${next++}`;
+}
+
 export const seeds = process.env.EDITOR_SEED
   ? [Number(process.env.EDITOR_SEED)]
   : Array.from({ length: 40 }, (_, i) => i + 1);

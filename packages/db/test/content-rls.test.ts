@@ -58,7 +58,7 @@ const forgedRow: Record<TableName, (tenantId: string, updatedAt?: SQL) => SQL> =
 async function seed(target: Seeded, name: string, email: string, subdomain: string) {
   target.userId = await createUser(auth, name, email);
   target.tenantId = await createTenant(db, target.userId, subdomain);
-  await withTenant(db, { userId: target.userId }, async (tx) => {
+  await withTenant(db, { kind: 'user', userId: target.userId }, async (tx) => {
     const tenantId = target.tenantId;
     await tx.insert(profiles).values({ tenantId, displayName: name });
     const [experience] = await tx
@@ -96,7 +96,7 @@ afterAll(async () => {
 });
 
 function asOwner<T>(owner: Seeded, fn: (tx: TenantTransaction) => Promise<T>) {
-  return withTenant(db, { userId: owner.userId }, fn);
+  return withTenant(db, { kind: 'user', userId: owner.userId }, fn);
 }
 
 async function tenantsOf(tx: TenantTransaction, name: TableName) {
@@ -112,11 +112,11 @@ describe.each(tableNames)('%s', (name) => {
   it('shows no row and refuses an insert without a context and in the job context', async () => {
     expect([...(await db.execute(sql`select tenant_id from ${table}`))]).toEqual([]);
     await expect(db.execute(forgedRow[name](a.tenantId))).rejects.toMatchObject(denied);
-    await withTenant(db, { job: 'domain-recheck' }, async (tx) => {
+    await withTenant(db, { kind: 'job' }, async (tx) => {
       expect(await tenantsOf(tx, name)).toEqual([]);
     });
     await expect(
-      withTenant(db, { job: 'domain-recheck' }, (tx) => tx.execute(forgedRow[name](a.tenantId))),
+      withTenant(db, { kind: 'job' }, (tx) => tx.execute(forgedRow[name](a.tenantId))),
     ).rejects.toMatchObject(denied);
   });
 
@@ -160,12 +160,12 @@ describe.each(tableNames)('%s', (name) => {
     const rollback = new Error('rollback');
     try {
       await expect(
-        withTenant(db, { userId, onboarding: true }, (tx, tenantId) =>
+        withTenant(db, { kind: 'user', userId, onboarding: true }, (tx, tenantId) =>
           tx.execute(forgedRow[name](tenantId ?? '')),
         ),
       ).rejects.toMatchObject(denied);
       await expect(
-        withTenant(db, { userId, onboarding: true }, async (tx, tenantId) => {
+        withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
           const id = tenantId ?? '';
           await tx
             .insert(tenants)
@@ -188,7 +188,7 @@ describe.each(tableNames)('%s', (name) => {
       let outcome: unknown;
       try {
         await expect(
-          withTenant(db, { userId, onboarding: true }, async (tx, tenantId) => {
+          withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
             const id = tenantId ?? '';
             await tx
               .insert(tenants)
@@ -242,6 +242,45 @@ describe.each(tableNames)('%s', (name) => {
     });
     expect(outcome).toEqual([true, true, true]);
   });
+});
+
+describe('the public site context', () => {
+  it('reads the profile, experiences, projects and only the published case study', async () => {
+    const seen = await withTenant(
+      db,
+      { kind: 'site', site: 'ines-content' },
+      async (tx, tenantId) => ({
+        tenantId,
+        profiles: await tenantsOf(tx, 'profiles'),
+        experiences: await tenantsOf(tx, 'experiences'),
+        projects: await tenantsOf(tx, 'projects'),
+        caseStudies: await tx.select({ id: caseStudies.id }).from(caseStudies),
+      }),
+    );
+    expect(seen).toEqual({
+      tenantId: a.tenantId,
+      profiles: [a.tenantId],
+      experiences: [a.tenantId],
+      projects: [a.tenantId],
+      caseStudies: [{ id: a.publishedId }],
+    });
+  });
+
+  it.each(tableNames)(
+    "cannot insert, update or delete %s rows, even its own tenant's",
+    async (name) => {
+      const readOnly = { cause: { code: '25006' } };
+      for (const statement of [
+        forgedRow[name](a.tenantId),
+        sql`update ${tables[name]} set tenant_id = tenant_id where tenant_id = ${a.tenantId}`,
+        sql`delete from ${tables[name]} where tenant_id = ${a.tenantId}`,
+      ]) {
+        await expect(
+          withTenant(db, { kind: 'site', site: 'ines-content' }, (tx) => tx.execute(statement)),
+        ).rejects.toMatchObject(readOnly);
+      }
+    },
+  );
 });
 
 describe('profiles', () => {

@@ -31,7 +31,7 @@ const moduleLoads = new Set([
   'ExportNamedDeclaration',
 ]);
 const databasePackage = /^packages\/db\//;
-const contextName = /^"?app"?\.(tenant_id|user_id)$/i;
+const contextName = /^"?app"?\.(tenant_id|user_id|job)$/i;
 const passedOn = new Set(['call', 'apply', 'bind']);
 
 type Node = { type: string } & Record<string, unknown>;
@@ -198,6 +198,11 @@ describe('the SQL guards', () => {
     [
       'apps/api/src/db.ts',
       "postgres({ ...options, connection: { 'app.tenant_id': tenantId } });",
+      ['apps/api/src/db.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'apps/api/src/db.ts',
+      "postgres({ ...options, connection: { 'app.job': 'domain-recheck' } });",
       ['apps/api/src/db.ts: sets app.* context outside withTenant'],
     ],
     [

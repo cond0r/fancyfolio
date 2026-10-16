@@ -12,7 +12,12 @@ const app = connect(inject('db').appUrl);
 const runtimeRoles = ['ff_app', 'ff_auth', 'ff_resolver'];
 const supabaseRoles = ['anon', 'authenticated', 'service_role'];
 const contentTables = ['case_studies', 'experiences', 'profiles', 'projects'];
-const tenantTables = ['tenants', ...contentTables];
+const resolverFunctions = [
+  'app.domains_to_recheck(integer)',
+  'app.record_txt(text,text,boolean)',
+  'app.resolve_site(text)',
+];
+const tenantTables = ['tenants', 'domains', ...contentTables];
 const scoped = '(tenant_id = ( SELECT app.tenant_id() AS tenant_id))';
 const owned = `(${scoped} AND ( SELECT app.is_owner() AS is_owner))`;
 
@@ -51,6 +56,10 @@ const executableDefiners = (sql: Sql | TransactionSql) => sql`
     and has_function_privilege(r.oid, p.oid, 'EXECUTE')
 `;
 
+const resolverDefiners = ['ff_app', 'ff_resolver'].flatMap((role) =>
+  resolverFunctions.map((name) => ({ role, name })),
+);
+
 afterAll(() => app.end());
 
 describe('roles', () => {
@@ -88,16 +97,32 @@ describe('roles', () => {
     expect(ownerRole).toEqual({ rolsuper: false, rolbypassrls: true });
   });
 
-  it('lets the runtime roles own nothing and belong to no role', async () => {
-    const [{ owned, memberships }] = await app`
-      select
-        (select count(*)::int from pg_shdepend d join pg_roles r on r.oid = d.refobjid
-          where d.refclassid = 'pg_authid'::regclass and d.deptype = 'o'
-            and r.rolname in ${app(runtimeRoles)}) as owned,
-        (select count(*)::int from pg_auth_members m join pg_roles r on r.oid = m.member
-          where r.rolname in ${app(runtimeRoles)}) as memberships
+  it('lets the runtime roles own only the resolver functions and belong to no role', async () => {
+    const owned = await app`
+      select r.rolname as role, pg_describe_object(d.classid, d.objid, d.objsubid) as object
+      from pg_shdepend d join pg_roles r on r.oid = d.refobjid
+      where d.refclassid = 'pg_authid'::regclass and d.deptype = 'o'
+        and d.dbid = (select oid from pg_database where datname = current_database())
+        and r.rolname in ${app(runtimeRoles)}
+      order by 2
     `;
-    expect({ owned, memberships }).toEqual({ owned: 0, memberships: 0 });
+    expect(owned).toEqual(
+      resolverFunctions.map((name) => ({ role: 'ff_resolver', object: `function ${name}` })),
+    );
+    const [{ memberships }] = await app`
+      select count(*)::int as memberships from pg_auth_members m join pg_roles r on r.oid = m.member
+      where r.rolname in ${app(runtimeRoles)}
+    `;
+    expect(memberships).toBe(0);
+  });
+
+  it('leaves the migrator unable to act as ff_resolver after handing it the functions', async () => {
+    const [migrator] = await app`
+      select pg_has_role(n.nspowner, 'ff_resolver', 'SET') as set,
+        pg_has_role(n.nspowner, 'ff_resolver', 'USAGE') as usage
+      from pg_namespace n where n.nspname = 'app'
+    `;
+    expect(migrator).toEqual({ set: false, usage: false });
   });
 
   it('refuses SET ROLE to the owner for ff_app', async () => {
@@ -214,7 +239,7 @@ describe('tables and privileges', () => {
     );
   });
 
-  it('gives tenants one SELECT and one INSERT policy for ff_app, scoped by the context', async () => {
+  it('gives tenants a SELECT and an INSERT policy for ff_app and a SELECT policy for ff_resolver', async () => {
     const policies = await app`
       select policyname, roles::text[] as roles, cmd, permissive, qual, with_check
       from pg_policies where schemaname = 'public' and tablename = 'tenants'
@@ -231,6 +256,14 @@ describe('tables and privileges', () => {
           '((id = ( SELECT app.tenant_id() AS tenant_id)) AND (owner_id = ( SELECT app.user_id() AS user_id)))',
       },
       {
+        policyname: 'tenants_resolve',
+        roles: ['ff_resolver'],
+        cmd: 'SELECT',
+        permissive: 'PERMISSIVE',
+        qual: 'true',
+        with_check: null,
+      },
+      {
         policyname: 'tenants_select',
         roles: ['ff_app'],
         cmd: 'SELECT',
@@ -239,6 +272,80 @@ describe('tables and privileges', () => {
         with_check: null,
       },
     ]);
+  });
+
+  it('shows ff_app a domain only while live or to its owner, and lets ff_resolver update only verified rows', async () => {
+    const policies = await app`
+      select policyname, roles::text[] as roles, cmd, qual, with_check
+      from pg_policies where schemaname = 'public' and tablename = 'domains'
+      order by policyname
+    `;
+    expect(policies).toEqual([
+      {
+        policyname: 'domains_recheck',
+        roles: ['ff_resolver'],
+        cmd: 'UPDATE',
+        qual: '(verified_at IS NOT NULL)',
+        with_check: 'true',
+      },
+      {
+        policyname: 'domains_resolve',
+        roles: ['ff_resolver'],
+        cmd: 'SELECT',
+        qual: 'true',
+        with_check: null,
+      },
+      {
+        policyname: 'domains_select',
+        roles: ['ff_app'],
+        cmd: 'SELECT',
+        qual: `(${scoped} AND (app.domain_live(verified_at, checked_at) OR ( SELECT app.is_owner() AS is_owner)))`,
+        with_check: null,
+      },
+      {
+        policyname: 'domains_write',
+        roles: ['ff_app'],
+        cmd: 'ALL',
+        qual: owned,
+        with_check: owned,
+      },
+    ]);
+  });
+
+  it('grants domains to ff_app and only the resolver columns to ff_resolver', () => {
+    const held = (name: string) =>
+      grants
+        .filter((grant) => grant.schema === 'public' && grant.name.split('.')[0] === name)
+        .filter((grant) => runtimeRoles.includes(grant.grantee))
+        .map(({ name, grantee, privilege }) => `${grantee} ${privilege} ${name}`)
+        .sort();
+    expect(held('domains')).toEqual([
+      'ff_app DELETE domains',
+      'ff_app INSERT domains',
+      'ff_app SELECT domains',
+      'ff_app UPDATE domains',
+      'ff_resolver SELECT domains.challenge_token',
+      'ff_resolver SELECT domains.checked_at',
+      'ff_resolver SELECT domains.hostname',
+      'ff_resolver SELECT domains.tenant_id',
+      'ff_resolver SELECT domains.verified_at',
+      'ff_resolver UPDATE domains.checked_at',
+      'ff_resolver UPDATE domains.verified_at',
+    ]);
+    expect(held('tenants')).toEqual([
+      'ff_app INSERT tenants',
+      'ff_app SELECT tenants',
+      'ff_resolver SELECT tenants.id',
+      'ff_resolver SELECT tenants.subdomain',
+    ]);
+    expect(
+      grants.filter(
+        (grant) =>
+          grant.grantee === 'ff_resolver' &&
+          grant.kind !== 'function' &&
+          !['domains', 'tenants'].includes(grant.name.split('.')[0]),
+      ),
+    ).toEqual([]);
   });
 
   it('grants tenants to ff_app for SELECT and INSERT only', async () => {
@@ -274,10 +381,21 @@ describe('tables and privileges', () => {
       config: ['search_path=""'],
       executors,
     });
+    const resolver = (name: string, volatility: string) => ({
+      ...fn(name, volatility, ['ff_app']),
+      owner: 'ff_resolver',
+      definer: true,
+    });
     expect(functions).toEqual([
       fn('clear_source_hash', 'v', []),
+      fn('domain_live', 's', ['ff_app', 'ff_resolver']),
+      resolver('domains_to_recheck', 's'),
+      fn('guard_domain_claim', 'v', []),
       fn('is_owner', 's', ['ff_app']),
       fn('links_valid', 'i', ['ff_app']),
+      resolver('record_txt', 'v'),
+      fn('require_recheck_job', 's', ['ff_resolver']),
+      resolver('resolve_site', 's'),
       fn('tags_valid', 'i', ['ff_app']),
       fn('tenant_id', 's', ['ff_app']),
       fn('touch', 'v', []),
@@ -336,7 +454,7 @@ describe('tables and privileges', () => {
     );
   });
 
-  it('keeps updated_at in BEFORE INSERT OR UPDATE and source_hash in BEFORE UPDATE row triggers', async () => {
+  it('keeps updated_at and the domain claim in BEFORE INSERT OR UPDATE and source_hash in BEFORE UPDATE row triggers', async () => {
     const triggers = await app`
       select c.relname as table, t.tgname as name, t.tgfoid::regproc::text as function, t.tgtype
       from pg_trigger t join pg_class c on c.oid = t.tgrelid
@@ -345,6 +463,12 @@ describe('tables and privileges', () => {
     `;
     const beforeUpdateRow = 1 | 2 | 16;
     const beforeInsertOrUpdateRow = beforeUpdateRow | 4;
+    const touch = (table: string) => ({
+      table,
+      name: `${table}_touch`,
+      function: 'app.touch',
+      tgtype: beforeInsertOrUpdateRow,
+    });
     expect(triggers).toEqual([
       {
         table: 'case_studies',
@@ -352,12 +476,15 @@ describe('tables and privileges', () => {
         function: 'app.clear_source_hash',
         tgtype: beforeUpdateRow,
       },
-      ...contentTables.map((table) => ({
-        table,
-        name: `${table}_touch`,
-        function: 'app.touch',
+      touch('case_studies'),
+      {
+        table: 'domains',
+        name: 'domains_guard_claim',
+        function: 'app.guard_domain_claim',
         tgtype: beforeInsertOrUpdateRow,
-      })),
+      },
+      touch('domains'),
+      ...['experiences', 'profiles', 'projects'].map(touch),
     ]);
   });
 
@@ -402,8 +529,9 @@ describe('tables and privileges', () => {
     ).toEqual([]);
   });
 
-  it('lets no runtime role or PUBLIC execute a SECURITY DEFINER function in a schema they can use', async () => {
-    expect(await executableDefiners(app)).toEqual([]);
+  it('lets only ff_app and their owner execute the resolver functions, the only SECURITY DEFINER ones', async () => {
+    expect(await executableDefiners(app)).toEqual(expect.arrayContaining(resolverDefiners));
+    expect(await executableDefiners(app)).toHaveLength(resolverDefiners.length);
   });
 
   it('sets an empty search_path on every SECURITY DEFINER function in public and app', async () => {
@@ -489,7 +617,10 @@ describe.runIf(inject('db').mode === 'local')('the SECURITY DEFINER check', () =
           throw rollback;
         }),
       ).rejects.toBe(rollback);
-      expect(found).toEqual([{ role: 'ff_app', name: 'escalate()' }]);
+      expect(found).toEqual(
+        expect.arrayContaining([...resolverDefiners, { role: 'ff_app', name: 'escalate()' }]),
+      );
+      expect(found).toHaveLength(resolverDefiners.length + 1);
     } finally {
       await owner.end();
     }

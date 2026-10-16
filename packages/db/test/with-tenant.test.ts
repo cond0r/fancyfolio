@@ -5,7 +5,12 @@ import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { connect, connectionOptions } from '../src/client.ts';
 import { tenants } from '../src/schema/tenants.ts';
-import { type TenantTransaction, tenantDatabase, withTenant } from '../src/with-tenant.ts';
+import {
+  type TenantContext,
+  type TenantTransaction,
+  tenantDatabase,
+  withTenant,
+} from '../src/with-tenant.ts';
 import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
@@ -48,10 +53,14 @@ async function context(tx: TenantTransaction): Promise<Seen> {
 describe('withTenant', () => {
   it('sets the user with no tenant, then the tenant from its lookup, all before fn runs', async () => {
     statements.length = 0;
-    const seen = await withTenant(db, { userId: owner.userId }, async (tx, tenantId) => {
-      expect(tenantId).toBe(owner.tenantId);
-      return context(tx);
-    });
+    const seen = await withTenant(
+      db,
+      { kind: 'user', userId: owner.userId },
+      async (tx, tenantId) => {
+        expect(tenantId).toBe(owner.tenantId);
+        return context(tx);
+      },
+    );
     expect(seen).toEqual({ tenant: owner.tenantId, user: owner.userId, owner: true });
     expect(statements.map(({ params }) => params)).toEqual([[owner.userId], [], []]);
     expect(statements[0].query).toMatch(/set_config\('app\.tenant_id', '', true\)/);
@@ -63,14 +72,14 @@ describe('withTenant', () => {
   it('runs the owner context, not onboarding, when onboarding is present but not true', async () => {
     const tenantId = await withTenant(
       db,
-      { userId: owner.userId, onboarding: undefined },
+      { kind: 'user', userId: owner.userId, onboarding: undefined },
       async (_tx, id) => id,
     );
     expect(tenantId).toBe(owner.tenantId);
   });
 
   it('runs fn with no tenant for a user who has none yet', async () => {
-    const seen = await withTenant(db, { userId: newcomer }, async (tx, tenantId) => {
+    const seen = await withTenant(db, { kind: 'user', userId: newcomer }, async (tx, tenantId) => {
       expect(tenantId).toBeNull();
       expect(await tx.select().from(tenants)).toEqual([]);
       return context(tx);
@@ -82,7 +91,7 @@ describe('withTenant', () => {
     statements.length = 0;
     const ids: (string | null)[] = [];
     await expect(
-      withTenant(db, { userId: newcomer, onboarding: true }, async (tx, tenantId) => {
+      withTenant(db, { kind: 'user', userId: newcomer, onboarding: true }, async (tx, tenantId) => {
         ids.push(tenantId);
         expect(tenantId).toMatch(uuid);
         expect(await tx.select().from(tenants)).toEqual([]);
@@ -96,16 +105,22 @@ describe('withTenant', () => {
     ).rejects.toBe(rollback);
     expect(statements[0].params).toEqual([newcomer]);
     expect(statements.filter(({ query }) => query.includes('public.tenants'))).toEqual([]);
-    ids.push(await withTenant(db, { userId: newcomer, onboarding: true }, async (_tx, id) => id));
+    ids.push(
+      await withTenant(
+        db,
+        { kind: 'user', userId: newcomer, onboarding: true },
+        async (_tx, id) => id,
+      ),
+    );
     expect(new Set([...ids, owner.tenantId, other.tenantId]).size).toBe(4);
     expect(
-      await withTenant(db, { userId: newcomer }, async (_tx, tenantId) => tenantId),
+      await withTenant(db, { kind: 'user', userId: newcomer }, async (_tx, tenantId) => tenantId),
     ).toBeNull();
   });
 
   it('sets no user and no tenant in the job context', async () => {
     statements.length = 0;
-    const seen = await withTenant(db, { job: 'domain-recheck' }, async (tx, tenantId) => {
+    const seen = await withTenant(db, { kind: 'job' }, async (tx, tenantId) => {
       expect(tenantId).toBeNull();
       return context(tx);
     });
@@ -113,8 +128,98 @@ describe('withTenant', () => {
     expect(statements.map(({ params }) => params)).toEqual([[null], []]);
   });
 
+  it('marks only the job context as the domain re-check job', async () => {
+    const marker = (context: TenantContext) =>
+      withTenant(db, context, async (tx) => {
+        const [row] = await tx.execute<{ job: string | null }>(
+          sql`select current_setting('app.job', true) as job`,
+        );
+        return row.job;
+      });
+    expect(await marker({ kind: 'job' })).toBe('domain-recheck');
+    expect(await marker({ kind: 'site', site: 'amara' })).toBe('');
+    expect(await marker({ kind: 'user', userId: owner.userId })).toBe('');
+    expect(await marker({ kind: 'user', userId: newcomer, onboarding: true })).toBe('');
+  });
+
+  it('refuses a context that mixes shapes, before sending anything', async () => {
+    const session = { kind: 'user' as const, userId: other.userId };
+    const spread: TenantContext = { ...session, kind: 'site', site: 'nobody.example' };
+    const mixed: [string, unknown][] = [
+      ['a session spread into an unknown site', spread],
+      ['a site with its owner', { kind: 'site', site: 'amara', userId: owner.userId }],
+      ['a user with a site', { kind: 'user', userId: other.userId, site: 'amara' }],
+      [
+        'onboarding with a site',
+        { kind: 'user', userId: newcomer, onboarding: true, site: 'amara' },
+      ],
+      ['the job with a user', { kind: 'job', userId: owner.userId }],
+      ['the job with a site', { kind: 'job', site: 'amara' }],
+      ['a site without a kind', { site: 'amara' }],
+      ['a user without a kind', { userId: owner.userId }],
+      ['an unknown kind', { kind: 'admin' }],
+      ['onboarding set to false', { kind: 'user', userId: newcomer, onboarding: false }],
+      ['a user id that is not a string', { kind: 'user', userId: 7 }],
+    ];
+    for (const [what, context] of mixed) {
+      statements.length = 0;
+      let ran = false;
+      await expect(
+        withTenant(db, context as never, async () => {
+          ran = true;
+        }),
+        what,
+      ).rejects.toEqual(new TypeError('withTenant takes exactly one context shape'));
+      expect({ what, ran, sent: statements.length }).toEqual({ what, ran: false, sent: 0 });
+    }
+  });
+
+  it('resolves the site key with no user, in a read-only transaction, before fn runs', async () => {
+    statements.length = 0;
+    const seen = await withTenant(db, { kind: 'site', site: 'amara' }, async (tx, tenantId) => {
+      expect(tenantId).toBe(owner.tenantId);
+      return context(tx);
+    });
+    expect(seen).toEqual({ tenant: owner.tenantId, user: null, owner: false });
+    expect(statements.map(({ params }) => params)).toEqual([[], [null, 'amara'], []]);
+    expect(statements[0].query).toBe('set transaction read only');
+    expect(statements[1].query).toMatch(/coalesce\(app\.resolve_site\(\$2::text\)::text, ''\)/);
+  });
+
+  it.each([
+    'AMARA',
+    'amara.',
+    'amar',
+    'amara%',
+    '',
+    "amara' or '1'='1",
+    "amara'); select pg_sleep(1); --",
+    'nobody.example',
+  ])('runs fn with no tenant and shows nothing for the unresolved site key %j', async (site) => {
+    const seen = await withTenant(db, { kind: 'site', site }, async (tx, tenantId) => ({
+      tenantId,
+      context: await context(tx),
+      visible: await tx.$count(tenants),
+    }));
+    expect(seen).toEqual({
+      tenantId: null,
+      context: { tenant: null, user: null, owner: false },
+      visible: 0,
+    });
+  });
+
+  it('refuses every write in the site context, also to the tenant it resolved', async () => {
+    await expect(
+      withTenant(db, { kind: 'site', site: 'amara' }, (tx) =>
+        tx
+          .insert(tenants)
+          .values({ id: owner.tenantId, subdomain: 'amara', ownerId: owner.userId }),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '25006' } });
+  });
+
   it('bounds statements, lock waits and idle time inside the transaction', async () => {
-    const limits = await withTenant(db, { job: 'domain-recheck' }, async (tx) => {
+    const limits = await withTenant(db, { kind: 'job' }, async (tx) => {
       const [row] = await tx.execute(
         sql`select current_setting('statement_timeout') as statement, current_setting('lock_timeout') as lock, current_setting('idle_in_transaction_session_timeout') as idle`,
       );
@@ -122,7 +227,7 @@ describe('withTenant', () => {
     });
     expect(limits).toEqual({ statement: '5s', lock: '2s', idle: '10s' });
     await expect(
-      withTenant(db, { job: 'domain-recheck' }, (tx) => tx.execute(sql`select pg_sleep(10)`)),
+      withTenant(db, { kind: 'job' }, (tx) => tx.execute(sql`select pg_sleep(10)`)),
     ).rejects.toMatchObject({ cause: { code: '57014' } });
   });
 
@@ -140,7 +245,7 @@ describe('withTenant', () => {
     await auth.begin(async (holder) => {
       await holder`select pg_advisory_xact_lock(${key})`;
       await expect(
-        withTenant(db, { job: 'domain-recheck' }, (tx) =>
+        withTenant(db, { kind: 'job' }, (tx) =>
           tx.execute(sql`select pg_advisory_xact_lock(${key})`),
         ),
       ).rejects.toMatchObject({ cause: { code: '55P03' } });
@@ -149,7 +254,7 @@ describe('withTenant', () => {
 
   it('ends a transaction left idle inside fn', async () => {
     await onPoolOfOne(async (pooled) => {
-      const idle = withTenant(pooled, { job: 'domain-recheck' }, async (tx) => {
+      const idle = withTenant(pooled, { kind: 'job' }, async (tx) => {
         const [{ pid }] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
         await vi.waitFor(
           async () => {
@@ -171,7 +276,7 @@ describe('withTenant', () => {
     await onPoolOfOne(async (pooled) => {
       const [before] = await pooled.execute(session);
       expect(before).toMatchObject({ tenant: null, user: null, visible: 0 });
-      const [inside] = await withTenant(pooled, { userId: other.userId }, (tx) =>
+      const [inside] = await withTenant(pooled, { kind: 'user', userId: other.userId }, (tx) =>
         tx.execute(session),
       );
       expect(inside).toEqual({
@@ -190,14 +295,14 @@ describe('withTenant', () => {
       await expect(
         single`create temp table tenants (id uuid, owner_id uuid)`,
       ).rejects.toMatchObject({ code: '42501' });
-      expect(await withTenant(pooled, { userId: owner.userId }, async (_tx, id) => id)).toBe(
-        owner.tenantId,
-      );
+      expect(
+        await withTenant(pooled, { kind: 'user', userId: owner.userId }, async (_tx, id) => id),
+      ).toBe(owner.tenantId);
     });
   });
 
   it('hands fn a plain object, never a drizzle transaction', async () => {
-    const tx = await withTenant(db, { userId: owner.userId }, async (tx) => tx);
+    const tx = await withTenant(db, { kind: 'user', userId: owner.userId }, async (tx) => tx);
     expect(tx).not.toBeInstanceOf(PgTransaction);
     expect(['setTransaction', 'transaction', '_', 'session'].filter((key) => key in tx)).toEqual(
       [],
@@ -216,9 +321,9 @@ describe('withTenant', () => {
     const handle = tenantDatabase(appUrl);
     expect(handle).not.toBeInstanceOf(PgDatabase);
     expect(Object.keys(handle)).toEqual(['withTenant']);
-    expect(await handle.withTenant({ userId: owner.userId }, async (_tx, id) => id)).toBe(
-      owner.tenantId,
-    );
+    expect(
+      await handle.withTenant({ kind: 'user', userId: owner.userId }, async (_tx, id) => id),
+    ).toBe(owner.tenantId);
   });
 
   // U& spells set_config past the repository guard, as a hostile string would.
@@ -236,7 +341,7 @@ describe('withTenant', () => {
       (tx: TenantTransaction) => tx.execute({ getSQL: () => hostile() as never }),
     ],
   ])('refuses %s in execute before sending anything', async (_name, attack) => {
-    const outcome = await withTenant(db, { userId: owner.userId }, async (tx) => {
+    const outcome = await withTenant(db, { kind: 'user', userId: owner.userId }, async (tx) => {
       const before = statements.length;
       const thrown = await Promise.resolve()
         .then(() => attack(tx))
@@ -265,17 +370,45 @@ describe('withTenant', () => {
   ];
 
   it.each(hostileIds)(
-    'refuses the hostile user id %j before fn runs, as owner and in onboarding',
+    'refuses the hostile user id %j before sending anything, as owner and in onboarding',
     async (userId) => {
       let ran = false;
-      for (const context of [{ userId }, { userId, onboarding: true as const }]) {
+      for (const context of [
+        { kind: 'user' as const, userId },
+        { kind: 'user' as const, userId, onboarding: true as const },
+      ]) {
+        statements.length = 0;
         await expect(
           withTenant(db, context, async () => {
             ran = true;
           }),
-        ).rejects.toMatchObject({ cause: { code: '22P02' } });
+        ).rejects.toEqual(new TypeError('withTenant takes exactly one context shape'));
+        expect(statements).toEqual([]);
       }
       expect(ran).toBe(false);
     },
   );
+
+  it('runs the context it checked, even when a getter changes its kind after one read', async () => {
+    for (let userReads = 1; userReads <= 8; userReads += 1) {
+      let reads = 0;
+      const context = {
+        userId: owner.userId,
+        get kind() {
+          reads += 1;
+          return reads <= userReads ? 'user' : 'job';
+        },
+      };
+      const outcome = await withTenant(db, context as never, async (tx) => {
+        const [row] = await tx.execute<{ user: string | null; job: string }>(
+          sql`select app.user_id() as user, current_setting('app.job', true) as job`,
+        );
+        return row;
+      }).catch((error: unknown) => error);
+      expect([
+        new TypeError('withTenant takes exactly one context shape'),
+        { user: owner.userId, job: '' },
+      ]).toContainEqual(outcome);
+    }
+  });
 });

@@ -27,10 +27,14 @@ afterAll(async () => {
 });
 
 async function databaseAccepts(subdomain: string): Promise<boolean> {
-  const outcome = await withTenant(db, { userId, onboarding: true }, async (tx, id) => {
-    await tx.insert(tenants).values({ id: id ?? '', subdomain, ownerId: userId });
-    throw rollback;
-  }).catch((error: unknown) => error);
+  const outcome = await withTenant(
+    db,
+    { kind: 'user', userId, onboarding: true },
+    async (tx, id) => {
+      await tx.insert(tenants).values({ id: id ?? '', subdomain, ownerId: userId });
+      throw rollback;
+    },
+  ).catch((error: unknown) => error);
   if (outcome === rollback) return true;
   expect(outcome).toMatchObject({
     cause: { code: '23514', constraint_name: 'tenants_subdomain_check' },
@@ -44,7 +48,9 @@ describe('the subdomain rule', () => {
       expect(await databaseAccepts(value), value).toBe(false);
     }
     expect(await databaseAccepts("a'); drop table tenants; --")).toBe(false);
-    expect(await withTenant(db, { userId }, (tx) => tx.select().from(tenants))).toEqual([]);
+    expect(
+      await withTenant(db, { kind: 'user', userId }, (tx) => tx.select().from(tenants)),
+    ).toEqual([]);
     expect(await databaseAccepts('ines')).toBe(true);
   });
 

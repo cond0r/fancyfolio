@@ -21,7 +21,7 @@ export function createTenant(
   userId: string,
   subdomain: string,
 ): Promise<string> {
-  return withTenant(db, { userId, onboarding: true }, async (tx, tenantId) => {
+  return withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
     if (tenantId === null) throw new Error('onboarding set no tenant id');
     await tx.insert(tenants).values({ id: tenantId, subdomain, ownerId: userId });
     return tenantId;

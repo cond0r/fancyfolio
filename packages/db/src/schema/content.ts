@@ -1,4 +1,11 @@
-import { HTTPS_URL_PATTERN, LIMITS, MARKDOWN_FENCE, SLUG_PATTERN } from '@fancyfolio/contracts';
+import {
+  CHALLENGE_TOKEN_PATTERN,
+  HOSTNAME_PATTERN,
+  HTTPS_URL_PATTERN,
+  LIMITS,
+  MARKDOWN_FENCE,
+  SLUG_PATTERN,
+} from '@fancyfolio/contracts';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -10,6 +17,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants.ts';
@@ -167,6 +175,37 @@ export const projects = pgTable(
     check(
       'projects_tags_check',
       sql`cardinality(${table.tags}) <= ${LIMITS.tags} and (cardinality(${table.tags}) = 0 or array_ndims(${table.tags}) = 1 and array_lower(${table.tags}, 1) = 1)`.inlineParams(),
+    ),
+  ],
+);
+
+export const domains = pgTable(
+  'domains',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    tenantId: tenantId().unique(),
+    hostname: text('hostname').notNull(),
+    challengeToken: text('challenge_token').notNull(),
+    verifiedAt: timestamp('verified_at', { withTimezone: true, mode: 'string' }),
+    checkedAt: timestamp('checked_at', { withTimezone: true, mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('domains_verified_hostname_unique')
+      .on(table.hostname)
+      .where(sql`${table.verifiedAt} is not null`),
+    check(
+      'domains_hostname_check',
+      sql`char_length(${table.hostname}) <= ${LIMITS.hostname} and ${table.hostname} ~ ${HOSTNAME_PATTERN}`.inlineParams(),
+    ),
+    check(
+      'domains_challenge_token_check',
+      sql`char_length(${table.challengeToken}) <= ${LIMITS.challengeToken} and ${table.challengeToken} ~ ${CHALLENGE_TOKEN_PATTERN}`.inlineParams(),
+    ),
+    check(
+      'domains_checked_when_verified_check',
+      sql`${table.verifiedAt} is null or ${table.checkedAt} is not null`,
     ),
   ],
 );

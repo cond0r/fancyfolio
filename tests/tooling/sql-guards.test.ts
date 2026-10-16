@@ -10,7 +10,8 @@ const contextFile = 'packages/db/src/with-tenant.ts';
 const migration = /^packages\/db\/drizzle\/[^/]+\.sql$/;
 const script = /\.[cm]?[jt]sx?$/;
 const testCode = /(^|\/)tests?\/|\.(test|spec)\.[cm]?[jt]sx?$/;
-const uncheckedSource = /^(apps\/[^/]+|packages\/db)\/src\/.*\.[cm]?jsx?$/;
+const uncheckedSource = /^(apps|packages)\/[^/]+\/(?!public\/).+\.[cm]?jsx?$/;
+const rootConfig = /^(apps|packages)\/[^/]+\/[^/]+\.config\.[cm]?js$/;
 const nestedBiomeConfig = /\/biome\.jsonc?$/;
 const contextSetter = new RegExp(
   [
@@ -115,27 +116,28 @@ function scan(path: string, text: string) {
 
 function violations(path: string, text: string): string[] {
   if (path === self || migration.test(path)) return [];
-  if (nestedBiomeConfig.test(path)) return [`${path}: nested Biome config`];
-  if (path.endsWith('.sql')) {
-    return contextSetter.test(text) ? [`${path}: sets app.* context outside withTenant`] : [];
+  const found = nestedBiomeConfig.test(path) ? [`${path}: nested Biome config`] : [];
+  if (path.endsWith('.sql') && contextSetter.test(text)) {
+    found.push(`${path}: sets app.* context outside withTenant`);
   }
-  if (!script.test(path)) return [];
+  if (!script.test(path)) return found;
   const { parses, context, raw, driver } = scan(path, text);
-  const found = parses ? [] : [`${path}: does not parse`];
+  if (!parses) found.push(`${path}: does not parse`);
   if (context && path !== contextFile) found.push(`${path}: sets app.* context outside withTenant`);
   if (raw && !testCode.test(path)) found.push(`${path}: raw SQL`);
   if (driver && !testCode.test(path) && !databasePackage.test(path)) {
     found.push(`${path}: imports a database module outside packages/db`);
   }
-  if (uncheckedSource.test(path)) found.push(`${path}: JavaScript source escapes the type check`);
+  if (uncheckedSource.test(path) && !rootConfig.test(path) && !testCode.test(path))
+    found.push(`${path}: JavaScript source escapes the type check`);
   return found;
 }
 
-function read(path: string): string {
+function read(path: string): string | undefined {
   try {
     return readFileSync(join(root, path), 'utf8');
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
     throw error;
   }
 }
@@ -404,9 +406,42 @@ describe('the SQL guards', () => {
         'apps/api/src/db.mjs: JavaScript source escapes the type check',
       ],
     ],
+    [
+      'packages/contracts/src/reserved.js',
+      '',
+      ['packages/contracts/src/reserved.js: JavaScript source escapes the type check'],
+    ],
+    [
+      'packages/editor/src/model.mjs',
+      '',
+      ['packages/editor/src/model.mjs: JavaScript source escapes the type check'],
+    ],
+    [
+      'packages/db/scripts/seed.js',
+      '',
+      ['packages/db/scripts/seed.js: JavaScript source escapes the type check'],
+    ],
+    [
+      'apps/web/app/page.jsx',
+      '',
+      ['apps/web/app/page.jsx: JavaScript source escapes the type check'],
+    ],
+    ['apps/web/proxy.js', '', ['apps/web/proxy.js: JavaScript source escapes the type check']],
+    [
+      'packages/db/helper.mjs',
+      '',
+      ['packages/db/helper.mjs: JavaScript source escapes the type check'],
+    ],
+    [
+      'apps/web/src/public/x.js',
+      '',
+      ['apps/web/src/public/x.js: JavaScript source escapes the type check'],
+    ],
+    ['apps/web/public/sw.js', '', []],
+    ['apps/web/next.config.js', '', []],
     ['apps/web/postcss.config.mjs', '', []],
     ['apps/api/test/db.test.js', '', []],
-    ['packages/contracts/src/reserved.js', '', []],
+    ['packages/editor/test/fixture.js', '', []],
     ['apps/api/biome.json', '{}', ['apps/api/biome.json: nested Biome config']],
     ['packages/db/src/biome.jsonc', '{}', ['packages/db/src/biome.jsonc: nested Biome config']],
     ['biome.json', '{}', []],
@@ -415,14 +450,19 @@ describe('the SQL guards', () => {
     expect(violations(path, text)).toEqual(expected);
   });
 
-  it('reads a listed file missing from the working tree as empty and rethrows other errors', () => {
-    expect(read('packages/db/src/missing.ts')).toBe('');
+  it('skips a listed file missing from the working tree and rethrows other errors', () => {
+    expect(read('packages/db/src/missing.ts')).toBeUndefined();
     expect(() => read('packages/db/src')).toThrow(expect.objectContaining({ code: 'EISDIR' }));
   });
 
   it('finds no context setter outside withTenant and no raw SQL in the repository', () => {
     const files = repositoryFiles();
     expect(files).toContain(self);
-    expect(files.flatMap((path) => violations(path, read(path)))).toEqual([]);
+    expect(
+      files.flatMap((path) => {
+        const text = read(path);
+        return text === undefined ? [] : violations(path, text);
+      }),
+    ).toEqual([]);
   });
 });

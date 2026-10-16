@@ -9,6 +9,7 @@ import type { TestProject } from 'vitest/node';
 import { roleEnv, setRolePasswords } from '../scripts/roles.ts';
 import { connect, loopbackHosts, parseDatabaseUrl } from '../src/client.ts';
 import { authTables } from './auth-tables.ts';
+import { latestMigration } from './journal.ts';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -23,19 +24,6 @@ declare module 'vitest' {
 }
 
 const migrations = join(import.meta.dirname, '..', 'drizzle');
-const journalSchema = v.object({ entries: v.array(v.object({ when: v.number() })) });
-
-export function latestMigration(journalText: string): string {
-  const head = v.parse(journalSchema, JSON.parse(journalText)).entries.at(-1);
-  if (head === undefined) {
-    throw new Error('the migration journal has no entries; generate a migration first');
-  }
-  return String(head.when);
-}
-
-const journalHead = latestMigration(
-  readFileSync(join(migrations, 'meta', '_journal.json'), 'utf8'),
-);
 const targetEnv = v.object({
   TARGET_DATABASE_URL: v.pipe(v.string(), v.url()),
   TARGET_POOLER_URL: v.pipe(v.string(), v.url()),
@@ -65,6 +53,9 @@ async function writeRefusal(owner: Sql): Promise<string | null> {
         select max(created_at)::text as latest from drizzle.__drizzle_migrations
       `
     : [{ latest: null }];
+  const journalHead = latestMigration(
+    readFileSync(join(migrations, 'meta', '_journal.json'), 'utf8'),
+  );
   if (latest !== null && Number(latest) > Number(journalHead)) {
     return 'the target database holds migrations this checkout lacks; run the suites from the checkout that applied them';
   }

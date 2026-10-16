@@ -176,10 +176,10 @@ describe('packages/editor imports no server package, database or app', () => {
   const module = 'packages/editor/src/core/model.ts';
   const message = 'The editor never imports a server package, the database or an app.';
 
-  it('passes React, Jotai and the dialect', () => {
+  it('passes React, Jotai and the dialect outside the core', () => {
     const result = lintAt(
-      module,
-      "import { atom } from 'jotai';\nimport { useState } from 'react';\nimport { parseMarkdown } from '../dialect.ts';\n\nexport const used = [atom, useState, parseMarkdown];\n",
+      'packages/editor/src/view.ts',
+      "import { atom } from 'jotai';\nimport { useState } from 'react';\nimport { parseMarkdown } from './dialect.ts';\n\nexport const used = [atom, useState, parseMarkdown];\n",
     );
     expect(result.output).not.toContain('lint/');
     expect(result.status).toBe(0);
@@ -205,5 +205,132 @@ describe('packages/editor imports no server package, database or app', () => {
     expect(result.output).toContain('lint/style/noRestrictedImports');
     expect(result.output).toContain(message);
     expect(result.status).not.toBe(0);
+  });
+});
+
+describe('packages/editor/src/core imports no React, DOM, Next or workspace package', () => {
+  const module = 'packages/editor/src/core/store.ts';
+  const message = 'The editor core imports no React, DOM, Next or workspace package.';
+
+  it('passes Jotai and the dialect', () => {
+    const result = lintAt(
+      module,
+      "import { atom } from 'jotai/vanilla';\nimport { parseMarkdown } from '../dialect.ts';\n\nexport const used = [atom, parseMarkdown];\n",
+    );
+    expect(result.output).not.toContain('lint/');
+    expect(result.status).toBe(0);
+  });
+
+  it.each([
+    'react',
+    'react/jsx-runtime',
+    'react-dom',
+    'react-dom/client',
+    'next',
+    'next/navigation',
+    '@fancyfolio/contracts',
+    '@fancyfolio/editor',
+  ])('refuses %s', (specifier) => {
+    const result = lintAt(
+      module,
+      `import * as banned from '${specifier}';\n\nexport const value = banned;\n`,
+    );
+    expect(result.output).toContain('lint/style/noRestrictedImports');
+    expect(result.output).toContain(message);
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each(['@fancyfolio/db', 'node:fs', 'bun'])('still refuses %s', (specifier) => {
+    const result = lintAt(
+      module,
+      `import * as banned from '${specifier}';\n\nexport const value = banned;\n`,
+    );
+    expect(result.output).toContain('lint/style/noRestrictedImports');
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each([
+    'Bun',
+    'globalThis',
+    'global',
+    'self',
+    'frames',
+    'parent',
+    'top',
+    'process',
+    'require',
+    'fetch',
+    'XMLHttpRequest',
+    'WebSocket',
+    'EventSource',
+    'location',
+    'window',
+    'document',
+    'navigator',
+    'DOMParser',
+    'localStorage',
+    'sessionStorage',
+    'indexedDB',
+  ])('refuses the %s global', (name) => {
+    const result = lintAt(module, `export const value = ${name};\n`);
+    expect(result.output).toContain('lint/style/noRestrictedGlobals');
+    expect(result.output).toContain(name);
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each([
+    'globalThis.fetch',
+    "new WebSocket('x')",
+    'process.env.SECRET',
+    'Date.now()',
+    'new Date()',
+    'crypto.randomUUID()',
+  ])('refuses the expression %s', (expression) => {
+    const result = lintAt(module, `export const value = ${expression};\n`);
+    expect(result.output).toContain('lint/style/noRestrictedGlobals');
+    expect(result.status).not.toBe(0);
+  });
+});
+
+type StyleRules = {
+  noRestrictedImports?: {
+    options: { paths?: Record<string, string>; patterns?: readonly unknown[] };
+  };
+  noRestrictedGlobals?: { options: { deniedGlobals: Record<string, string> } };
+};
+
+type BiomeConfig = {
+  linter: { rules: { style: StyleRules } };
+  overrides: readonly {
+    includes: readonly string[];
+    linter?: { rules?: { style?: StyleRules } };
+  }[];
+};
+
+describe('the editor core lint lists keep every rule of the wider lists', () => {
+  const config: BiomeConfig = JSON.parse(readFileSync(join(root, 'biome.json'), 'utf8'));
+  const styleFor = (glob: string) =>
+    config.overrides.find((override) => override.includes.includes(glob))?.linter?.rules?.style;
+  const rootStyle = config.linter.rules.style;
+  const editor = styleFor('packages/editor/**');
+  const core = styleFor('packages/editor/src/core/**');
+
+  it.each([
+    ['the root', rootStyle],
+    ['the editor', editor],
+  ])('bans in the core every import %s bans', (_name, wider) => {
+    const widerImports = wider?.noRestrictedImports?.options;
+    const coreImports = core?.noRestrictedImports?.options;
+    expect(widerImports?.patterns?.length).toBeGreaterThan(0);
+    expect(coreImports?.paths).toMatchObject(widerImports?.paths ?? {});
+    for (const pattern of widerImports?.patterns ?? []) {
+      expect(coreImports?.patterns).toContainEqual(pattern);
+    }
+  });
+
+  it('denies in the core every global the root denies', () => {
+    const denied = rootStyle.noRestrictedGlobals?.options.deniedGlobals;
+    expect(Object.keys(denied ?? {})).not.toHaveLength(0);
+    expect(core?.noRestrictedGlobals?.options.deniedGlobals).toMatchObject(denied ?? {});
   });
 });

@@ -180,6 +180,7 @@ describe('app.resolve_site', () => {
     };
     const outcome = await withTenant(db, { kind: 'job' }, async (tx) => {
       await tx.execute(sql`set local enable_seqscan = off`);
+      await tx.execute(sql`set local jit = off`);
       const before = await scansOf(tx);
       const [row] = await tx.execute<{ id: string | null }>(
         sql`select app.resolve_site(${live.hostname}::text) as id`,

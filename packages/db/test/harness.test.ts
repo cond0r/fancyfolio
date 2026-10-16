@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
 import postgres from 'postgres';
@@ -9,6 +10,7 @@ import { roleUrl } from './setup.ts';
 
 const root = join(import.meta.dirname, '..', '..', '..');
 const rolesMigration = join(import.meta.dirname, '..', 'drizzle', '0000_roles.sql');
+const tenantsRlsMigration = join(import.meta.dirname, '..', 'drizzle', '0004_tenants-rls.sql');
 const inheritedDbEnv =
   /^(VITEST|TARGET_|FF_)|^(TEST_DATABASE_URL|OWNER_DATABASE_URL|DATABASE_CA_CERT)$/;
 const U = 'postgres://fancyfolio_owner:unused@127.0.0.1:1/fancyfolio_test';
@@ -159,16 +161,65 @@ describe.runIf(inject('db').mode === 'local')('the roles migration', () => {
   });
 });
 
+describe.runIf(inject('db').mode === 'local')('the tenants RLS migration', () => {
+  it.each([
+    ['public', 'public, ff_app, ff_auth, ff_resolver'],
+    ['ff_app', 'ff_app'],
+  ])('fails when %s still holds TEMPORARY after its revoke', async (grantee, holders) => {
+    const check = readFileSync(tenantsRlsMigration, 'utf8')
+      .split('--> statement-breakpoint')
+      .at(-1);
+    const rollback = new Error('rolled back');
+    const owner = connect(inject('db').ownerUrl);
+    try {
+      const error = await owner
+        .begin(async (tx) => {
+          const role = grantee === 'public' ? tx`public` : tx(grantee);
+          await tx`grant temporary on database fancyfolio_test to ${role}`;
+          await tx.unsafe(check ?? '');
+          throw rollback;
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        code: 'P0001',
+        message: `TEMPORARY on database fancyfolio_test is still held by ${holders}`,
+      });
+    } finally {
+      await owner.end();
+    }
+  });
+});
+
 describe.runIf(inject('db').mode === 'local')('db:roles', () => {
-  it('leaves no helper function on the connection that set the passwords', async () => {
+  it('needs no TEMPORARY on the database and leaves no helper function behind', async () => {
     const owner = postgres({ ...connectionOptions(inject('db').ownerUrl, process.env), max: 1 });
     try {
+      await owner`revoke temporary on database fancyfolio_test from current_user`;
       await setRolePasswords(owner, process.env);
       const [{ helpers }] = await owner<{ helpers: number }[]>`
-        select count(*)::int as helpers from pg_proc where pronamespace = pg_my_temp_schema()
+        select count(*)::int as helpers from pg_proc
+        where proname = 'set_login_password' or pronamespace = pg_my_temp_schema()
       `;
       expect(helpers).toBe(0);
     } finally {
+      await owner`grant temporary on database fancyfolio_test to current_user`;
+      await owner.end();
+    }
+  });
+
+  it('resolves format() in its helper from pg_catalog whatever the session search_path', async () => {
+    const owner = postgres({ ...connectionOptions(inject('db').ownerUrl, process.env), max: 1 });
+    try {
+      await owner`create schema shadow`;
+      await owner`
+        create function shadow.format(text, text, text) returns text language plpgsql
+        as $$ begin raise exception 'shadowed format'; end $$
+      `;
+      await owner`set search_path = shadow, pg_catalog`;
+      await expect(setRolePasswords(owner, process.env)).resolves.toBeUndefined();
+    } finally {
+      await owner`reset search_path`;
+      await owner`drop schema shadow cascade`;
       await owner.end();
     }
   });
@@ -195,15 +246,18 @@ describe.runIf(inject('db').mode === 'local')('db:roles', () => {
   });
 
   it('names the role and hides the verifier when ALTER ROLE is refused', async () => {
+    const owner = connect(inject('db').ownerUrl);
     const app = connect(inject('db').appUrl);
     try {
+      await owner`grant create on schema app to ff_app`;
       const error = await setRolePasswords(app, process.env).catch((caught: unknown) => caught);
       expect(error).toMatchObject({
         message: 'Could not set the login password for ff_app (SQLSTATE 42501)',
       });
       expect(inspect(error, { depth: 10, showHidden: true })).not.toContain('SCRAM-SHA-256');
     } finally {
-      await app.end();
+      await owner`revoke create on schema app from ff_app`;
+      await Promise.all([app.end(), owner.end()]);
     }
   });
 });

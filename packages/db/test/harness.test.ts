@@ -6,7 +6,8 @@ import postgres from 'postgres';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { setRolePasswords } from '../scripts/roles.ts';
 import { connect, connectionOptions } from '../src/client.ts';
-import { latestMigration, roleUrl } from './setup.ts';
+import { latestMigration } from './journal.ts';
+import { roleUrl } from './setup.ts';
 
 const root = join(import.meta.dirname, '..', '..', '..');
 const rolesMigration = join(import.meta.dirname, '..', 'drizzle', '0000_roles.sql');
@@ -52,13 +53,33 @@ it('puts the role and the encoded password into the URL, the user suffix kept on
   expect(decodeURIComponent(new URL(roleUrl(U, 'ff_app', 'abc%41%zz')).password)).toBe('abc%41%zz');
 });
 
+const journal = (...entries: [number, number][]) =>
+  JSON.stringify({ entries: entries.map(([idx, when]) => ({ idx, when })) });
+
 it('takes the last journal entry as the head and refuses a journal without entries', () => {
-  expect(latestMigration('{"entries":[{"when":1700000000000},{"when":1700000000001}]}')).toBe(
-    '1700000000001',
-  );
+  expect(latestMigration(journal([0, 1700000000000], [1, 1700000000001]))).toBe('1700000000001');
   expect(() => latestMigration('{"entries":[]}')).toThrow(
     'the migration journal has no entries; generate a migration first',
   );
+});
+
+it.each([
+  ['an entry older than the one before', journal([0, 1700000000002], [1, 1700000000001])],
+  ['two entries at the same time', journal([0, 1700000000001], [1, 1700000000001])],
+  ['entries out of index order', journal([1, 1700000000001], [0, 1700000000002])],
+  ['a gap in the index', journal([0, 1700000000001], [2, 1700000000002])],
+])('refuses a journal with %s, whose entry the migrator would skip', (_case, text) => {
+  expect(() => latestMigration(text)).toThrow(
+    'the migration journal is out of order: each entry needs the next index and a later time',
+  );
+});
+
+it('holds the checked-in journal in order', () => {
+  const text = readFileSync(
+    join(import.meta.dirname, '..', 'drizzle', 'meta', '_journal.json'),
+    'utf8',
+  );
+  expect(latestMigration(text)).toBe(String(JSON.parse(text).entries.at(-1).when));
 });
 
 it.each(['db:roles', 'db:migrate'])('%s refuses to run without an owner URL', (script) => {

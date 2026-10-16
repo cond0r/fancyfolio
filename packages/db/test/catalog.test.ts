@@ -1,12 +1,42 @@
+import { isSubdomain, RESERVED_SUBDOMAINS, SUBDOMAIN_PATTERN } from '@fancyfolio/contracts';
+import { sql } from 'drizzle-orm';
+import { getTableConfig } from 'drizzle-orm/pg-core';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import type { Sql, TransactionSql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
+import { tenants } from '../src/schema/tenants.ts';
 import { authTables } from './auth-tables.ts';
 
 const app = connect(inject('db').appUrl);
 const runtimeRoles = ['ff_app', 'ff_auth', 'ff_resolver'];
 const supabaseRoles = ['anon', 'authenticated', 'service_role'];
 const tenantTables = ['tenants'];
+
+const probes = [..."az09-AZ_. \n\t'%/\\", 'é', 'а', 'ı', '​', 'ａ', '\u{1f600}'];
+const corpus = [
+  ...new Set([
+    'ines',
+    'abc',
+    '123',
+    'a-b',
+    'abc--d',
+    'ab--cd',
+    'xn--80ak6aa92e',
+    'xn--ines',
+    '-ines',
+    'ines-',
+    'Ines',
+    '%69nes',
+    "ines'--",
+    "a'); drop table tenants; --",
+    ...RESERVED_SUBDOMAINS,
+    ...RESERVED_SUBDOMAINS.map((name) => name.toUpperCase()),
+    ...RESERVED_SUBDOMAINS.map((name) => `${name}-x`),
+    ...Array.from({ length: 40 }, (_, index) => 'a'.repeat(index + 1)),
+    ...probes.flatMap((probe) => [`${probe}abcd`, `ab${probe}cd`, `abcd${probe}`]),
+  ]),
+];
 
 type Grant = { schema: string; kind: string; name: string; grantee: string; privilege: string };
 
@@ -363,5 +393,34 @@ describe.runIf(inject('db').mode === 'local')('the SECURITY DEFINER check', () =
     } finally {
       await owner.end();
     }
+  });
+});
+
+describe('the subdomain CHECK', () => {
+  it('holds in the database exactly the pattern and reserved names of the contracts', async () => {
+    const quoted = (value: string) => `'${value.replaceAll("'", "''")}'::text`;
+    const [{ definition }] = await app<{ definition: string }[]>`
+      select pg_get_constraintdef(oid) as definition from pg_constraint
+      where conrelid = to_regclass('public.tenants') and conname = 'tenants_subdomain_check'
+    `;
+    expect(definition).toBe(
+      `CHECK (((subdomain ~ ${quoted(SUBDOMAIN_PATTERN)}) AND (subdomain <> ALL (ARRAY[${RESERVED_SUBDOMAINS.map(quoted).join(', ')}]))))`,
+    );
+  });
+
+  it('gets the same verdict from the contract and from the generated CHECK on every string', async () => {
+    const [constraint] = getTableConfig(tenants).checks;
+    const rows = await drizzle(app).execute<{ value: string; accepted: boolean }>(
+      sql`select "subdomain" as value, (${constraint.value}) as accepted from unnest(${sql.param(corpus)}::text[]) as "tenants"("subdomain")`,
+    );
+    const verdicts = rows.map(({ value, accepted }) => ({
+      value,
+      contract: isSubdomain(value),
+      database: accepted,
+    }));
+    expect(verdicts.map(({ value }) => value)).toEqual(corpus);
+    expect(verdicts.filter((verdict) => verdict.contract !== verdict.database)).toEqual([]);
+    expect(verdicts.filter((verdict) => verdict.database).length).toBeGreaterThan(50);
+    expect(verdicts.filter((verdict) => !verdict.database).length).toBeGreaterThan(100);
   });
 });

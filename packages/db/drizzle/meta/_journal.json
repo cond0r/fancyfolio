@@ -36,6 +36,13 @@
       "when": 1792130090583,
       "tag": "0004_tenants-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792130287212,
+      "tag": "0005_subdomain-check",
+      "breakpoints": true
     }
   ]
 }

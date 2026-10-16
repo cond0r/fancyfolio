@@ -204,3 +204,37 @@ describe('server-only and editor import bans', { timeout: 30_000 }, () => {
     });
   });
 });
+
+describe('type assertions in server source', { timeout: 30_000 }, () => {
+  const header =
+    "declare const input: string;\ndeclare const query: { for(strength: 'update' | 'share'): void };\n";
+  const serverSource = ['apps/api/src/fixture.ts', 'packages/db/src/fixture.ts'];
+  const elsewhere = ['apps/web/lib/fixture.ts', 'packages/db/test/fixture.test.ts'];
+  const escapes = [
+    ["query.for(input as 'update');", 'lint/nursery/noUnsafeTypeAssertion'],
+    ['query.for(input as never);', 'lint/nursery/noUnsafeTypeAssertion'],
+    ['export const count = input as unknown as number;', 'lint/nursery/noUnsafeTypeAssertion'],
+    ["query.for(<'update'>input);", 'lint/nursery/noUnsafeTypeAssertion'],
+    ['export const loose: any = input;', 'lint/suspicious/noExplicitAny'],
+  ];
+
+  it.each(serverSource.flatMap((path) => escapes.map(([line, rule]) => [path, line, rule])))(
+    'refuses in %s: %s',
+    (path, line, rule) => {
+      const result = lintAt(path, `${header}${line}\n`);
+      expect(result.output).toContain(rule);
+      expect(result.status).not.toBe(0);
+    },
+  );
+
+  it.each(serverSource)('passes as const in %s', (path) => {
+    expectAllowed(path, "export const strengths = ['update', 'share'] as const;\n");
+  });
+
+  it.each(elsewhere.flatMap((path) => escapes.map(([line]) => [path, line])))(
+    'leaves %s alone: %s',
+    (path, line) => {
+      expect(lintAt(path, `${header}${line}\n`).status).toBe(0);
+    },
+  );
+});

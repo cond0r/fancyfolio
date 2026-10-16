@@ -17,7 +17,13 @@ const inheritedDbEnv =
 const U = 'postgres://fancyfolio_owner:unused@127.0.0.1:1/fancyfolio_test';
 const P = { FF_APP_PASSWORD: 'a'.repeat(32), FF_AUTH_PASSWORD: 'b'.repeat(32) };
 
-function run(command: string, args: string[], env: Record<string, string | undefined>, cwd = root) {
+function run(
+  command: string,
+  args: string[],
+  env: Record<string, string | undefined>,
+  cwd = root,
+  timeout = 25_000,
+) {
   const clean = Object.entries(process.env).filter(
     ([name]) => !inheritedDbEnv.test(name) && name !== 'FORCE_COLOR',
   );
@@ -25,17 +31,21 @@ function run(command: string, args: string[], env: Record<string, string | undef
     cwd,
     env: { ...Object.fromEntries(clean), NO_COLOR: '1', ...env },
     encoding: 'utf8',
-    timeout: 25_000,
+    timeout,
   });
   return { status: child.status, output: `${child.stdout}${child.stderr}` };
 }
 
-function runNode(args: string[], env: Record<string, string | undefined>) {
-  return run(process.execPath, args, env);
+function runNode(args: string[], env: Record<string, string | undefined>, timeout?: number) {
+  return run(process.execPath, args, env, root, timeout);
 }
 
-function runDbSuites(env: Record<string, string | undefined>, ...files: string[]) {
-  return runNode(['node_modules/vitest/vitest.mjs', 'run', '--project', 'db', ...files], env);
+function runDbSuites(env: Record<string, string | undefined>, files: string[], timeout?: number) {
+  return runNode(
+    ['node_modules/vitest/vitest.mjs', 'run', '--project', 'db', ...files],
+    env,
+    timeout,
+  );
 }
 
 it('puts the role and the encoded password into the URL, the user suffix kept only for the pooler', () => {
@@ -102,14 +112,14 @@ it('drizzle-kit has no credentials, so push cannot reach a database', () => {
 
 describe.runIf(inject('db').mode === 'local')('the local harness', () => {
   it('fails instead of skipping when Postgres is unreachable', () => {
-    const run = runDbSuites({ TEST_DATABASE_URL: U, ...P }, 'catalog');
+    const run = runDbSuites({ TEST_DATABASE_URL: U, ...P }, ['catalog']);
     expect(run.status).toBe(1);
     expect(run.output).toContain('ECONNREFUSED');
     expect(run.output).not.toContain('skipped');
   });
 
   it('names every missing variable', () => {
-    const run = runDbSuites({}, 'catalog');
+    const run = runDbSuites({}, ['catalog']);
     expect(run.status).toBe(1);
     expect(run.output).toContain(
       'Invalid environment: TEST_DATABASE_URL (missing), FF_APP_PASSWORD (missing), FF_AUTH_PASSWORD (missing)',
@@ -119,7 +129,7 @@ describe.runIf(inject('db').mode === 'local')('the local harness', () => {
   it('refuses any database but fancyfolio_test before connecting', () => {
     const run = runDbSuites(
       { TEST_DATABASE_URL: 'postgres://fancyfolio_owner:unused@127.0.0.1:1/fancyfolio_dev', ...P },
-      'catalog',
+      ['catalog'],
     );
     expect(run.status).toBe(1);
     expect(run.output).toContain('TEST_DATABASE_URL must name the fancyfolio_test database');
@@ -132,7 +142,7 @@ describe.runIf(inject('db').mode === 'local')('the local harness', () => {
         TEST_DATABASE_URL: 'postgres://fancyfolio_owner:unused@db.example.test:1/fancyfolio_test',
         ...P,
       },
-      'catalog',
+      ['catalog'],
     );
     expect(run.status).toBe(1);
     expect(run.output).toContain('TEST_DATABASE_URL must point at a loopback host');
@@ -140,7 +150,9 @@ describe.runIf(inject('db').mode === 'local')('the local harness', () => {
   });
 
   it('refuses connection parameters in the query before connecting', () => {
-    const run = runDbSuites({ TEST_DATABASE_URL: `${U}?database=fancyfolio_dev`, ...P }, 'catalog');
+    const run = runDbSuites({ TEST_DATABASE_URL: `${U}?database=fancyfolio_dev`, ...P }, [
+      'catalog',
+    ]);
     expect(run.status).toBe(1);
     expect(run.output).toContain(
       'Database URL must be postgres://user:password@host[:port]/database',
@@ -155,7 +167,7 @@ describe.runIf(inject('db').mode === 'local')('the local harness', () => {
         FF_APP_PASSWORD: process.env.FF_APP_PASSWORD,
         FF_AUTH_PASSWORD: process.env.FF_AUTH_PASSWORD,
       },
-      'catalog',
+      ['catalog'],
     );
     expect(run.status).toBe(1);
     expect(run.output).toContain('Another database test run holds the fancyfolio_test lock');
@@ -302,7 +314,14 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     FF_AUTH_PASSWORD: process.env.FF_AUTH_PASSWORD ?? '',
   };
 
-  const writeSuites = ['auth-privileges', 'isolation', 'with-tenant', 'parity'];
+  const writeSuites = [
+    'auth-privileges',
+    'isolation',
+    'with-tenant',
+    'parity',
+    'content-rls',
+    'domains',
+  ];
 
   afterAll(() => owner.end());
 
@@ -343,7 +362,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
           FF_APP_PASSWORD: 'c'.repeat(32),
           FF_AUTH_PASSWORD: 'd'.repeat(32),
         },
-        'roles',
+        ['roles'],
       );
       expect(targeted.output).toContain('Test Files  1 passed (1)');
       expect(targeted.status).toBe(0);
@@ -356,17 +375,19 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     }
   });
 
-  it('creates and migrates nothing and leaves no row behind on an empty database', async () => {
+  it('creates and migrates nothing and leaves no row behind on an empty database', {
+    timeout: 120_000,
+  }, async () => {
     const before = await state();
-    const run = runDbSuites(target, ...writeSuites, 'catalog', 'client');
-    expect(run.output).toContain('Test Files  6 passed (6)');
-    expect(run.status).toBe(0);
+    const outcome = runDbSuites(target, [...writeSuites, 'catalog', 'client'], 110_000);
+    expect(outcome.output).toContain('Test Files  8 passed (8)');
+    expect(outcome.status).toBe(0);
     expect(await state()).toEqual({ ...before, users: 0, tenants: 0 });
   });
 
   function expectWritesRefused(reason: string, env = target) {
-    const run = runDbSuites(env, ...writeSuites, 'catalog');
-    expect(run.output).toContain('Test Files  4 failed | 1 passed (5)');
+    const run = runDbSuites(env, [...writeSuites, 'catalog']);
+    expect(run.output).toContain('Test Files  6 failed | 1 passed (7)');
     expect(run.status).toBe(1);
     expect(run.output).toContain(`Refused: ${reason}; run only the catalog suite`);
   }
@@ -419,7 +440,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       await owner`insert into provider_probe values (1)`;
       await owner`grant select on provider_probe to ff_auth`;
       await owner`revoke all on provider_probe from current_user`;
-      const run = runDbSuites(target, 'auth-privileges');
+      const run = runDbSuites(target, ['auth-privileges']);
       expect(run.output).toContain('Test Files  1 passed (1)');
       expect(run.status).toBe(0);
     } finally {
@@ -502,9 +523,9 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       await prepare(scratch.href);
       const run = runDbSuites(
         { ...target, TARGET_DATABASE_URL: scratch.href, TARGET_POOLER_URL: scratch.href },
-        ...writeSuites,
+        writeSuites,
       );
-      expect(run.output).toContain('Test Files  4 failed (4)');
+      expect(run.output).toContain('Test Files  6 failed (6)');
       expect(run.status).toBe(1);
       expect(run.output).toContain(refusal);
       expect(run.output).not.toContain('42P01');
@@ -516,7 +537,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
   it('connects the runtime roles through the pooler URL with its user suffix', () => {
     const pooler = new URL(ownerUrl);
     pooler.username = `${pooler.username}.abcdef`;
-    const run = runDbSuites({ ...target, TARGET_POOLER_URL: pooler.href }, 'client');
+    const run = runDbSuites({ ...target, TARGET_POOLER_URL: pooler.href }, ['client']);
     expect(run.status).toBe(1);
     expect(run.output).toContain('ff_app.abcdef');
     expect(run.output).toContain('Tests  2 failed (2)');

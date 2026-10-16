@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { type TenantDatabase, tenantDatabase } from '../src/with-tenant.ts';
 
 export function stringsInsideWithTenant(db: TenantDatabase, key: string, sort: string) {
-  return db.withTenant({ userId: key }, async (tx) => {
+  return db.withTenant({ kind: 'user', userId: key }, async (tx) => {
     const query = `select id from tenants where subdomain = '${key}'`;
     await tx.execute(sql`select id from tenants where subdomain = ${key}`);
     // @ts-expect-error
@@ -40,7 +40,7 @@ export function stringsInsideWithTenant(db: TenantDatabase, key: string, sort: s
 export async function stringsOnTheTenantDatabase(url: string, key: string) {
   const db = tenantDatabase(url);
   const query = `select id from tenants where subdomain = '${key}'`;
-  await db.withTenant({ userId: key }, (tx) => tx.execute(sql`select ${key}`));
+  await db.withTenant({ kind: 'user', userId: key }, (tx) => tx.execute(sql`select ${key}`));
   // @ts-expect-error
   await db.execute(query);
   // @ts-expect-error

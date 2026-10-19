@@ -196,6 +196,12 @@ importers:
       '@fancyfolio/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@hono/standard-validator':
+        specifier: ^0.4.0
+        version: 0.4.0(@standard-schema/spec@1.1.0)(hono@4.13.13)
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(kysely@0.29.6)(postgres@3.4.9(patch_hash=8c3fccd5d0c80e921dcc873f065f0cf9457e2c5c14bbe8977a667f030c4e3885))
       hono:
         specifier: ^4.13.13
         version: 4.13.13
@@ -1122,6 +1128,12 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4 || ^5.0.0-0
+
+  '@hono/standard-validator@0.4.0':
+    resolution: {integrity: sha512-MxOm1asDh9j7c1D0KiWwppSbFgAQxTRO4YEhjMrJn3lF1BIcXenPdgjSGKDRfQmZdaTaMA8slQLETgVOKyJxFw==}
+    peerDependencies:
+      '@standard-schema/spec': ^1.0.0
+      hono: '>=4.11.2'
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3475,6 +3487,11 @@ snapshots:
 
   '@hono/node-server@2.1.5(hono@4.13.13)':
     dependencies:
+      hono: 4.13.13
+
+  '@hono/standard-validator@0.4.0(@standard-schema/spec@1.1.0)(hono@4.13.13)':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
       hono: 4.13.13
 
   '@img/colour@1.1.0':

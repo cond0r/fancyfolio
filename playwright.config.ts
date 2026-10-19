@@ -9,7 +9,10 @@ export default defineConfig({
     {
       command: 'node src/server.ts',
       cwd: 'apps/api',
-      env: { PORT: '3201' },
+      env: {
+        PORT: '3201',
+        DATABASE_URL: 'postgres://ff_app:unused-password-Z7@127.0.0.1:1/fancyfolio',
+      },
       url: 'http://127.0.0.1:3201/api/health',
       reuseExistingServer: false,
     },

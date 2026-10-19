@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { health } from './routes/health.ts';
+import { sites } from './routes/sites.ts';
 import { type Env, encodedPath, notFound, onError, shell } from './shell.ts';
 
 const app = new Hono<Env>({ getPath: encodedPath })
@@ -7,6 +8,7 @@ const app = new Hono<Env>({ getPath: encodedPath })
   .notFound(notFound)
   .onError(onError)
   .basePath('/api')
-  .route('/health', health);
+  .route('/health', health)
+  .route('/v1/sites', sites);
 
 export default app;

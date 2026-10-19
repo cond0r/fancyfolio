@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -11,6 +11,8 @@ export default defineConfig({
           name: 'api',
           root: 'apps/api',
           include: ['test/**/*.test.ts'],
+          exclude: [...configDefaults.exclude, 'test/db/**'],
+          env: { DATABASE_URL: 'postgres://ff_app:unused-password-Z7@127.0.0.1:1/fancyfolio' },
         },
       },
       { test: { name: 'editor', root: 'packages/editor', include: ['test/**/*.test.ts'] } },
@@ -26,7 +28,7 @@ export default defineConfig({
         test: {
           name: 'db',
           root: 'packages/db',
-          include: ['test/**/*.test.ts'],
+          include: ['test/**/*.test.ts', '../../apps/api/test/db/**/*.test.ts'],
           globalSetup: ['test/setup.ts'],
           fileParallelism: false,
         },

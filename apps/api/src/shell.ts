@@ -1,5 +1,7 @@
 import type { ErrorBody } from '@fancyfolio/contracts';
+import { sValidator } from '@hono/standard-validator';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
+import type * as v from 'valibot';
 
 export type Env = { Variables: { requestId: string } };
 
@@ -62,3 +64,9 @@ function internalError(thrown: unknown, c: Context<Env>) {
 }
 
 export const onError: ErrorHandler<Env> = internalError;
+
+export function pathParams<Schema extends v.GenericSchema>(schema: Schema) {
+  return sValidator('param', schema, (result, c: Context<Env>) => {
+    if (!result.success) return notFound(c);
+  });
+}

@@ -22,7 +22,6 @@ function cookieNames(header: string | undefined): string[] {
 export const health = new Hono().get('/', (c) => {
   setCookie(c, '__Secure-ff-probe-a', '1', probeCookie);
   setCookie(c, '__Secure-ff-probe-b', '1', probeCookie);
-  c.header('Cache-Control', 'private, no-store');
   return c.json(
     v.parse(healthResponse, {
       ok: true,

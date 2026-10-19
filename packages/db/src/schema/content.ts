@@ -161,7 +161,9 @@ export const projects = pgTable(
     url: text('url'),
     repoUrl: text('repo_url'),
     tags: text('tags').array().notNull().default([]),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+      .defaultNow()
+      .notNull(),
     updatedAt: updatedAt(),
   },
   (table) => [
@@ -188,7 +190,9 @@ export const domains = pgTable(
     challengeToken: text('challenge_token').notNull(),
     verifiedAt: timestamp('verified_at', { withTimezone: true, mode: 'string' }),
     checkedAt: timestamp('checked_at', { withTimezone: true, mode: 'string' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+      .defaultNow()
+      .notNull(),
     updatedAt: updatedAt(),
   },
   (table) => [

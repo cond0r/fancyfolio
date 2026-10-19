@@ -1,8 +1,13 @@
 import { inspect } from 'node:util';
 import { parseEnv } from '@fancyfolio/contracts';
 import * as v from 'valibot';
-import { describe, expect, it } from 'vitest';
-import { localEnv } from '../src/env.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { databaseEnv, localEnv } from '../src/env.ts';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
 
 function refusal(run: () => unknown): Error {
   try {
@@ -51,5 +56,49 @@ describe('parseEnv', () => {
     const error = refusal(() => parseEnv(schema, { API_TOKEN: 'leaky-secret-Z9' }));
     expect(error.message).toBe('Invalid environment: API_TOKEN (malformed)');
     expect(inspect(error, { depth: 10 })).not.toContain('leaky-secret-Z9');
+  });
+});
+
+describe('the database pool', () => {
+  it('requires DATABASE_URL', () => {
+    expect(refusal(() => parseEnv(databaseEnv, {})).message).toBe(
+      'Invalid environment: DATABASE_URL (missing)',
+    );
+  });
+
+  it.each([
+    [undefined, 'Invalid environment: DATABASE_URL (missing)'],
+    [
+      'not a url pw-secret-K3',
+      'Database URL must be postgres://user:password@host[:port]/database, nothing else',
+    ],
+    [
+      'mysql://ff_app:pw-secret-K3@db.example.test/x',
+      'Database URL must be postgres://user:password@host[:port]/database, nothing else',
+    ],
+    [
+      'postgres://ff_app:pw-secret-K3@db.example.test/x?sslmode=disable',
+      'Database URL must be postgres://user:password@host[:port]/database, nothing else',
+    ],
+    [
+      'postgres://ff_app:pw-secret-K3@db.example.test:6543/x',
+      'Invalid environment: DATABASE_CA_CERT (missing)',
+    ],
+  ])('refuses DATABASE_URL=%j at import without printing it', async (url, message) => {
+    vi.stubEnv('DATABASE_URL', url);
+    vi.stubEnv('DATABASE_CA_CERT', undefined);
+    const error: unknown = await import('../src/db.ts').then(
+      () => 'imported',
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error instanceof Error ? error.message : '').toBe(message);
+    expect(inspect(error, { depth: 10 })).not.toContain('pw-secret-K3');
+  });
+
+  it('hands app code a handle whose only member is withTenant', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://ff_app:pw-secret-K3@127.0.0.1:1/x');
+    const { db } = await import('../src/db.ts');
+    expect(Object.keys(db)).toEqual(['withTenant']);
   });
 });

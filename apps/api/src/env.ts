@@ -9,3 +9,5 @@ export const localEnv = v.object({
     v.maxValue(65535),
   ),
 });
+
+export const databaseEnv = v.object({ DATABASE_URL: v.string() });

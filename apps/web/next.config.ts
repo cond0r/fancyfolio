@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   transpilePackages: ['@fancyfolio/contracts'],
   async rewrites() {
+    if (!env) return [];
     return [
       {
         source: '/api/:path*',

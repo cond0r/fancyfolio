@@ -24,4 +24,4 @@ export const webEnv = v.object({
   ROOT_DOMAIN: v.pipe(v.string(), v.maxLength(253), v.regex(hostname)),
 });
 
-export const env = parseEnv(webEnv, process.env);
+export const env = process.env.VERCEL === '1' ? undefined : parseEnv(webEnv, process.env);

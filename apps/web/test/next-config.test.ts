@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const webDir = join(import.meta.dirname, '..');
 
-async function loadConfig(env: Record<string, string>) {
+async function loadConfig(env: Record<string, string | undefined>) {
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   vi.resetModules();
   return (await import('../next.config.ts')).default;
@@ -38,6 +38,11 @@ describe('next.config.ts', () => {
         destination: 'https://api.example.test/api/:path*',
       },
     ]);
+  });
+
+  it('needs no API_URL or ROOT_DOMAIN on Vercel, which routes /api/* to the API service', async () => {
+    const config = await loadConfig({ VERCEL: '1', API_URL: undefined, ROOT_DOMAIN: undefined });
+    expect(await config.rewrites?.()).toEqual([]);
   });
 
   it('matches the host condition literally, the way Next applies it', async () => {

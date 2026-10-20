@@ -93,6 +93,8 @@ export async function withTenant<T>(
       );
       return fn(tx, owned.tenantId);
     },
-    context.kind === 'site' ? { accessMode: 'read only' } : undefined,
+    context.kind === 'site'
+      ? { isolationLevel: 'repeatable read', accessMode: 'read only' }
+      : undefined,
   );
 }

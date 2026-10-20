@@ -1,5 +1,5 @@
 import { type CaseStudy, type SiteBundle, siteBundle } from '@fancyfolio/contracts';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import * as v from 'valibot';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
@@ -31,6 +31,7 @@ const amara = { userId: '', tenantId: '' };
 const kenji = { userId: '', tenantId: '' };
 const lena = { userId: '', tenantId: '' };
 const omar = { userId: '', tenantId: '' };
+const nadia = { userId: '', tenantId: '' };
 let expected: SiteBundle;
 let billing: CaseStudy;
 
@@ -48,10 +49,12 @@ beforeAll(async () => {
   kenji.userId = await createUser(auth, 'Kenji Mori', 'kenji.sites@example.test');
   lena.userId = await createUser(auth, 'Lena Fischer', 'lena.sites@example.test');
   omar.userId = await createUser(auth, 'Omar Haddad', 'omar.sites@example.test');
+  nadia.userId = await createUser(auth, 'Nadia Okafor', 'nadia.sites@example.test');
   amara.tenantId = await createTenant(db, amara.userId, 'amara-sites');
   kenji.tenantId = await createTenant(db, kenji.userId, 'kenji-sites');
   lena.tenantId = await createTenant(db, lena.userId, 'lena-sites');
   omar.tenantId = await createTenant(db, omar.userId, 'omar-sites');
+  nadia.tenantId = await createTenant(db, nadia.userId, 'nadia-sites');
 
   expected = await asOwner(amara, async (tx) => {
     const [profile] = await tx
@@ -216,7 +219,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await deleteUsers(auth, [amara.userId, kenji.userId, lena.userId, omar.userId]);
+  await deleteUsers(auth, [amara.userId, kenji.userId, lena.userId, omar.userId, nadia.userId]);
   await Promise.all([app.end(), auth.end()]);
 });
 
@@ -288,6 +291,52 @@ describe('GET /api/v1/sites/:key', () => {
     expect(second.body.caseStudies.map((card: { slug: string }) => card.slug)).toEqual([
       'kenji-only',
     ]);
+  });
+
+  it('reads the whole bundle from one snapshot while an owner commits between its queries', async () => {
+    await asOwner(nadia, async (tx) => {
+      await tx.insert(profiles).values({ tenantId: nadia.tenantId, displayName: 'Nadia Okafor' });
+      await tx.insert(caseStudies).values({
+        tenantId: nadia.tenantId,
+        slug: 'snapshot',
+        title: 'Snapshot',
+        publishedAt: sql`now()`,
+      });
+    });
+    const pending = await asOwner(nadia, async (tx) => {
+      await tx.execute(sql`lock table case_studies in access exclusive mode`);
+      const read = get('/api/v1/sites/nadia-sites');
+      await vi.waitFor(
+        async () => {
+          const [blocked] = await app<{ n: number }[]>`
+            select count(*)::int as n from pg_stat_activity
+            where wait_event_type = 'Lock' and query ilike '%case_studies%'
+          `;
+          expect(blocked.n).toBe(1);
+        },
+        { timeout: 1_500, interval: 10 },
+      );
+      const [joined] = await tx
+        .insert(experiences)
+        .values({
+          tenantId: nadia.tenantId,
+          company: 'Fabrikam',
+          role: 'Engineer',
+          startsOn: '2020-01-01',
+        })
+        .returning({ id: experiences.id });
+      await tx
+        .update(caseStudies)
+        .set({ experienceId: joined.id })
+        .where(eq(caseStudies.slug, 'snapshot'));
+      return { read };
+    });
+    const res = await pending.read;
+    expect(res.status).toBe(200);
+    expect({
+      experiences: res.body.experiences,
+      experienceIds: res.body.caseStudies.map((card: CaseStudy) => card.experienceId),
+    }).toEqual({ experiences: [], experienceIds: [null] });
   });
 });
 

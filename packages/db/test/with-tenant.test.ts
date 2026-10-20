@@ -4,6 +4,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { connect, connectionOptions } from '../src/client.ts';
+import { experiences } from '../src/schema/content.ts';
 import { tenants } from '../src/schema/tenants.ts';
 import {
   type TenantContext,
@@ -182,7 +183,7 @@ describe('withTenant', () => {
     });
     expect(seen).toEqual({ tenant: owner.tenantId, user: null, owner: false });
     expect(statements.map(({ params }) => params)).toEqual([[], [null, 'amara'], []]);
-    expect(statements[0].query).toBe('set transaction read only');
+    expect(statements[0].query).toBe('set transaction isolation level repeatable read read only');
     expect(statements[1].query).toMatch(/coalesce\(app\.resolve_site\(\$2::text\)::text, ''\)/);
   });
 
@@ -206,6 +207,50 @@ describe('withTenant', () => {
       context: { tenant: null, user: null, owner: false },
       visible: 0,
     });
+  });
+
+  it.each<[string, () => TenantContext, { isolation: string; readOnly: string }]>([
+    [
+      'site',
+      () => ({ kind: 'site', site: 'amara' }),
+      { isolation: 'repeatable read', readOnly: 'on' },
+    ],
+    [
+      'owner',
+      () => ({ kind: 'user', userId: owner.userId }),
+      { isolation: 'read committed', readOnly: 'off' },
+    ],
+    ['job', () => ({ kind: 'job' }), { isolation: 'read committed', readOnly: 'off' }],
+  ])('runs the %s context at its own isolation level', async (_name, input, expected) => {
+    const level = await withTenant(db, input(), async (tx) => {
+      const [row] = await tx.execute<{ isolation: string; readOnly: string }>(
+        sql`select current_setting('transaction_isolation') as isolation, current_setting('transaction_read_only') as "readOnly"`,
+      );
+      return row;
+    });
+    expect(level).toEqual(expected);
+  });
+
+  it('keeps the site context on the snapshot of its first read while the owner commits', async () => {
+    const asAmara = { kind: 'user', userId: owner.userId } as const;
+    const counts = await withTenant(db, { kind: 'site', site: 'amara' }, async (tx) => {
+      const before = await tx.$count(experiences);
+      await withTenant(db, asAmara, (owned) =>
+        owned.insert(experiences).values({
+          tenantId: owner.tenantId,
+          company: 'Fabrikam',
+          role: 'Engineer',
+          startsOn: '2020-01-01',
+        }),
+      );
+      return { before, after: await tx.$count(experiences) };
+    });
+    const committed = await withTenant(db, asAmara, async (owned) => {
+      const visible = await owned.$count(experiences);
+      await owned.delete(experiences);
+      return visible;
+    });
+    expect({ ...counts, committed }).toEqual({ before: 0, after: 0, committed: 1 });
   });
 
   it('refuses every write in the site context, also to the tenant it resolved', async () => {

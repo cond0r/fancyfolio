@@ -1,5 +1,12 @@
 import { parseEnv } from '@fancyfolio/contracts';
-import { tenantDatabase } from '@fancyfolio/db';
+import { type TenantDatabase, tenantDatabase } from '@fancyfolio/db';
 import { databaseEnv } from './env.ts';
 
-export const db = tenantDatabase(parseEnv(databaseEnv, process.env).DATABASE_URL);
+let opened: TenantDatabase | undefined;
+
+export const db: TenantDatabase = {
+  withTenant: async (context, fn) => {
+    opened ??= tenantDatabase(parseEnv(databaseEnv, process.env).DATABASE_URL);
+    return opened.withTenant(context, fn);
+  },
+};

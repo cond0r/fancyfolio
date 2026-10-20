@@ -84,16 +84,26 @@ describe('the database pool', () => {
       'postgres://ff_app:pw-secret-K3@db.example.test:6543/x',
       'Invalid environment: DATABASE_CA_CERT (missing)',
     ],
-  ])('refuses DATABASE_URL=%j at import without printing it', async (url, message) => {
+  ])('refuses DATABASE_URL=%j on first use without printing it', async (url, message) => {
     vi.stubEnv('DATABASE_URL', url);
     vi.stubEnv('DATABASE_CA_CERT', undefined);
-    const error: unknown = await import('../src/db.ts').then(
-      () => 'imported',
-      (e: unknown) => e,
-    );
+    const { db } = await import('../src/db.ts');
+    const error: unknown = await db
+      .withTenant({ kind: 'site', site: 'alice' }, async () => 0)
+      .then(
+        () => 'opened',
+        (e: unknown) => e,
+      );
     expect(error).toBeInstanceOf(Error);
     expect(error instanceof Error ? error.message : '').toBe(message);
     expect(inspect(error, { depth: 10 })).not.toContain('pw-secret-K3');
+  });
+
+  it('serves /api/health with no DATABASE_URL, as a preview deployment runs', async () => {
+    vi.stubEnv('DATABASE_URL', undefined);
+    const { default: app } = await import('../src/index.ts');
+    const res = await app.request('/api/health');
+    expect(res.status).toBe(200);
   });
 
   it('hands app code a handle whose only member is withTenant', async () => {

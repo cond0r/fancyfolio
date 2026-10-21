@@ -2,6 +2,7 @@ import { errorBody } from '@fancyfolio/contracts';
 import { Hono } from 'hono';
 import * as v from 'valibot';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { db } from '../src/db.ts';
 import app from '../src/index.ts';
 import { type Env, onError, shell } from '../src/shell.ts';
 
@@ -9,6 +10,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 function expectShellHeaders(res: Response): string {
@@ -102,11 +104,26 @@ describe('a thrown value the error handler cannot read', () => {
     },
   });
   const numericStack = Object.assign(new Error('stack'), { stack: 42 });
+  const numericMessage = Object.assign(new Error('message'), { message: 42, code: 'XX000' });
+  const throwingMessage = new Error('message');
+  // V8 formats a stack on first read through the message, so read it before the getter exists.
+  void throwingMessage.stack;
+  Object.defineProperty(throwingMessage, 'message', {
+    get() {
+      throw new Error('message getter');
+    },
+  });
 
   it.each<[string, unknown, Record<string, unknown>]>([
     ['a cyclic cause', cyclic, { error: 'Error', stack: expect.any(Array) }],
     ['a throwing cause getter', throwingCause, { error: 'unreadable thrown value' }],
     ['a non-string stack', numericStack, { error: 'Error' }],
+    [
+      'a non-string message',
+      numericMessage,
+      { error: 'Error', code: 'XX000', stack: expect.any(Array) },
+    ],
+    ['a throwing message getter', throwingMessage, { error: 'Error', stack: expect.any(Array) }],
     ['a thrown string', 'thrown-string-marker', { error: 'string' }],
     [
       'a thrown plain object',
@@ -138,4 +155,61 @@ describe('a thrown value the error handler cannot read', () => {
       });
     },
   );
+});
+
+describe('a configuration error', () => {
+  const failing = (thrown: () => unknown) =>
+    new Hono<Env>()
+      .use(shell)
+      .onError(onError)
+      .get('/boom', async () => {
+        await thrown();
+        return new Response(null, { status: 204 });
+      });
+
+  async function logged(thrown: () => unknown): Promise<string> {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await failing(thrown).request('/boom');
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Internal error', requestId: expect.any(String) });
+    expect(log).toHaveBeenCalledTimes(1);
+    return String(log.mock.calls[0][0]);
+  }
+
+  it('logs which variable is missing when the database is opened without DATABASE_URL', async () => {
+    vi.stubEnv('DATABASE_URL', undefined);
+    const line = await logged(() => db.withTenant({ kind: 'job' }, async () => null));
+    expect(JSON.parse(line)).toMatchObject({
+      error: 'Error',
+      message: 'Invalid environment: DATABASE_URL (missing)',
+    });
+  });
+
+  it('logs no part of a malformed database URL', async () => {
+    vi.stubEnv(
+      'DATABASE_URL',
+      'postgres://leaky_user:leaky-password-Q9@leaky-host.example.test:5432/db?sslmode=require',
+    );
+    const line = await logged(() => db.withTenant({ kind: 'job' }, async () => null));
+    expect(JSON.parse(line)).not.toHaveProperty('message');
+    for (const leak of ['leaky', 'password', 'sslmode', 'postgres://']) {
+      expect(line).not.toContain(leak);
+    }
+  });
+
+  it('logs only the dot paths of a schema error, never the values it rejected', async () => {
+    const schema = v.object({
+      profile: v.object({ name: v.string(), links: v.array(v.string()) }),
+    });
+    const line = await logged(() =>
+      v.parse(schema, { profile: { name: ['leaky-value-marker'], links: ['ok', 424242] } }),
+    );
+    expect(JSON.parse(line)).toMatchObject({
+      error: 'ValiError',
+      paths: ['profile.name', 'profile.links.1'],
+    });
+    expect(JSON.parse(line)).not.toHaveProperty('message');
+    expect(line).not.toContain('leaky');
+    expect(line).not.toContain('424242');
+  });
 });

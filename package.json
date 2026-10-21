@@ -11,6 +11,7 @@
     "check:fix": "biome check --write .",
     "typecheck": "tsc -p tests/tooling && tsc -p tests/e2e && pnpm -r --if-present run typecheck",
     "test": "vitest run",
+    "test:unit": "vitest run --project '!db'",
     "test:db": "vitest run --project db",
     "build": "pnpm -r --if-present run build",
     "e2e": "playwright test",

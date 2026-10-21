@@ -375,14 +375,26 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     }
   });
 
-  it('creates and migrates nothing and leaves no row behind on an empty database', {
+  it('creates and migrates nothing and leaves no row or role changed on an empty database', {
     timeout: 120_000,
   }, async () => {
-    const before = await state();
-    const outcome = runDbSuites(target, [...writeSuites, 'catalog', 'client'], 110_000);
-    expect(outcome.output).toContain('Test Files  8 passed (8)');
-    expect(outcome.status).toBe(0);
-    expect(await state()).toEqual({ ...before, users: 0, tenants: 0 });
+    const roles = () => owner`
+      select oid::int, rolname, rolcanlogin, rolbypassrls from pg_catalog.pg_roles
+      where left(rolname, 3) = 'ff_' order by rolname
+    `;
+    await owner`drop role if exists ff_bypass_probe`;
+    await owner`create role ff_bypass_probe nologin`;
+    try {
+      const before = await state();
+      const rolesBefore = await roles();
+      const outcome = runDbSuites(target, [...writeSuites, 'catalog', 'client'], 110_000);
+      expect(outcome.output).toContain('Test Files  8 passed (8)');
+      expect(outcome.status).toBe(0);
+      expect(await state()).toEqual({ ...before, users: 0, tenants: 0 });
+      expect(await roles()).toEqual(rolesBefore);
+    } finally {
+      await owner`drop role if exists ff_bypass_probe`;
+    }
   });
 
   function expectWritesRefused(reason: string, env = target) {

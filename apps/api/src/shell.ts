@@ -1,7 +1,7 @@
 import type { ErrorBody } from '@fancyfolio/contracts';
 import { sValidator } from '@hono/standard-validator';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
-import type * as v from 'valibot';
+import * as v from 'valibot';
 
 export type Env = { Variables: { requestId: string } };
 
@@ -37,12 +37,22 @@ function errorCode(error: unknown): string | undefined {
   return undefined;
 }
 
+function environmentMessage(error: Error): string | undefined {
+  const message: unknown = Object.getOwnPropertyDescriptor(error, 'message')?.value;
+  return typeof message === 'string' && message.startsWith('Invalid environment: ')
+    ? message
+    : undefined;
+}
+
 function describeError(thrown: unknown) {
   if (!(thrown instanceof Error)) return { error: typeof thrown, code: errorCode(thrown) };
   const { stack } = thrown;
   return {
     error: thrown.name,
     code: errorCode(thrown),
+    message: environmentMessage(thrown),
+    paths:
+      thrown instanceof v.ValiError ? thrown.issues.map((issue) => v.getDotPath(issue)) : undefined,
     stack:
       typeof stack === 'string'
         ? stack.split('\n').filter((line) => line.trimStart().startsWith('at '))

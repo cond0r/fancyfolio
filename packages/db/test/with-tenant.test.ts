@@ -13,6 +13,7 @@ import {
   withTenant,
 } from '../src/with-tenant.ts';
 import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
+import { roleUrl } from './setup.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
@@ -457,3 +458,85 @@ describe('withTenant', () => {
     }
   });
 });
+
+describe.runIf(inject('db').mode === 'local')(
+  'a tenant database on a role that bypasses row-level security',
+  () => {
+    const { ownerUrl } = inject('db');
+    const probe = postgres({ ...connectionOptions(ownerUrl, process.env), onnotice: () => {} });
+    const probePassword = 'probe-password-not-secret-0000000';
+    const probeUrl = roleUrl(ownerUrl, 'ff_bypass_probe', probePassword);
+    const refusal = new Error('withTenant refuses a database role with SUPERUSER or BYPASSRLS');
+    const rejection = (work: Promise<unknown>) => work.catch((error: unknown) => error);
+
+    beforeAll(async () => {
+      await probe`drop role if exists ff_bypass_probe`;
+      await probe.begin(async (tx) => {
+        await tx`
+          create function pg_temp.create_bypass_probe(secret text) returns void
+          language plpgsql as $$
+          begin
+            execute format('create role ff_bypass_probe login nobypassrls password %L', secret);
+          end
+          $$
+        `;
+        await tx`select pg_temp.create_bypass_probe(${probePassword})`;
+      });
+    });
+
+    afterAll(async () => {
+      await probe`drop role if exists ff_bypass_probe`;
+      await probe.end();
+    });
+
+    it('refuses the owner role before fn reads any tenant, on every call', async () => {
+      const handle = tenantDatabase(ownerUrl);
+      const read = vi.fn(async (tx: TenantTransaction) => tx.select().from(tenants));
+      const { username, password, hostname } = new URL(ownerUrl);
+      for (let call = 0; call < 2; call += 1) {
+        const thrown = await rejection(handle.withTenant({ kind: 'job' }, read));
+        expect(thrown).toEqual(refusal);
+        const message = thrown instanceof Error ? thrown.message : String(thrown);
+        for (const part of [ownerUrl, username, password, hostname]) {
+          expect(message).not.toContain(part);
+        }
+      }
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it('runs one role check for concurrent first calls on a handle', async () => {
+      const handle = tenantDatabase(ownerUrl);
+      const read = vi.fn(async () => 'read');
+      const outcomes = await Promise.all(
+        Array.from({ length: 5 }, () => rejection(handle.withTenant({ kind: 'job' }, read))),
+      );
+      expect([...new Set(outcomes)]).toEqual([refusal]);
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it('checks the role once per handle: a later BYPASSRLS grant shows only on a new handle', async () => {
+      const handle = tenantDatabase(probeUrl);
+      const seen = () => handle.withTenant({ kind: 'job' }, async (_tx, tenantId) => tenantId);
+      expect(await seen()).toBeNull();
+      await probe`alter role ff_bypass_probe bypassrls`;
+      expect(await seen()).toBeNull();
+      await expect(
+        tenantDatabase(probeUrl).withTenant({ kind: 'job' }, async () => 'read'),
+      ).rejects.toEqual(refusal);
+    });
+
+    it('keeps no role check that errored: the next call checks again', async () => {
+      await probe`alter role ff_bypass_probe nologin bypassrls`;
+      const handle = tenantDatabase(probeUrl);
+      const read = vi.fn(async (_tx: TenantTransaction, tenantId: string | null) => tenantId);
+      expect(await rejection(handle.withTenant({ kind: 'job' }, read))).toMatchObject({
+        code: '28000',
+      });
+      await probe`alter role ff_bypass_probe login`;
+      await expect(handle.withTenant({ kind: 'job' }, read)).rejects.toEqual(refusal);
+      expect(read).not.toHaveBeenCalled();
+      await probe`alter role ff_bypass_probe nobypassrls`;
+      expect(await handle.withTenant({ kind: 'job' }, read)).toBeNull();
+    });
+  },
+);

@@ -40,7 +40,33 @@ export type TenantDatabase = {
 
 export function tenantDatabase(url: string): TenantDatabase {
   const db = drizzle(connect(url));
-  return { withTenant: (context, fn) => withTenant(db, context, fn) };
+  let roleCheck: Promise<void> | undefined;
+  return {
+    withTenant: async (context, fn) => {
+      roleCheck ??= refuseBypassingRole(db).catch((error: unknown) => {
+        roleCheck = undefined;
+        throw error;
+      });
+      await roleCheck;
+      return withTenant(db, context, fn);
+    },
+  };
+}
+
+async function refuseBypassingRole(db: PostgresJsDatabase): Promise<void> {
+  const bypass = await db.transaction(
+    async (tx) => {
+      await tx.execute(sql`select set_config('statement_timeout', '5s', true)`);
+      const [role] = await tx.execute<{ bypass: boolean }>(
+        sql`select rolsuper or rolbypassrls as bypass from pg_catalog.pg_roles where rolname = current_user`,
+      );
+      return role?.bypass;
+    },
+    { accessMode: 'read only' },
+  );
+  if (bypass !== false) {
+    throw new Error('withTenant refuses a database role with SUPERUSER or BYPASSRLS');
+  }
 }
 
 function plain(tx: DrizzleTransaction): TenantTransaction {

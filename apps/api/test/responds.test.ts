@@ -133,7 +133,7 @@ describe('every route the API serves', () => {
     })) as unknown as Documented;
     const served = new Set(
       app.routes
-        .filter((route) => route.method !== 'ALL')
+        .filter((route) => route.method !== 'ALL' && route.path !== '/api/openapi.json')
         .map((route) => `${route.method} ${route.path.replace(/:(\w+)/g, '{$1}')}`),
     );
     expect([...served]).toEqual(

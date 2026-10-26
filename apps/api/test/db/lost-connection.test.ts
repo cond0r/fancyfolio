@@ -1,4 +1,14 @@
-import { afterAll, afterEach, beforeEach, describe, expect, inject, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  inject,
+  it,
+  vi,
+} from 'vitest';
 import {
   type Cut,
   cuttingProxy,
@@ -7,14 +17,19 @@ import {
 import type {} from '../../../../packages/db/test/setup.ts';
 
 const { mode, appUrl } = inject('db');
-const proxy = await cuttingProxy(appUrl);
-vi.stubEnv('DATABASE_URL', proxy.url);
-const { default: api } = await import('../../src/index.ts');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe.runIf(mode === 'local')('a public route whose connection is lost', () => {
+  let proxy: Awaited<ReturnType<typeof cuttingProxy>>;
+  let api: typeof import('../../src/index.ts')['default'];
   let uncaught: ReturnType<typeof watchUncaught>;
+
+  beforeAll(async () => {
+    proxy = await cuttingProxy(appUrl);
+    vi.stubEnv('DATABASE_URL', proxy.url);
+    ({ default: api } = await import('../../src/index.ts'));
+  });
 
   beforeEach(() => {
     uncaught = watchUncaught();

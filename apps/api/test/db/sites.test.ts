@@ -1,6 +1,6 @@
 import { type CaseStudy, type SiteBundle, siteBundle } from '@fancyfolio/contracts';
 import { eq, sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import * as v from 'valibot';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { connect } from '../../../../packages/db/src/client.ts';
@@ -11,7 +11,7 @@ import {
   profiles,
   projects,
 } from '../../../../packages/db/src/schema/content.ts';
-import { withTenant } from '../../../../packages/db/src/with-tenant.ts';
+import { type TenantPool, withTenant } from '../../../../packages/db/src/with-tenant.ts';
 import {
   createTenant,
   createUser,
@@ -26,7 +26,7 @@ const { default: api } = await import('../../src/index.ts');
 
 const app = connect(appUrl);
 const auth = connect(authUrl);
-const db = drizzle(app);
+const db: TenantPool = { pool: app };
 const amara = { userId: '', tenantId: '' };
 const kenji = { userId: '', tenantId: '' };
 const lena = { userId: '', tenantId: '' };
@@ -50,11 +50,11 @@ beforeAll(async () => {
   lena.userId = await createUser(auth, 'Lena Fischer', 'lena.sites@example.test');
   omar.userId = await createUser(auth, 'Omar Haddad', 'omar.sites@example.test');
   nadia.userId = await createUser(auth, 'Nadia Okafor', 'nadia.sites@example.test');
-  amara.tenantId = await createTenant(db, amara.userId, 'amara-sites');
-  kenji.tenantId = await createTenant(db, kenji.userId, 'kenji-sites');
-  lena.tenantId = await createTenant(db, lena.userId, 'lena-sites');
-  omar.tenantId = await createTenant(db, omar.userId, 'omar-sites');
-  nadia.tenantId = await createTenant(db, nadia.userId, 'nadia-sites');
+  amara.tenantId = await createTenant(app, amara.userId, 'amara-sites');
+  kenji.tenantId = await createTenant(app, kenji.userId, 'kenji-sites');
+  lena.tenantId = await createTenant(app, lena.userId, 'lena-sites');
+  omar.tenantId = await createTenant(app, omar.userId, 'omar-sites');
+  nadia.tenantId = await createTenant(app, nadia.userId, 'nadia-sites');
 
   expected = await asOwner(amara, async (tx) => {
     const [profile] = await tx
@@ -234,11 +234,11 @@ async function rows() {
   return Promise.all(
     [amara, kenji, lena, omar].map((owner) =>
       asOwner(owner, async (tx) => ({
-        domains: await tx.execute(sql`select * from domains order by id`),
-        caseStudies: await tx.execute(sql`select * from case_studies order by id`),
-        profiles: await tx.execute(sql`select * from profiles`),
-        experiences: await tx.execute(sql`select * from experiences order by id`),
-        projects: await tx.execute(sql`select * from projects order by id`),
+        domains: (await tx.execute(sql`select * from domains order by id`)).rows,
+        caseStudies: (await tx.execute(sql`select * from case_studies order by id`)).rows,
+        profiles: (await tx.execute(sql`select * from profiles`)).rows,
+        experiences: (await tx.execute(sql`select * from experiences order by id`)).rows,
+        projects: (await tx.execute(sql`select * from projects order by id`)).rows,
       })),
     ),
   );
@@ -308,10 +308,12 @@ describe('GET /api/v1/sites/:key', () => {
       const read = get('/api/v1/sites/nadia-sites');
       await vi.waitFor(
         async () => {
-          const [blocked] = await app<{ n: number }[]>`
+          const {
+            rows: [blocked],
+          } = await drizzle(app).execute<{ n: number }>(sql`
             select count(*)::int as n from pg_stat_activity
             where wait_event_type = 'Lock' and query ilike '%case_studies%'
-          `;
+          `);
           expect(blocked.n).toBe(1);
         },
         { timeout: 1_500, interval: 10 },

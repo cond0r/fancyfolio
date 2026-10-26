@@ -1,17 +1,17 @@
 import { parseEnv } from '@fancyfolio/contracts';
-import type postgres from 'postgres';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as v from 'valibot';
 import { connect } from '../src/client.ts';
 
-export async function withOwner(run: (sql: postgres.Sql) => Promise<void>): Promise<void> {
+export async function withOwner(run: (db: NodePgDatabase) => Promise<void>): Promise<void> {
   const { OWNER_DATABASE_URL } = parseEnv(
     v.object({ OWNER_DATABASE_URL: v.pipe(v.string(), v.url()) }),
     process.env,
   );
-  const sql = connect(OWNER_DATABASE_URL);
+  const pool = connect(OWNER_DATABASE_URL);
   try {
-    await run(sql);
+    await run(drizzle(pool));
   } finally {
-    await sql.end();
+    await pool.end();
   }
 }

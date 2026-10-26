@@ -1,24 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { LIMITS } from '@fancyfolio/contracts';
 import { eq, type SQL, sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { caseStudies, experiences, profiles, projects } from '../src/schema/content.ts';
 import { tenants } from '../src/schema/tenants.ts';
-import { type TenantTransaction, withTenant } from '../src/with-tenant.ts';
+import { type TenantPool, type TenantTransaction, withTenant } from '../src/with-tenant.ts';
 import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
 const db = drizzle(app);
+const tenantPool: TenantPool = { pool: app };
 const denied = { cause: { code: '42501' } };
 const refusedBy = (constraint: string) => ({
-  cause: { code: '23514', constraint_name: constraint },
+  cause: { code: '23514', constraint },
 });
 const store = 'k3x9q2m7.public.blob.vercel-storage.com';
-const missingKey = { cause: { code: '23503', constraint_name: 'case_studies_experience_fk' } };
+const missingKey = { cause: { code: '23503', constraint: 'case_studies_experience_fk' } };
 
 type Seeded = {
   userId: string;
@@ -57,8 +58,8 @@ const forgedRow: Record<TableName, (tenantId: string, updatedAt?: SQL) => SQL> =
 
 async function seed(target: Seeded, name: string, email: string, subdomain: string) {
   target.userId = await createUser(auth, name, email);
-  target.tenantId = await createTenant(db, target.userId, subdomain);
-  await withTenant(db, { kind: 'user', userId: target.userId }, async (tx) => {
+  target.tenantId = await createTenant(app, target.userId, subdomain);
+  await withTenant(tenantPool, { kind: 'user', userId: target.userId }, async (tx) => {
     const tenantId = target.tenantId;
     await tx.insert(profiles).values({ tenantId, displayName: name });
     const [experience] = await tx
@@ -96,11 +97,11 @@ afterAll(async () => {
 });
 
 function asOwner<T>(owner: Seeded, fn: (tx: TenantTransaction) => Promise<T>) {
-  return withTenant(db, { kind: 'user', userId: owner.userId }, fn);
+  return withTenant(tenantPool, { kind: 'user', userId: owner.userId }, fn);
 }
 
 async function tenantsOf(tx: TenantTransaction, name: TableName) {
-  const rows = await tx.execute<{ tenant: string }>(
+  const { rows } = await tx.execute<{ tenant: string }>(
     sql`select tenant_id::text as tenant from ${tables[name]}`,
   );
   return [...new Set(rows.map((row) => row.tenant))];
@@ -110,22 +111,22 @@ describe.each(tableNames)('%s', (name) => {
   const table = tables[name];
 
   it('shows no row and refuses an insert without a context and in the job context', async () => {
-    expect([...(await db.execute(sql`select tenant_id from ${table}`))]).toEqual([]);
+    expect((await db.execute(sql`select tenant_id from ${table}`)).rows).toEqual([]);
     await expect(db.execute(forgedRow[name](a.tenantId))).rejects.toMatchObject(denied);
-    await withTenant(db, { kind: 'job' }, async (tx) => {
+    await withTenant(tenantPool, { kind: 'job' }, async (tx) => {
       expect(await tenantsOf(tx, name)).toEqual([]);
     });
     await expect(
-      withTenant(db, { kind: 'job' }, (tx) => tx.execute(forgedRow[name](a.tenantId))),
+      withTenant(tenantPool, { kind: 'job' }, (tx) => tx.execute(forgedRow[name](a.tenantId))),
     ).rejects.toMatchObject(denied);
   });
 
   it("shows A only A's rows", async () => {
     await asOwner(a, async (tx) => {
       expect(await tenantsOf(tx, name)).toEqual([a.tenantId]);
-      expect([
-        ...(await tx.execute(sql`select 1 from ${table} where tenant_id = ${b.tenantId}`)),
-      ]).toEqual([]);
+      expect(
+        (await tx.execute(sql`select 1 from ${table} where tenant_id = ${b.tenantId}`)).rows,
+      ).toEqual([]);
     });
   });
 
@@ -137,16 +138,16 @@ describe.each(tableNames)('%s', (name) => {
       const updated = await tx.execute(
         sql`update ${table} set tenant_id = ${a.tenantId} where tenant_id = ${b.tenantId}`,
       );
-      expect(updated.count).toBe(0);
+      expect(updated.rowCount).toBe(0);
       if (name !== 'profiles') {
         const deleted = await tx.execute(sql`delete from ${table} where tenant_id = ${b.tenantId}`);
-        expect(deleted.count).toBe(0);
+        expect(deleted.rowCount).toBe(0);
       }
     });
     const after = await asOwner(b, (tx) =>
       tx.execute(sql`select * from ${table} order by updated_at`),
     );
-    expect([...after]).toEqual([...before]);
+    expect(after.rows).toEqual(before.rows);
   });
 
   it("refuses A an insert for B's tenant", async () => {
@@ -160,12 +161,12 @@ describe.each(tableNames)('%s', (name) => {
     const rollback = new Error('rollback');
     try {
       await expect(
-        withTenant(db, { kind: 'user', userId, onboarding: true }, (tx, tenantId) =>
+        withTenant(tenantPool, { kind: 'user', userId, onboarding: true }, (tx, tenantId) =>
           tx.execute(forgedRow[name](tenantId ?? '')),
         ),
       ).rejects.toMatchObject(denied);
       await expect(
-        withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
+        withTenant(tenantPool, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
           const id = tenantId ?? '';
           await tx
             .insert(tenants)
@@ -188,22 +189,28 @@ describe.each(tableNames)('%s', (name) => {
       let outcome: unknown;
       try {
         await expect(
-          withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
-            const id = tenantId ?? '';
-            await tx
-              .insert(tenants)
-              .values({ id, subdomain: `noor-${name.replace('_', '-')}`, ownerId: userId });
-            await tx.execute(forgedRow[name](id, sql`${stamp}::timestamptz`));
-            const [row] = await tx.execute<{ stamped: boolean }>(
-              sql`select bool_and(updated_at between now() and clock_timestamp()) as stamped from ${table}`,
-            );
-            const stale = await tx.execute(
-              sql`update ${table} set tenant_id = tenant_id where updated_at = ${stamp}::timestamptz`,
-            );
-            const fresh = await tx.execute(sql`update ${table} set tenant_id = tenant_id`);
-            outcome = { stamped: row.stamped, stale: stale.count, fresh: fresh.count };
-            throw rollback;
-          }),
+          withTenant(
+            tenantPool,
+            { kind: 'user', userId, onboarding: true },
+            async (tx, tenantId) => {
+              const id = tenantId ?? '';
+              await tx
+                .insert(tenants)
+                .values({ id, subdomain: `noor-${name.replace('_', '-')}`, ownerId: userId });
+              await tx.execute(forgedRow[name](id, sql`${stamp}::timestamptz`));
+              const {
+                rows: [row],
+              } = await tx.execute<{ stamped: boolean }>(
+                sql`select bool_and(updated_at between now() and clock_timestamp()) as stamped from ${table}`,
+              );
+              const stale = await tx.execute(
+                sql`update ${table} set tenant_id = tenant_id where updated_at = ${stamp}::timestamptz`,
+              );
+              const fresh = await tx.execute(sql`update ${table} set tenant_id = tenant_id`);
+              outcome = { stamped: row.stamped, stale: stale.rowCount, fresh: fresh.rowCount };
+              throw rollback;
+            },
+          ),
         ).rejects.toBe(rollback);
         expect(outcome).toEqual({ stamped: true, stale: 0, fresh: 1 });
       } finally {
@@ -213,15 +220,23 @@ describe.each(tableNames)('%s', (name) => {
   );
 
   it('moves updated_at on every update, whatever value the statement sets', async () => {
-    const latest = (tx: TenantTransaction) =>
-      tx.execute<{ stamp: string }>(sql`select max(updated_at)::text as stamp from ${table}`);
+    const latest = async (tx: TenantTransaction) => {
+      const {
+        rows: [row],
+      } = await tx.execute<{ stamp: string }>(
+        sql`select max(updated_at)::text as stamp from ${table}`,
+      );
+      return row;
+    };
     const moved = async (tx: TenantTransaction, since: string) => {
-      const [row] = await tx.execute<{ moved: boolean }>(
+      const {
+        rows: [row],
+      } = await tx.execute<{ moved: boolean }>(
         sql`select bool_and(updated_at > ${since}::timestamptz) as moved from ${table}`,
       );
       return row.moved;
     };
-    const [before] = await asOwner(a, latest);
+    const before = await asOwner(a, latest);
     await asOwner(a, (tx) =>
       tx.execute(
         sql`update ${table} set updated_at = '2000-01-01' where tenant_id = ${a.tenantId}`,
@@ -229,12 +244,12 @@ describe.each(tableNames)('%s', (name) => {
     );
     const outcome = await asOwner(a, async (tx) => {
       const first = await moved(tx, before.stamp);
-      const [after] = await latest(tx);
+      const after = await latest(tx);
       await tx.execute(
         sql`update ${table} set tenant_id = tenant_id where tenant_id = ${a.tenantId}`,
       );
       const second = await moved(tx, after.stamp);
-      const [again] = await latest(tx);
+      const again = await latest(tx);
       await tx.execute(
         sql`update ${table} set tenant_id = tenant_id where tenant_id = ${a.tenantId}`,
       );
@@ -247,7 +262,7 @@ describe.each(tableNames)('%s', (name) => {
 describe('the public site context', () => {
   it('reads the profile, experiences, projects and only the published case study', async () => {
     const seen = await withTenant(
-      db,
+      tenantPool,
       { kind: 'site', site: 'ines-content' },
       async (tx, tenantId) => ({
         tenantId,
@@ -276,7 +291,9 @@ describe('the public site context', () => {
         sql`delete from ${tables[name]} where tenant_id = ${a.tenantId}`,
       ]) {
         await expect(
-          withTenant(db, { kind: 'site', site: 'ines-content' }, (tx) => tx.execute(statement)),
+          withTenant(tenantPool, { kind: 'site', site: 'ines-content' }, (tx) =>
+            tx.execute(statement),
+          ),
         ).rejects.toMatchObject(readOnly);
       }
     },
@@ -350,7 +367,9 @@ describe('the source hash', () => {
       );
       await tx.execute(sql`update case_studies set source_hash = ${stored} where id = ${id}`);
       await tx.execute(sql`update case_studies set ${change} where id = ${id}`);
-      const [row] = await tx.execute<{ hash: string | null }>(
+      const {
+        rows: [row],
+      } = await tx.execute<{ hash: string | null }>(
         sql`select source_hash as hash from case_studies where id = ${id}`,
       );
       return row.hash;
@@ -495,7 +514,7 @@ describe('field bounds', () => {
       const updated = await tx.execute(
         sql`update ${tables[table]} set ${change} where ${rowOf[table]()}`,
       );
-      expect(updated.count).toBe(1);
+      expect(updated.rowCount).toBe(1);
       throw rollback;
     }).catch((error: unknown) => error);
     if (outcome === rollback) return 'accepted';
@@ -506,8 +525,8 @@ describe('field bounds', () => {
   function constraintOf(error: unknown): unknown {
     if (typeof error !== 'object' || error === null || !('cause' in error)) return error;
     const { cause } = error;
-    if (typeof cause !== 'object' || cause === null || !('constraint_name' in cause)) return cause;
-    return cause.constraint_name;
+    if (typeof cause !== 'object' || cause === null || !('constraint' in cause)) return cause;
+    return cause.constraint;
   }
 
   it.each([

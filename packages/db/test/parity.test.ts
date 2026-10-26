@@ -1,17 +1,16 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
-import { drizzle } from 'drizzle-orm/postgres-js';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { tenants } from '../src/schema/tenants.ts';
-import { withTenant } from '../src/with-tenant.ts';
+import { type TenantPool, withTenant } from '../src/with-tenant.ts';
 import { createUser, deleteUsers, requireWritable } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
-const db = drizzle(app);
+const db: TenantPool = { pool: app };
 const migrations = join(import.meta.dirname, '..', 'drizzle');
 const rollback = new Error('rollback');
 let userId = '';
@@ -37,7 +36,7 @@ async function databaseAccepts(subdomain: string): Promise<boolean> {
   ).catch((error: unknown) => error);
   if (outcome === rollback) return true;
   expect(outcome).toMatchObject({
-    cause: { code: '23514', constraint_name: 'tenants_subdomain_check' },
+    cause: { code: '23514', constraint: 'tenants_subdomain_check' },
   });
   return false;
 }

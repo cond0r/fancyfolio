@@ -2,10 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
-import postgres from 'postgres';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { setRolePasswords } from '../scripts/roles.ts';
-import { connect, connectionOptions } from '../src/client.ts';
+import { connect } from '../src/client.ts';
 import { latestMigration } from './journal.ts';
 import { roleUrl } from './setup.ts';
 
@@ -177,15 +178,17 @@ describe.runIf(inject('db').mode === 'local')('the local harness', () => {
 
 describe.runIf(inject('db').mode === 'local')('the roles migration', () => {
   it('runs again on existing roles, resets attributes changed by hand and keeps logins', async () => {
-    const owner = connect(inject('db').ownerUrl);
+    const owner = drizzle(connect(inject('db').ownerUrl));
     try {
-      await owner`alter role ff_app bypassrls createdb createrole`;
-      await owner`alter role ff_resolver login bypassrls createdb createrole`;
-      await owner.file(rolesMigration);
-      const roles = await owner`
+      await owner.execute(sql`alter role ff_app bypassrls createdb createrole`);
+      await owner.execute(sql`alter role ff_resolver login bypassrls createdb createrole`);
+      await owner.$client.query(readFileSync(rolesMigration, 'utf8'));
+      const roles = (
+        await owner.execute(sql`
         select rolname, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole from pg_roles
         where rolname in ('ff_app', 'ff_auth', 'ff_resolver') order by rolname
-      `;
+      `)
+      ).rows;
       expect(roles).toEqual(
         ['ff_app', 'ff_auth', 'ff_resolver'].map((rolname) => ({
           rolname,
@@ -196,9 +199,9 @@ describe.runIf(inject('db').mode === 'local')('the roles migration', () => {
         })),
       );
     } finally {
-      await owner`alter role ff_app nobypassrls nocreatedb nocreaterole`;
-      await owner`alter role ff_resolver nologin nobypassrls nocreatedb nocreaterole`;
-      await owner.end();
+      await owner.execute(sql`alter role ff_app nobypassrls nocreatedb nocreaterole`);
+      await owner.execute(sql`alter role ff_resolver nologin nobypassrls nocreatedb nocreaterole`);
+      await owner.$client.end();
     }
   });
 });
@@ -212,101 +215,107 @@ describe.runIf(inject('db').mode === 'local')('the tenants RLS migration', () =>
       .split('--> statement-breakpoint')
       .at(-1);
     const rollback = new Error('rolled back');
-    const owner = connect(inject('db').ownerUrl);
+    const owner = drizzle(connect(inject('db').ownerUrl));
     try {
       const error = await owner
-        .begin(async (tx) => {
-          const role = grantee === 'public' ? tx`public` : tx(grantee);
-          await tx`grant temporary on database fancyfolio_test to ${role}`;
-          await tx.unsafe(check ?? '');
+        .transaction(async (tx) => {
+          const role = grantee === 'public' ? sql`public` : sql.identifier(grantee);
+          await tx.execute(sql`grant temporary on database fancyfolio_test to ${role}`);
+          await tx.execute(sql.raw(check ?? ''));
           throw rollback;
         })
         .catch((caught: unknown) => caught);
       expect(error).toMatchObject({
-        code: 'P0001',
-        message: `TEMPORARY on database fancyfolio_test is still held by ${holders}`,
+        cause: {
+          code: 'P0001',
+          message: `TEMPORARY on database fancyfolio_test is still held by ${holders}`,
+        },
       });
     } finally {
-      await owner.end();
+      await owner.$client.end();
     }
   });
 });
 
 describe.runIf(inject('db').mode === 'local')('db:roles', () => {
   it('needs no TEMPORARY on the database and leaves no helper function behind', async () => {
-    const owner = postgres({ ...connectionOptions(inject('db').ownerUrl, process.env), max: 1 });
+    const owner = drizzle(connect(inject('db').ownerUrl, { max: 1 }));
     try {
-      await owner`revoke temporary on database fancyfolio_test from current_user`;
+      await owner.execute(sql`revoke temporary on database fancyfolio_test from current_user`);
       await setRolePasswords(owner, process.env);
-      const [{ helpers }] = await owner<{ helpers: number }[]>`
+      const [{ helpers }] = (
+        await owner.execute<{ helpers: number }>(sql`
         select count(*)::int as helpers from pg_proc
         where proname = 'set_login_password' or pronamespace = pg_my_temp_schema()
-      `;
+      `)
+      ).rows;
       expect(helpers).toBe(0);
     } finally {
-      await owner`grant temporary on database fancyfolio_test to current_user`;
-      await owner.end();
+      await owner.execute(sql`grant temporary on database fancyfolio_test to current_user`);
+      await owner.$client.end();
     }
   });
 
   it('resolves format() in its helper from pg_catalog whatever the session search_path', async () => {
-    const owner = postgres({ ...connectionOptions(inject('db').ownerUrl, process.env), max: 1 });
+    const owner = drizzle(connect(inject('db').ownerUrl, { max: 1 }));
     try {
-      await owner`create schema shadow`;
-      await owner`
+      await owner.execute(sql`create schema shadow`);
+      await owner.execute(sql`
         create function shadow.format(text, text, text) returns text language plpgsql
         as $$ begin raise exception 'shadowed format'; end $$
-      `;
-      await owner`set search_path = shadow, pg_catalog`;
+      `);
+      await owner.execute(sql`set search_path = shadow, pg_catalog`);
       await expect(setRolePasswords(owner, process.env)).resolves.toBeUndefined();
     } finally {
-      await owner`reset search_path`;
-      await owner`drop schema shadow cascade`;
-      await owner.end();
+      await owner.execute(sql`reset search_path`);
+      await owner.execute(sql`drop schema shadow cascade`);
+      await owner.$client.end();
     }
   });
 
   it('turns login on for runtime roles left NOLOGIN, as a fresh migration creates them', async () => {
-    const owner = connect(inject('db').ownerUrl);
+    const owner = drizzle(connect(inject('db').ownerUrl));
     try {
-      await owner`alter role ff_app nologin`;
-      await owner`alter role ff_auth nologin`;
+      await owner.execute(sql`alter role ff_app nologin`);
+      await owner.execute(sql`alter role ff_auth nologin`);
       await setRolePasswords(owner, process.env);
-      const roles = await owner`
+      const roles = (
+        await owner.execute(sql`
         select rolname, rolcanlogin from pg_roles
         where rolname in ('ff_app', 'ff_auth') order by rolname
-      `;
+      `)
+      ).rows;
       expect(roles).toEqual([
         { rolname: 'ff_app', rolcanlogin: true },
         { rolname: 'ff_auth', rolcanlogin: true },
       ]);
     } finally {
-      await owner`alter role ff_app login`;
-      await owner`alter role ff_auth login`;
-      await owner.end();
+      await owner.execute(sql`alter role ff_app login`);
+      await owner.execute(sql`alter role ff_auth login`);
+      await owner.$client.end();
     }
   });
 
   it('names the role and hides the verifier when ALTER ROLE is refused', async () => {
-    const owner = connect(inject('db').ownerUrl);
-    const app = connect(inject('db').appUrl);
+    const owner = drizzle(connect(inject('db').ownerUrl));
+    const app = drizzle(connect(inject('db').appUrl));
     try {
-      await owner`grant create on schema app to ff_app`;
+      await owner.execute(sql`grant create on schema app to ff_app`);
       const error = await setRolePasswords(app, process.env).catch((caught: unknown) => caught);
       expect(error).toMatchObject({
         message: 'Could not set the login password for ff_app (SQLSTATE 42501)',
       });
       expect(inspect(error, { depth: 10, showHidden: true })).not.toContain('SCRAM-SHA-256');
     } finally {
-      await owner`revoke create on schema app from ff_app`;
-      await Promise.all([app.end(), owner.end()]);
+      await owner.execute(sql`revoke create on schema app from ff_app`);
+      await Promise.all([app.$client.end(), owner.$client.end()]);
     }
   });
 });
 
 describe.runIf(inject('db').mode === 'local')('the target mode', () => {
   const { ownerUrl } = inject('db');
-  const owner = connect(ownerUrl);
+  const owner = drizzle(connect(ownerUrl));
   const target = {
     TARGET_DATABASE_URL: ownerUrl,
     TARGET_POOLER_URL: ownerUrl,
@@ -323,37 +332,43 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     'domains',
   ];
 
-  afterAll(() => owner.end());
+  afterAll(() => owner.$client.end());
 
   async function state() {
-    const [row] = await owner`
+    const [row] = (
+      await owner.execute(sql`
       select
         (select oid::int from pg_database where datname = current_database()) as database,
         (select count(*)::int from drizzle.__drizzle_migrations) as migrations,
         (select count(*)::int from public.users) as users,
         (select count(*)::int from public.tenants) as tenants
-    `;
+    `)
+    ).rows;
     return row;
   }
 
   it('leaves a pending migration pending and the role passwords unchanged', async () => {
     const scratch = new URL(ownerUrl);
     scratch.pathname = '/fancyfolio_test_target';
-    await owner`drop database if exists fancyfolio_test_target with (force)`;
-    await owner`create database fancyfolio_test_target`;
-    const pending = connect(scratch.href);
-    const asApp = connect(roleUrl(ownerUrl, 'ff_app', target.FF_APP_PASSWORD));
+    await owner.execute(sql`drop database if exists fancyfolio_test_target with (force)`);
+    await owner.execute(sql`create database fancyfolio_test_target`);
+    const pending = drizzle(connect(scratch.href));
+    const asApp = drizzle(connect(roleUrl(ownerUrl, 'ff_app', target.FF_APP_PASSWORD)));
     try {
       const migrated = run('pnpm', ['--silent', 'db:migrate'], {
         OWNER_DATABASE_URL: scratch.href,
       });
       expect(migrated.status, migrated.output).toBe(0);
-      await pending`
+      await pending.execute(sql`
         update drizzle.__drizzle_migrations set created_at = created_at - 1
         where id = (select max(id) from drizzle.__drizzle_migrations)
-      `;
-      const journal = () =>
-        pending`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`;
+      `);
+      const journal = async () =>
+        (
+          await pending.execute(
+            sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`,
+          )
+        ).rows;
       const before = await journal();
       const targeted = runDbSuites(
         {
@@ -367,23 +382,27 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       expect(targeted.output).toContain('Test Files  1 passed (1)');
       expect(targeted.status).toBe(0);
       expect(await journal()).toEqual(before);
-      const [{ name }] = await asApp<{ name: string }[]>`select current_user as name`;
+      const [{ name }] = (await asApp.execute<{ name: string }>(sql`select current_user as name`))
+        .rows;
       expect(name).toBe('ff_app');
     } finally {
-      await Promise.all([pending.end(), asApp.end()]);
-      await owner`drop database if exists fancyfolio_test_target with (force)`;
+      await Promise.all([pending.$client.end(), asApp.$client.end()]);
+      await owner.execute(sql`drop database if exists fancyfolio_test_target with (force)`);
     }
   });
 
   it('creates and migrates nothing and leaves no row or role changed on an empty database', {
     timeout: 120_000,
   }, async () => {
-    const roles = () => owner`
+    const roles = async () =>
+      (
+        await owner.execute(sql`
       select oid::int, rolname, rolcanlogin, rolbypassrls from pg_catalog.pg_roles
       where left(rolname, 3) = 'ff_' order by rolname
-    `;
-    await owner`drop role if exists ff_bypass_probe`;
-    await owner`create role ff_bypass_probe nologin`;
+    `)
+      ).rows;
+    await owner.execute(sql`drop role if exists ff_bypass_probe`);
+    await owner.execute(sql`create role ff_bypass_probe nologin`);
     try {
       const before = await state();
       const rolesBefore = await roles();
@@ -393,7 +412,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       expect(await state()).toEqual({ ...before, users: 0, tenants: 0 });
       expect(await roles()).toEqual(rolesBefore);
     } finally {
-      await owner`drop role if exists ff_bypass_probe`;
+      await owner.execute(sql`drop role if exists ff_bypass_probe`);
     }
   });
 
@@ -410,14 +429,18 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
     {
       table: 'users',
       insert: () =>
-        owner`insert into users (name, email) values ('Tomas Lindqvist', 'tomas@example.test')`,
-      remove: () => owner`delete from users where email = 'tomas@example.test'`,
+        owner.execute(
+          sql`insert into users (name, email) values ('Tomas Lindqvist', 'tomas@example.test')`,
+        ),
+      remove: () => owner.execute(sql`delete from users where email = 'tomas@example.test'`),
     },
     {
       table: 'rate_limits',
       insert: () =>
-        owner`insert into rate_limits (key, count, last_request) values ('rate-probe', 1, 0)`,
-      remove: () => owner`delete from rate_limits where key = 'rate-probe'`,
+        owner.execute(
+          sql`insert into rate_limits (key, count, last_request) values ('rate-probe', 1, 0)`,
+        ),
+      remove: () => owner.execute(sql`delete from rate_limits where key = 'rate-probe'`),
     },
   ])(
     'refuses the write suites while the database holds a $table row',
@@ -432,48 +455,49 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
   );
 
   it("counts the auth rows in public even when the owner's own schema shadows a table", async () => {
-    const [{ name }] = await owner<{ name: string }[]>`select current_user as name`;
+    const [{ name }] = (await owner.execute<{ name: string }>(sql`select current_user as name`))
+      .rows;
     try {
-      await owner`create schema ${owner(name)}`;
-      await owner`create table ${owner(`${name}.users`)} (id int)`;
-      await owner`
+      await owner.execute(sql`create schema ${sql.identifier(name)}`);
+      await owner.execute(sql`create table ${sql.identifier(name)}.users (id int)`);
+      await owner.execute(sql`
         insert into public.users (name, email) values ('Tomas Lindqvist', 'tomas@example.test')
-      `;
+      `);
       expectWritesRefused(heldRows);
     } finally {
-      await owner`drop schema if exists ${owner(name)} cascade`;
-      await owner`delete from public.users where email = 'tomas@example.test'`;
+      await owner.execute(sql`drop schema if exists ${sql.identifier(name)} cascade`);
+      await owner.execute(sql`delete from public.users where email = 'tomas@example.test'`);
     }
   });
 
   it('ignores a table the write suites never touch, even one the owner cannot read', async () => {
     try {
-      await owner`create table provider_probe (id int)`;
-      await owner`insert into provider_probe values (1)`;
-      await owner`grant select on provider_probe to ff_auth`;
-      await owner`revoke all on provider_probe from current_user`;
+      await owner.execute(sql`create table provider_probe (id int)`);
+      await owner.execute(sql`insert into provider_probe values (1)`);
+      await owner.execute(sql`grant select on provider_probe to ff_auth`);
+      await owner.execute(sql`revoke all on provider_probe from current_user`);
       const run = runDbSuites(target, ['auth-privileges']);
       expect(run.output).toContain('Test Files  1 passed (1)');
       expect(run.status).toBe(0);
     } finally {
-      await owner`drop table if exists provider_probe`;
+      await owner.execute(sql`drop table if exists provider_probe`);
     }
   });
 
   it('refuses the write suites when forced RLS hides the rows from an owner without BYPASSRLS', async () => {
     const probePassword = 'probe-owner-password-not-secret-01';
     try {
-      await owner`drop role if exists ff_probe_owner`;
-      await owner.begin(async (tx) => {
-        await tx`
+      await owner.execute(sql`drop role if exists ff_probe_owner`);
+      await owner.transaction(async (tx) => {
+        await tx.execute(sql`
           create function pg_temp.create_probe_owner(secret text) returns void
           language plpgsql as $$
           begin
             execute format('create role ff_probe_owner login nobypassrls password %L', secret);
           end
           $$
-        `;
-        await tx`select pg_temp.create_probe_owner(${probePassword})`;
+        `);
+        await tx.execute(sql`select pg_temp.create_probe_owner(${probePassword})`);
       });
       expectWritesRefused(
         'the target owner role lacks BYPASSRLS, so forced RLS hides rows from it',
@@ -483,7 +507,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
         },
       );
     } finally {
-      await owner`drop role if exists ff_probe_owner`;
+      await owner.execute(sql`drop role if exists ff_probe_owner`);
     }
   });
 
@@ -500,12 +524,12 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       async (url: string) => {
         const migrated = run('pnpm', ['--silent', 'db:migrate'], { OWNER_DATABASE_URL: url });
         expect(migrated.status, migrated.output).toBe(0);
-        const behind = connect(url);
+        const behind = drizzle(connect(url));
         try {
-          await behind`drop table public.tenants cascade`;
-          await behind`delete from drizzle.__drizzle_migrations where id > 3`;
+          await behind.execute(sql`drop table public.tenants cascade`);
+          await behind.execute(sql`delete from drizzle.__drizzle_migrations where id > 3`);
         } finally {
-          await behind.end();
+          await behind.$client.end();
         }
       },
     ],
@@ -515,22 +539,22 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       async (url: string) => {
         const migrated = run('pnpm', ['--silent', 'db:migrate'], { OWNER_DATABASE_URL: url });
         expect(migrated.status, migrated.output).toBe(0);
-        const later = connect(url);
+        const later = drizzle(connect(url));
         try {
-          await later`
+          await later.execute(sql`
             insert into drizzle.__drizzle_migrations (hash, created_at)
             select 'later', max(created_at) + 1 from drizzle.__drizzle_migrations
-          `;
+          `);
         } finally {
-          await later.end();
+          await later.$client.end();
         }
       },
     ],
   ])('refuses the write suites on %s, naming why', async (_case, refusal, prepare) => {
     const scratch = new URL(ownerUrl);
     scratch.pathname = '/fancyfolio_test_target';
-    await owner`drop database if exists fancyfolio_test_target with (force)`;
-    await owner`create database fancyfolio_test_target`;
+    await owner.execute(sql`drop database if exists fancyfolio_test_target with (force)`);
+    await owner.execute(sql`create database fancyfolio_test_target`);
     try {
       await prepare(scratch.href);
       const run = runDbSuites(
@@ -542,7 +566,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       expect(run.output).toContain(refusal);
       expect(run.output).not.toContain('42P01');
     } finally {
-      await owner`drop database if exists fancyfolio_test_target with (force)`;
+      await owner.execute(sql`drop database if exists fancyfolio_test_target with (force)`);
     }
   });
 

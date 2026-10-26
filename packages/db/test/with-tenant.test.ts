@@ -1,13 +1,13 @@
 import { sql } from 'drizzle-orm';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { PgDatabase, PgTransaction } from 'drizzle-orm/pg-core';
-import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
-import { connect, connectionOptions } from '../src/client.ts';
+import { connect } from '../src/client.ts';
 import { experiences } from '../src/schema/content.ts';
 import { tenants } from '../src/schema/tenants.ts';
 import {
   type TenantContext,
+  type TenantPool,
   type TenantTransaction,
   tenantDatabase,
   withTenant,
@@ -19,9 +19,10 @@ const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
 const statements: { query: string; params: unknown[] }[] = [];
-const db = drizzle(app, {
+const db: TenantPool = {
+  pool: app,
   logger: { logQuery: (query, params) => statements.push({ query, params }) },
-});
+};
 const owner = { userId: '', tenantId: '' };
 const other = { userId: '', tenantId: '' };
 let newcomer = '';
@@ -34,8 +35,8 @@ beforeAll(async () => {
   owner.userId = await createUser(auth, 'Amara Diallo', 'amara@example.test');
   other.userId = await createUser(auth, 'Kenji Mori', 'kenji@example.test');
   newcomer = await createUser(auth, 'Lena Fischer', 'lena@example.test');
-  owner.tenantId = await createTenant(db, owner.userId, 'amara');
-  other.tenantId = await createTenant(db, other.userId, 'kenji');
+  owner.tenantId = await createTenant(app, owner.userId, 'amara');
+  other.tenantId = await createTenant(app, other.userId, 'kenji');
 });
 
 afterAll(async () => {
@@ -46,7 +47,9 @@ afterAll(async () => {
 type Seen = { tenant: string | null; user: string | null; owner: boolean };
 
 async function context(tx: TenantTransaction): Promise<Seen> {
-  const [seen] = await tx.execute<Seen>(
+  const {
+    rows: [seen],
+  } = await tx.execute<Seen>(
     sql`select app.tenant_id() as tenant, app.user_id() as user, app.is_owner() as owner`,
   );
   return seen;
@@ -133,7 +136,9 @@ describe('withTenant', () => {
   it('marks only the job context as the domain re-check job', async () => {
     const marker = (context: TenantContext) =>
       withTenant(db, context, async (tx) => {
-        const [row] = await tx.execute<{ job: string | null }>(
+        const {
+          rows: [row],
+        } = await tx.execute<{ job: string | null }>(
           sql`select current_setting('app.job', true) as job`,
         );
         return row.job;
@@ -224,7 +229,9 @@ describe('withTenant', () => {
     ['job', () => ({ kind: 'job' }), { isolation: 'read committed', readOnly: 'off' }],
   ])('runs the %s context at its own isolation level', async (_name, input, expected) => {
     const level = await withTenant(db, input(), async (tx) => {
-      const [row] = await tx.execute<{ isolation: string; readOnly: string }>(
+      const {
+        rows: [row],
+      } = await tx.execute<{ isolation: string; readOnly: string }>(
         sql`select current_setting('transaction_isolation') as isolation, current_setting('transaction_read_only') as "readOnly"`,
       );
       return row;
@@ -266,7 +273,9 @@ describe('withTenant', () => {
 
   it('bounds statements, lock waits and idle time inside the transaction', async () => {
     const limits = await withTenant(db, { kind: 'job' }, async (tx) => {
-      const [row] = await tx.execute(
+      const {
+        rows: [row],
+      } = await tx.execute(
         sql`select current_setting('statement_timeout') as statement, current_setting('lock_timeout') as lock, current_setting('idle_in_transaction_session_timeout') as idle`,
       );
       return row;
@@ -277,10 +286,10 @@ describe('withTenant', () => {
     ).rejects.toMatchObject({ cause: { code: '57014' } });
   });
 
-  async function onPoolOfOne<T>(run: (pooled: PostgresJsDatabase, single: Sql) => Promise<T>) {
-    const single = postgres({ ...connectionOptions(appUrl, process.env), max: 1 });
+  async function onPoolOfOne<T>(run: (pooled: TenantPool, single: NodePgDatabase) => Promise<T>) {
+    const single = connect(appUrl, { max: 1 });
     try {
-      return await run(drizzle(single), single);
+      return await run({ pool: single }, drizzle(single));
     } finally {
       await single.end();
     }
@@ -288,8 +297,8 @@ describe('withTenant', () => {
 
   it('gives up waiting for a lock another transaction holds', async () => {
     const key = 4242;
-    await auth.begin(async (holder) => {
-      await holder`select pg_advisory_xact_lock(${key})`;
+    await drizzle(auth).transaction(async (holder) => {
+      await holder.execute(sql`select pg_advisory_xact_lock(${key})`);
       await expect(
         withTenant(db, { kind: 'job' }, (tx) =>
           tx.execute(sql`select pg_advisory_xact_lock(${key})`),
@@ -301,28 +310,36 @@ describe('withTenant', () => {
   it('ends a transaction left idle inside fn', async () => {
     await onPoolOfOne(async (pooled) => {
       const idle = withTenant(pooled, { kind: 'job' }, async (tx) => {
-        const [{ pid }] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+        const {
+          rows: [{ pid }],
+        } = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
         await vi.waitFor(
           async () => {
-            const [{ gone }] = await auth<{ gone: boolean }[]>`
+            const {
+              rows: [{ gone }],
+            } = await drizzle(auth).execute<{ gone: boolean }>(sql`
               select not exists (select from pg_stat_activity where pid = ${pid}) as gone
-            `;
+            `);
             expect(gone).toBe(true);
           },
           { timeout: 20_000, interval: 500 },
         );
         return tx.execute(sql`select 1`);
       });
-      await expect(idle).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' });
+      await expect(idle).rejects.toMatchObject({ code: '25P03' });
     });
   });
 
   it('leaves no context or timeout behind on a pool of one connection', async () => {
     const session = sql`select pg_backend_pid() as pid, app.tenant_id() as tenant, app.user_id() as user, current_setting('statement_timeout') as timeout, (select count(*)::int from tenants) as visible`;
-    await onPoolOfOne(async (pooled) => {
-      const [before] = await pooled.execute(session);
+    await onPoolOfOne(async (pooled, single) => {
+      const {
+        rows: [before],
+      } = await single.execute(session);
       expect(before).toMatchObject({ tenant: null, user: null, visible: 0 });
-      const [inside] = await withTenant(pooled, { kind: 'user', userId: other.userId }, (tx) =>
+      const {
+        rows: [inside],
+      } = await withTenant(pooled, { kind: 'user', userId: other.userId }, (tx) =>
         tx.execute(session),
       );
       expect(inside).toEqual({
@@ -332,15 +349,15 @@ describe('withTenant', () => {
         timeout: '5s',
         visible: 1,
       });
-      expect((await pooled.execute(session))[0]).toEqual(before);
+      expect((await single.execute(session)).rows[0]).toEqual(before);
     });
   });
 
   it('lets no temporary table shadow the tenant lookup on a pool of one connection', async () => {
     await onPoolOfOne(async (pooled, single) => {
       await expect(
-        single`create temp table tenants (id uuid, owner_id uuid)`,
-      ).rejects.toMatchObject({ code: '42501' });
+        single.execute(sql`create temp table tenants (id uuid, owner_id uuid)`),
+      ).rejects.toMatchObject({ cause: { code: '42501' } });
       expect(
         await withTenant(pooled, { kind: 'user', userId: owner.userId }, async (_tx, id) => id),
       ).toBe(owner.tenantId);
@@ -396,7 +413,9 @@ describe('withTenant', () => {
           (error: unknown) => error,
         );
       const sent = statements.slice(before);
-      const [seen] = await tx.execute<{ visible: number }>(
+      const {
+        rows: [seen],
+      } = await tx.execute<{ visible: number }>(
         sql`select count(*)::int as visible from public.tenants where id = ${other.tenantId}`,
       );
       return { thrown, sent, visible: seen.visible };
@@ -446,7 +465,9 @@ describe('withTenant', () => {
         },
       };
       const outcome = await withTenant(db, context as never, async (tx) => {
-        const [row] = await tx.execute<{ user: string | null; job: string }>(
+        const {
+          rows: [row],
+        } = await tx.execute<{ user: string | null; job: string }>(
           sql`select app.user_id() as user, current_setting('app.job', true) as job`,
         );
         return row;
@@ -463,30 +484,31 @@ describe.runIf(inject('db').mode === 'local')(
   'a tenant database on a role that bypasses row-level security',
   () => {
     const { ownerUrl } = inject('db');
-    const probe = postgres({ ...connectionOptions(ownerUrl, process.env), onnotice: () => {} });
+    const probePool = connect(ownerUrl);
+    const probe = drizzle(probePool);
     const probePassword = 'probe-password-not-secret-0000000';
     const probeUrl = roleUrl(ownerUrl, 'ff_bypass_probe', probePassword);
     const refusal = new Error('withTenant refuses a database role with SUPERUSER or BYPASSRLS');
     const rejection = (work: Promise<unknown>) => work.catch((error: unknown) => error);
 
     beforeAll(async () => {
-      await probe`drop role if exists ff_bypass_probe`;
-      await probe.begin(async (tx) => {
-        await tx`
+      await probe.execute(sql`drop role if exists ff_bypass_probe`);
+      await probe.transaction(async (tx) => {
+        await tx.execute(sql`
           create function pg_temp.create_bypass_probe(secret text) returns void
           language plpgsql as $$
           begin
             execute format('create role ff_bypass_probe login nobypassrls password %L', secret);
           end
           $$
-        `;
-        await tx`select pg_temp.create_bypass_probe(${probePassword})`;
+        `);
+        await tx.execute(sql`select pg_temp.create_bypass_probe(${probePassword})`);
       });
     });
 
     afterAll(async () => {
-      await probe`drop role if exists ff_bypass_probe`;
-      await probe.end();
+      await probe.execute(sql`drop role if exists ff_bypass_probe`);
+      await probePool.end();
     });
 
     it('refuses the owner role before fn reads any tenant, on every call', async () => {
@@ -518,7 +540,7 @@ describe.runIf(inject('db').mode === 'local')(
       const handle = tenantDatabase(probeUrl);
       const seen = () => handle.withTenant({ kind: 'job' }, async (_tx, tenantId) => tenantId);
       expect(await seen()).toBeNull();
-      await probe`alter role ff_bypass_probe bypassrls`;
+      await probe.execute(sql`alter role ff_bypass_probe bypassrls`);
       expect(await seen()).toBeNull();
       await expect(
         tenantDatabase(probeUrl).withTenant({ kind: 'job' }, async () => 'read'),
@@ -526,16 +548,16 @@ describe.runIf(inject('db').mode === 'local')(
     });
 
     it('keeps no role check that errored: the next call checks again', async () => {
-      await probe`alter role ff_bypass_probe nologin bypassrls`;
+      await probe.execute(sql`alter role ff_bypass_probe nologin bypassrls`);
       const handle = tenantDatabase(probeUrl);
       const read = vi.fn(async (_tx: TenantTransaction, tenantId: string | null) => tenantId);
       expect(await rejection(handle.withTenant({ kind: 'job' }, read))).toMatchObject({
         code: '28000',
       });
-      await probe`alter role ff_bypass_probe login`;
+      await probe.execute(sql`alter role ff_bypass_probe login`);
       await expect(handle.withTenant({ kind: 'job' }, read)).rejects.toEqual(refusal);
       expect(read).not.toHaveBeenCalled();
-      await probe`alter role ff_bypass_probe nobypassrls`;
+      await probe.execute(sql`alter role ff_bypass_probe nobypassrls`);
       expect(await handle.withTenant({ kind: 'job' }, read)).toBeNull();
     });
   },

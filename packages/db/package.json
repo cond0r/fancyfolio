@@ -11,11 +11,13 @@
   "dependencies": {
     "@fancyfolio/contracts": "workspace:*",
     "drizzle-orm": "^0.45.4",
+    "pg": "^8.23.1",
     "postgres": "^3.4.9",
     "valibot": "^1.5.0"
   },
   "devDependencies": {
     "@better-auth/api-key": "1.7.7",
+    "@types/pg": "^8.23.1",
     "auth": "1.7.7",
     "better-auth": "1.7.7",
     "drizzle-kit": "^0.31.11"

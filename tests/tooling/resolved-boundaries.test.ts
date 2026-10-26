@@ -37,7 +37,7 @@ const bannedSamples: Record<Project, string[]> = {
 const sourceExtensions = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs'];
 
 const entry = (project: Project) =>
-  join(root, project, project === 'apps/web' ? 'env.ts' : 'src/index.ts');
+  join(root, project, project === 'apps/web' ? 'next.config.ts' : 'src/index.ts');
 
 function crossings(project: Project, files: string[]) {
   const inPackage = new RegExp(`/node_modules/(?:@types/)?(?:${boundaries[project].join('|')})/`);

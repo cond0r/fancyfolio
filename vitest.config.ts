@@ -16,14 +16,7 @@ export default defineConfig({
         },
       },
       { test: { name: 'editor', root: 'packages/editor', include: ['test/**/*.test.ts'] } },
-      {
-        test: {
-          name: 'web',
-          root: 'apps/web',
-          include: ['test/**/*.test.ts'],
-          env: { API_URL: 'http://127.0.0.1:3201', ROOT_DOMAIN: 'localhost' },
-        },
-      },
+      { test: { name: 'web', root: 'apps/web', include: ['test/**/*.test.ts'] } },
       {
         test: {
           name: 'db',

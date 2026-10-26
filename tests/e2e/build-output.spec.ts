@@ -18,16 +18,9 @@ test('the build ran with Cache Components, Partial Prefetching, typed routes and
   });
 });
 
-test('the build rewrites /api/* to the e2e API on the app host only', () => {
+test('the build has no rewrites; Vercel routes /api/* to the api service', () => {
   const { rewrites } = JSON.parse(readBuildFile('routes-manifest.json'));
-  expect(rewrites.beforeFiles).toEqual([]);
-  expect(rewrites.fallback).toEqual([]);
-  expect(rewrites.afterFiles).toHaveLength(1);
-  expect(rewrites.afterFiles[0]).toMatchObject({
-    source: '/api/:path*',
-    has: [{ type: 'host', value: 'localhost' }],
-    destination: 'http://127.0.0.1:3201/api/:path*',
-  });
+  expect(rewrites).toEqual({ beforeFiles: [], afterFiles: [], fallback: [] });
 });
 
 test('the landing page is prerendered static', () => {

@@ -218,9 +218,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@fancyfolio/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       next:
         specifier: ^16.4.3
         version: 16.4.3(@babel/core@7.29.7)(@playwright/test@1.64.1)(@types/node@24.19.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -230,9 +227,6 @@ importers:
       react-dom:
         specifier: ^19.3.0
         version: 19.3.0(react@19.3.0)
-      valibot:
-        specifier: ^1.5.0
-        version: 1.5.0(typescript@7.0.2)
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.3

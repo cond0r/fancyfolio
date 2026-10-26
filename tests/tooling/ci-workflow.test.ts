@@ -72,9 +72,7 @@ describe('the CI workflow', () => {
 
   it('builds the web and runs the smoke spec on Chromium with dummy env and no secrets', () => {
     expect(e2eStart).toBeGreaterThan(checkStart);
-    expect(e2eJob).toContain(
-      '    env:\n      API_URL: http://127.0.0.1:3201\n      ROOT_DOMAIN: localhost\n      NEXT_TELEMETRY_DISABLED: 1\n',
-    );
+    expect(e2eJob).toContain('    env:\n      NEXT_TELEMETRY_DISABLED: 1\n    steps:\n');
     for (const step of [
       'pnpm install --frozen-lockfile',
       'pnpm exec playwright install --with-deps --only-shell chromium',

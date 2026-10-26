@@ -13,12 +13,13 @@ const testCode = /(^|\/)tests?\/|\.(test|spec)\.[cm]?[jt]sx?$/;
 const uncheckedSource = /^(apps|packages)\/[^/]+\/(?!public\/).+\.[cm]?jsx?$/;
 const rootConfig = /^(apps|packages)\/[^/]+\/[^/]+\.config\.[cm]?js$/;
 const nestedBiomeConfig = /\/biome\.jsonc?$/;
+const limits = 'statement_timeout|lock_timeout|idle_in_transaction_session_timeout';
 const contextSetter = new RegExp(
   [
     String.raw`\bset_config\b`,
     String.raw`\bset\s+((local|session)\s+)?"?app"?\s*\.`,
-    String.raw`\b(set|reset)\s+((local|session)\s+)?"?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout)\b`,
-    String.raw`-c(\s|%20|\+)*"?app"?(\.|%2e)`,
+    String.raw`\b(set|reset)\s+((local|session)\s+)?"?(${limits})\b`,
+    String.raw`(-c(\s|%20|\+)*|--)("?app"?(\.|%2e)|(${limits})\b)`,
     String.raw`\bupdate\s+(pg_catalog\s*\.\s*)?pg_settings\b`,
   ].join('|'),
   'i',
@@ -32,6 +33,7 @@ const moduleLoads = new Set([
 ]);
 const databasePackage = /^packages\/db\//;
 const contextName = /^"?app"?\.(tenant_id|user_id|job)$/i;
+const limitName = new RegExp(`^(${limits})$`);
 const passedOn = new Set(['call', 'apply', 'bind']);
 
 type Node = { type: string } & Record<string, unknown>;
@@ -68,6 +70,7 @@ function scan(path: string, text: string) {
   const members: { node: Node; parent?: Node }[] = [];
   let raw = false;
   let driver = false;
+  let limit = false;
   walk(program, undefined, (node, parent) => {
     const { value } = node;
     if (node.type === 'Literal' && typeof value === 'string') strings.push(value);
@@ -87,6 +90,9 @@ function scan(path: string, text: string) {
     if (node.type === 'MemberExpression') members.push({ node, parent });
     if (node.type === 'Property' && parent?.type === 'ObjectPattern') {
       raw ||= ['raw', 'unsafe'].includes(name(node.key) ?? '');
+    }
+    if (node.type === 'Property' && parent?.type === 'ObjectExpression') {
+      limit ||= limitName.test(name(node.key) ?? '');
     }
     if (node.type === 'CallExpression') {
       const callee = isNode(node.callee) ? name(node.callee.property) : undefined;
@@ -108,7 +114,8 @@ function scan(path: string, text: string) {
   }
   return {
     parses: errors.length === 0,
-    context: strings.some((value) => contextSetter.test(value) || contextName.test(value.trim())),
+    context:
+      limit || strings.some((value) => contextSetter.test(value) || contextName.test(value.trim())),
     raw,
     driver,
   };
@@ -335,6 +342,42 @@ describe('the SQL guards', () => {
       'apps/api/src/db.ts',
       'process.env.PGOPTIONS = \'-c "app".user_id=\' + id;',
       ['apps/api/src/db.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'apps/api/src/db.ts',
+      "new Pool({ ...options, options: '-c app.tenant_id=' + id });",
+      ['apps/api/src/db.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'packages/db/src/client.ts',
+      "new Pool({ ...options, options: '--app.user_id=' + id });",
+      ['packages/db/src/client.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'packages/db/src/client.ts',
+      "new Pool({ ...options, options: '-c statement_timeout=0' });",
+      ['packages/db/src/client.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'packages/db/src/client.ts',
+      "new pg.Client({ ...options, options: '--lock_timeout=0' });",
+      ['packages/db/src/client.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'packages/db/src/client.ts',
+      'new Pool({ ...options, statement_timeout: 0 });',
+      ['packages/db/src/client.ts: sets app.* context outside withTenant'],
+    ],
+    [
+      'apps/api/src/db.ts',
+      "new pg.Client({ ...options, 'idle_in_transaction_session_timeout': 0 });",
+      ['apps/api/src/db.ts: sets app.* context outside withTenant'],
+    ],
+    ['packages/db/src/client.ts', 'const { lock_timeout } = config;', []],
+    [
+      'packages/db/src/client.ts',
+      'new Pool({ ...options, query_timeout: 7000, connectionTimeoutMillis: 5000 });',
+      [],
     ],
     [
       'apps/api/src/db.ts',

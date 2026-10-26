@@ -1,0 +1,529 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GET /api/openapi.json > serves the document generated from the contracts, pinned by its snapshot 1`] = `
+{
+  "components": {
+    "schemas": {
+      "CaseStudy": {
+        "additionalProperties": false,
+        "properties": {
+          "bodyMd": {
+            "type": "string",
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "experienceId": {
+            "anyOf": [
+              {
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "publishedAt": {
+            "type": "string",
+          },
+          "slug": {
+            "type": "string",
+          },
+          "summary": {
+            "type": "string",
+          },
+          "title": {
+            "type": "string",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "coverUrl",
+          "experienceId",
+          "publishedAt",
+          "updatedAt",
+          "bodyMd",
+        ],
+        "type": "object",
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string",
+          },
+          "requestId": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "error",
+          "requestId",
+        ],
+        "type": "object",
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cookieNames": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "headers": {
+            "additionalProperties": false,
+            "properties": {
+              "x-forwarded-for": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "x-real-ip": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "x-vercel-forwarded-for": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+            },
+            "required": [
+              "x-forwarded-for",
+              "x-real-ip",
+              "x-vercel-forwarded-for",
+            ],
+            "type": "object",
+          },
+          "ok": {
+            "const": true,
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "ok",
+          "headers",
+          "origin",
+          "cookieNames",
+        ],
+        "type": "object",
+      },
+      "SiteBundle": {
+        "additionalProperties": false,
+        "properties": {
+          "caseStudies": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "coverUrl": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "experienceId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "publishedAt": {
+                  "type": "string",
+                },
+                "slug": {
+                  "type": "string",
+                },
+                "summary": {
+                  "type": "string",
+                },
+                "title": {
+                  "type": "string",
+                },
+                "updatedAt": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "slug",
+                "title",
+                "summary",
+                "coverUrl",
+                "experienceId",
+                "publishedAt",
+                "updatedAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "experiences": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "company": {
+                  "type": "string",
+                },
+                "endsOn": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "id": {
+                  "type": "string",
+                },
+                "location": {
+                  "type": "string",
+                },
+                "role": {
+                  "type": "string",
+                },
+                "startsOn": {
+                  "type": "string",
+                },
+                "summaryMd": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "company",
+                "role",
+                "location",
+                "startsOn",
+                "endsOn",
+                "summaryMd",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "profile": {
+            "additionalProperties": false,
+            "properties": {
+              "avatarUrl": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "bioMd": {
+                "type": "string",
+              },
+              "displayName": {
+                "type": "string",
+              },
+              "headline": {
+                "type": "string",
+              },
+              "links": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                    },
+                    "url": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "label",
+                    "url",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "location": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "displayName",
+              "headline",
+              "location",
+              "bioMd",
+              "avatarUrl",
+              "links",
+            ],
+            "type": "object",
+          },
+          "projects": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string",
+                },
+                "id": {
+                  "type": "string",
+                },
+                "name": {
+                  "type": "string",
+                },
+                "repoUrl": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "tags": {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                "url": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "name",
+                "description",
+                "url",
+                "repoUrl",
+                "tags",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "subdomain": {
+            "type": "string",
+          },
+          "tenantId": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "tenantId",
+          "subdomain",
+          "domain",
+          "profile",
+          "experiences",
+          "projects",
+          "caseStudies",
+        ],
+        "type": "object",
+      },
+    },
+  },
+  "info": {
+    "description": "Generated from the contracts that validate every request and response.",
+    "title": "Fancyfolio API",
+    "version": "1",
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "getApiHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+    "/api/v1/sites/{key}": {
+      "get": {
+        "operationId": "getApiV1SitesByKey",
+        "parameters": [
+          {
+            "description": "A subdomain or the live custom domain of a site",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteBundle",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+    "/api/v1/sites/{key}/case-studies/{slug}": {
+      "get": {
+        "operationId": "getApiV1SitesByKeyCaseStudiesBySlug",
+        "parameters": [
+          {
+            "description": "A subdomain or the live custom domain of a site",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+          {
+            "description": "Lower-case letters and digits in hyphen-separated groups, at most 64 characters",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseStudy",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+  },
+}
+`;

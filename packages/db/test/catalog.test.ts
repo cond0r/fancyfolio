@@ -1,14 +1,14 @@
 import { isSubdomain, RESERVED_SUBDOMAINS, SUBDOMAIN_PATTERN } from '@fancyfolio/contracts';
 import { sql } from 'drizzle-orm';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import type { Sql, TransactionSql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { tenants } from '../src/schema/tenants.ts';
 import { authTables } from './auth-tables.ts';
 
 const app = connect(inject('db').appUrl);
+const db = drizzle(app);
 const runtimeRoles = ['ff_app', 'ff_auth', 'ff_resolver'];
 const supabaseRoles = ['anon', 'authenticated', 'service_role'];
 const contentTables = ['case_studies', 'experiences', 'profiles', 'projects'];
@@ -48,13 +48,18 @@ const corpus = [
 
 type Grant = { schema: string; kind: string; name: string; grantee: string; privilege: string };
 
-const executableDefiners = (sql: Sql | TransactionSql) => sql`
-  select r.rolname as role, p.oid::regprocedure::text as name
-  from pg_proc p join pg_namespace n on n.oid = p.pronamespace cross join pg_roles r
-  where p.prosecdef and r.rolname in ${sql(runtimeRoles)}
-    and has_schema_privilege(r.oid, n.oid, 'USAGE')
-    and has_function_privilege(r.oid, p.oid, 'EXECUTE')
-`;
+type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0];
+
+const executableDefiners = async (on: NodePgDatabase | Transaction) =>
+  (
+    await on.execute(sql`
+      select r.rolname as role, p.oid::regprocedure::text as name
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace cross join pg_roles r
+      where p.prosecdef and r.rolname in ${runtimeRoles}
+        and has_schema_privilege(r.oid, n.oid, 'USAGE')
+        and has_function_privilege(r.oid, p.oid, 'EXECUTE')
+    `)
+  ).rows;
 
 const resolverDefiners = ['ff_app', 'ff_resolver'].flatMap((role) =>
   resolverFunctions.map((name) => ({ role, name })),
@@ -64,24 +69,29 @@ afterAll(() => app.end());
 
 describe('roles', () => {
   it('runs on Postgres 17', async () => {
-    const [{ major }] =
-      await app`select current_setting('server_version_num')::int / 10000 as major`;
+    const [{ major }] = (
+      await db.execute(sql`select current_setting('server_version_num')::int / 10000 as major`)
+    ).rows;
     expect(major).toBe(17);
   });
 
   it('keeps role settings off the runtime roles in every database', async () => {
-    const settings = await app`
+    const settings = (
+      await db.execute(sql`
       select r.rolname, s.setconfig from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
-      where r.rolname in ${app(runtimeRoles)}
-    `;
+      where r.rolname in ${runtimeRoles}
+    `)
+    ).rows;
     expect(settings).toEqual([]);
   });
 
   it('keeps the runtime roles off superuser and BYPASSRLS, and the resolver off login', async () => {
-    const roles = await app`
+    const roles = (
+      await db.execute(sql`
       select rolname, rolsuper, rolbypassrls, rolcanlogin from pg_roles
-      where rolname in ${app(runtimeRoles)} order by rolname
-    `;
+      where rolname in ${runtimeRoles} order by rolname
+    `)
+    ).rows;
     expect(roles).toEqual([
       { rolname: 'ff_app', rolsuper: false, rolbypassrls: false, rolcanlogin: true },
       { rolname: 'ff_auth', rolsuper: false, rolbypassrls: false, rolcanlogin: true },
@@ -90,49 +100,59 @@ describe('roles', () => {
   });
 
   it('runs migrations as an owner with NOSUPERUSER BYPASSRLS, as on Supabase', async () => {
-    const [ownerRole] = await app`
+    const [ownerRole] = (
+      await db.execute(sql`
       select rolsuper, rolbypassrls from pg_roles
       where oid = (select nspowner from pg_namespace where nspname = 'app')
-    `;
+    `)
+    ).rows;
     expect(ownerRole).toEqual({ rolsuper: false, rolbypassrls: true });
   });
 
   it('lets the runtime roles own only the resolver functions and belong to no role', async () => {
-    const owned = await app`
+    const owned = (
+      await db.execute(sql`
       select r.rolname as role, pg_describe_object(d.classid, d.objid, d.objsubid) as object
       from pg_shdepend d join pg_roles r on r.oid = d.refobjid
       where d.refclassid = 'pg_authid'::regclass and d.deptype = 'o'
         and d.dbid = (select oid from pg_database where datname = current_database())
-        and r.rolname in ${app(runtimeRoles)}
+        and r.rolname in ${runtimeRoles}
       order by 2
-    `;
+    `)
+    ).rows;
     expect(owned).toEqual(
       resolverFunctions.map((name) => ({ role: 'ff_resolver', object: `function ${name}` })),
     );
-    const [{ memberships }] = await app`
+    const [{ memberships }] = (
+      await db.execute(sql`
       select count(*)::int as memberships from pg_auth_members m join pg_roles r on r.oid = m.member
-      where r.rolname in ${app(runtimeRoles)}
-    `;
+      where r.rolname in ${runtimeRoles}
+    `)
+    ).rows;
     expect(memberships).toBe(0);
   });
 
   it('leaves the migrator unable to act as ff_resolver after handing it the functions', async () => {
-    const [migrator] = await app`
+    const [migrator] = (
+      await db.execute(sql`
       select pg_has_role(n.nspowner, 'ff_resolver', 'SET') as set,
         pg_has_role(n.nspowner, 'ff_resolver', 'USAGE') as usage
       from pg_namespace n where n.nspname = 'app'
-    `;
+    `)
+    ).rows;
     expect(migrator).toEqual({ set: false, usage: false });
   });
 
   it('refuses SET ROLE to the owner for ff_app', async () => {
-    const [{ owner }] = await app<{ owner: string }[]>`
+    const [{ owner }] = (
+      await db.execute<{ owner: string }>(sql`
       select r.rolname as owner from pg_namespace n join pg_roles r on r.oid = n.nspowner
       where n.nspname = 'app'
-    `;
-    await expect(app.begin((tx) => tx`set local role ${tx(owner)}`)).rejects.toMatchObject({
-      code: '42501',
-    });
+    `)
+    ).rows;
+    await expect(
+      db.transaction((tx) => tx.execute(sql`set local role ${sql.identifier(owner)}`)),
+    ).rejects.toMatchObject({ cause: { code: '42501' } });
   });
 });
 
@@ -140,7 +160,8 @@ describe('tables and privileges', () => {
   let grants: Grant[] = [];
 
   beforeAll(async () => {
-    grants = await app<Grant[]>`
+    grants = (
+      await db.execute<Grant>(sql`
       with acls as (
         select n.nspname as schema, c.relkind::text as kind, c.relname as name,
           coalesce(
@@ -163,7 +184,8 @@ describe('tables and privileges', () => {
         e.privilege_type as privilege
       from acls a, aclexplode(a.acl) e
       where left(a.schema, 3) <> 'pg_' and a.schema <> 'information_schema'
-    `;
+    `)
+    ).rows;
   });
 
   it('takes the auth tables from the Better Auth schema', () => {
@@ -178,14 +200,16 @@ describe('tables and privileges', () => {
   });
 
   it('forces RLS with at least one policy on every table in public and app', async () => {
-    const tables = await app`
+    const tables = (
+      await db.execute(sql`
       select c.relname as name,
         c.relrowsecurity and c.relforcerowsecurity
           and exists (select 1 from pg_policy p where p.polrelid = c.oid) as guarded
       from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname in ('public', 'app') and c.relkind in ('r', 'p')
       order by c.relname
-    `;
+    `)
+    ).rows;
     expect(tables.map((table) => table.name)).toEqual(
       expect.arrayContaining([...authTables, ...tenantTables]),
     );
@@ -193,22 +217,26 @@ describe('tables and privileges', () => {
   });
 
   it('stores every timestamp in public and app with its time zone', async () => {
-    const naive = await app`
+    const naive = (
+      await db.execute(sql`
       select c.relname || '.' || a.attname as name
       from pg_attribute a join pg_class c on c.oid = a.attrelid
         join pg_namespace n on n.oid = c.relnamespace
       where n.nspname in ('public', 'app') and a.atttypid = 'timestamp'::regtype
         and a.attnum > 0 and not a.attisdropped
-    `;
+    `)
+    ).rows;
     expect(naive).toEqual([]);
   });
 
   it('gives each auth table one permissive policy for ff_auth over all rows', async () => {
-    const policies = await app`
+    const policies = (
+      await db.execute(sql`
       select tablename, roles::text[] as roles, cmd, permissive, qual, with_check
-      from pg_policies where schemaname = 'public' and tablename in ${app(authTables)}
+      from pg_policies where schemaname = 'public' and tablename in ${authTables}
       order by tablename
-    `;
+    `)
+    ).rows;
     expect(policies).toEqual(
       authTables.map((tablename) => ({
         tablename,
@@ -222,14 +250,16 @@ describe('tables and privileges', () => {
   });
 
   it('grants the auth tables to ff_auth for SELECT, INSERT, UPDATE and DELETE only', async () => {
-    const grants = await app`
+    const grants = (
+      await db.execute(sql`
       select c.relname as table, a.grantee::regrole::text as grantee,
         string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
       from pg_class c join pg_namespace n on n.oid = c.relnamespace,
         aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
-      where n.nspname = 'public' and c.relname in ${app(authTables)} and a.grantee <> c.relowner
+      where n.nspname = 'public' and c.relname in ${authTables} and a.grantee <> c.relowner
       group by c.relname, a.grantee order by c.relname
-    `;
+    `)
+    ).rows;
     expect(grants).toEqual(
       authTables.map((table) => ({
         table,
@@ -240,11 +270,13 @@ describe('tables and privileges', () => {
   });
 
   it('gives tenants a SELECT and an INSERT policy for ff_app and a SELECT policy for ff_resolver', async () => {
-    const policies = await app`
+    const policies = (
+      await db.execute(sql`
       select policyname, roles::text[] as roles, cmd, permissive, qual, with_check
       from pg_policies where schemaname = 'public' and tablename = 'tenants'
       order by policyname
-    `;
+    `)
+    ).rows;
     expect(policies).toEqual([
       {
         policyname: 'tenants_insert',
@@ -275,11 +307,13 @@ describe('tables and privileges', () => {
   });
 
   it('shows ff_app a domain only while live or to its owner, and lets ff_resolver update only verified rows', async () => {
-    const policies = await app`
+    const policies = (
+      await db.execute(sql`
       select policyname, roles::text[] as roles, cmd, qual, with_check
       from pg_policies where schemaname = 'public' and tablename = 'domains'
       order by policyname
-    `;
+    `)
+    ).rows;
     expect(policies).toEqual([
       {
         policyname: 'domains_recheck',
@@ -349,18 +383,21 @@ describe('tables and privileges', () => {
   });
 
   it('grants tenants to ff_app for SELECT and INSERT only', async () => {
-    const grants = await app`
+    const grants = (
+      await db.execute(sql`
       select a.grantee::regrole::text as grantee,
         string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
       from pg_class c, aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
       where c.oid = to_regclass('public.tenants') and a.grantee <> c.relowner
       group by a.grantee
-    `;
+    `)
+    ).rows;
     expect(grants).toEqual([{ grantee: 'ff_app', privileges: 'INSERT,SELECT' }]);
   });
 
   it('lists every function in app with its owner, mode, empty search_path and executors', async () => {
-    const functions = await app`
+    const functions = (
+      await db.execute(sql`
       select p.proname as name,
         case when p.proowner = n.nspowner then 'migrator' else p.proowner::regrole::text end as owner,
         p.prosecdef as definer, p.provolatile as volatility, p.proconfig as config,
@@ -372,7 +409,8 @@ describe('tables and privileges', () => {
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'app'
       order by p.proname
-    `;
+    `)
+    ).rows;
     const fn = (name: string, volatility: string, executors: string[]) => ({
       name,
       owner: 'migrator',
@@ -404,11 +442,13 @@ describe('tables and privileges', () => {
   });
 
   it('gives each content table one read and one owner-only write policy for ff_app', async () => {
-    const policies = await app`
+    const policies = (
+      await db.execute(sql`
       select tablename, policyname, roles::text[] as roles, cmd, permissive, qual, with_check
-      from pg_policies where schemaname = 'public' and tablename in ${app(contentTables)}
+      from pg_policies where schemaname = 'public' and tablename in ${contentTables}
       order by tablename, policyname
-    `;
+    `)
+    ).rows;
     expect(policies).toEqual(
       contentTables.flatMap((tablename) => [
         {
@@ -437,14 +477,16 @@ describe('tables and privileges', () => {
   });
 
   it('grants the content tables to ff_app, profiles without DELETE', async () => {
-    const grants = await app`
+    const grants = (
+      await db.execute(sql`
       select c.relname as table, a.grantee::regrole::text as grantee,
         string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
       from pg_class c join pg_namespace n on n.oid = c.relnamespace,
         aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
-      where n.nspname = 'public' and c.relname in ${app(contentTables)} and a.grantee <> c.relowner
+      where n.nspname = 'public' and c.relname in ${contentTables} and a.grantee <> c.relowner
       group by c.relname, a.grantee order by c.relname
-    `;
+    `)
+    ).rows;
     expect(grants).toEqual(
       contentTables.map((table) => ({
         table,
@@ -455,12 +497,14 @@ describe('tables and privileges', () => {
   });
 
   it('keeps updated_at and the domain claim in BEFORE INSERT OR UPDATE and source_hash in BEFORE UPDATE row triggers', async () => {
-    const triggers = await app`
+    const triggers = (
+      await db.execute(sql`
       select c.relname as table, t.tgname as name, t.tgfoid::regproc::text as function, t.tgtype
       from pg_trigger t join pg_class c on c.oid = t.tgrelid
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and not t.tgisinternal order by c.relname, t.tgname
-    `;
+    `)
+    ).rows;
     const beforeUpdateRow = 1 | 2 | 16;
     const beforeInsertOrUpdateRow = beforeUpdateRow | 4;
     const touch = (table: string) => ({
@@ -489,11 +533,13 @@ describe('tables and privileges', () => {
   });
 
   it('links a case study to an experience of its own tenant, nulling only the link on delete', async () => {
-    const [link] = await app`
+    const [link] = (
+      await db.execute(sql`
       select pg_get_constraintdef(oid) as definition from pg_constraint
       where conrelid = to_regclass('public.case_studies') and contype = 'f'
         and conname = 'case_studies_experience_fk'
-    `;
+    `)
+    ).rows;
     expect(link).toEqual({
       definition:
         'FOREIGN KEY (tenant_id, experience_id) REFERENCES experiences(tenant_id, id) ON DELETE SET NULL (experience_id)',
@@ -530,50 +576,59 @@ describe('tables and privileges', () => {
   });
 
   it('lets only ff_app and their owner execute the resolver functions, the only SECURITY DEFINER ones', async () => {
-    expect(await executableDefiners(app)).toEqual(expect.arrayContaining(resolverDefiners));
-    expect(await executableDefiners(app)).toHaveLength(resolverDefiners.length);
+    expect(await executableDefiners(db)).toEqual(expect.arrayContaining(resolverDefiners));
+    expect(await executableDefiners(db)).toHaveLength(resolverDefiners.length);
   });
 
   it('sets an empty search_path on every SECURITY DEFINER function in public and app', async () => {
-    const unpinned = await app`
+    const unpinned = (
+      await db.execute(sql`
       select p.oid::regprocedure::text as name
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname in ('public', 'app') and p.prosecdef
         and not coalesce('search_path=""' = any(p.proconfig), false)
-    `;
+    `)
+    ).rows;
     expect(unpinned).toEqual([]);
   });
 
   it('keeps the runtime roles out of every schema but public and app', async () => {
-    const reachable = await app`
+    const reachable = (
+      await db.execute(sql`
       select r.rolname, n.nspname from pg_roles r cross join pg_namespace n
-      where r.rolname in ${app(runtimeRoles)} and has_schema_privilege(r.oid, n.oid, 'USAGE')
+      where r.rolname in ${runtimeRoles} and has_schema_privilege(r.oid, n.oid, 'USAGE')
         and left(n.nspname, 3) <> 'pg_'
         and n.nspname not in ('information_schema', 'public', 'app')
-    `;
+    `)
+    ).rows;
     expect(reachable).toEqual([]);
   });
 
   it('keeps the runtime roles from creating objects in public or app', async () => {
-    const creators = await app`
+    const creators = (
+      await db.execute(sql`
       select r.rolname, s.schema from pg_roles r
         cross join (values ('public'), ('app')) as s(schema)
-      where r.rolname in ${app(runtimeRoles)} and has_schema_privilege(r.oid, s.schema, 'CREATE')
-    `;
+      where r.rolname in ${runtimeRoles} and has_schema_privilege(r.oid, s.schema, 'CREATE')
+    `)
+    ).rows;
     expect(creators).toEqual([]);
   });
 
   it('keeps the runtime roles from creating temporary tables that shadow public ones', async () => {
-    const temporary = await app`
+    const temporary = (
+      await db.execute(sql`
       select rolname from pg_roles
-      where rolname in ${app(runtimeRoles)}
+      where rolname in ${runtimeRoles}
         and has_database_privilege(oid, current_database(), 'TEMPORARY')
-    `;
+    `)
+    ).rows;
     expect(temporary).toEqual([]);
   });
 
   it('sets default privileges so new tables, sequences and functions in public and app go to nobody else', async () => {
-    const defaults = await app`
+    const defaults = (
+      await db.execute(sql`
       with owner as (select nspowner as oid from pg_namespace where nspname = 'app')
       select n.nspname as schema, k.objtype::text as kind, e.grantee, e.privilege_type
       from owner, pg_namespace n cross join (values ('r'::"char"), ('S'::"char"), ('f'::"char")) as k(objtype),
@@ -589,7 +644,8 @@ describe('tables and privileges', () => {
           )
         ) e
       where n.nspname in ('public', 'app') and e.grantee <> owner.oid
-    `;
+    `)
+    ).rows;
     expect(defaults).toEqual([]);
   });
 });
@@ -601,18 +657,18 @@ describe.runIf(inject('db').mode === 'local')('the SECURITY DEFINER check', () =
     let found: unknown[] = [];
     try {
       await expect(
-        owner.begin(async (tx) => {
-          await tx`create schema vendor_helpers`;
-          await tx`
+        drizzle(owner).transaction(async (tx) => {
+          await tx.execute(sql`create schema vendor_helpers`);
+          await tx.execute(sql`
             create function vendor_helpers.lookup() returns int
             language sql security definer set search_path = '' as 'select 1'
-          `;
-          await tx`grant execute on function vendor_helpers.lookup() to public`;
-          await tx`
+          `);
+          await tx.execute(sql`grant execute on function vendor_helpers.lookup() to public`);
+          await tx.execute(sql`
             create function public.escalate() returns int
             language sql security definer set search_path = '' as 'select 1'
-          `;
-          await tx`grant execute on function public.escalate() to ff_app`;
+          `);
+          await tx.execute(sql`grant execute on function public.escalate() to ff_app`);
           found = await executableDefiners(tx);
           throw rollback;
         }),
@@ -630,10 +686,12 @@ describe.runIf(inject('db').mode === 'local')('the SECURITY DEFINER check', () =
 describe('the subdomain CHECK', () => {
   it('holds in the database exactly the pattern and reserved names of the contracts', async () => {
     const quoted = (value: string) => `'${value.replaceAll("'", "''")}'::text`;
-    const [{ definition }] = await app<{ definition: string }[]>`
+    const [{ definition }] = (
+      await db.execute<{ definition: string }>(sql`
       select pg_get_constraintdef(oid) as definition from pg_constraint
       where conrelid = to_regclass('public.tenants') and conname = 'tenants_subdomain_check'
-    `;
+    `)
+    ).rows;
     expect(definition).toBe(
       `CHECK (((subdomain ~ ${quoted(SUBDOMAIN_PATTERN)}) AND (subdomain <> ALL (ARRAY[${RESERVED_SUBDOMAINS.map(quoted).join(', ')}]))))`,
     );
@@ -641,7 +699,7 @@ describe('the subdomain CHECK', () => {
 
   it('gets the same verdict from the contract and from the generated CHECK on every string', async () => {
     const [constraint] = getTableConfig(tenants).checks;
-    const rows = await drizzle(app).execute<{ value: string; accepted: boolean }>(
+    const { rows } = await db.execute<{ value: string; accepted: boolean }>(
       sql`select "subdomain" as value, (${constraint.value}) as accepted from unnest(${sql.param(corpus)}::text[]) as "tenants"("subdomain")`,
     );
     const verdicts = rows.map(({ value, accepted }) => ({

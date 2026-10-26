@@ -1,9 +1,8 @@
 import { join } from 'node:path';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { withOwner } from './owner.ts';
 
-await withOwner(async (sql) => {
-  await migrate(drizzle(sql), { migrationsFolder: join(import.meta.dirname, '..', 'drizzle') });
+await withOwner(async (db) => {
+  await migrate(db, { migrationsFolder: join(import.meta.dirname, '..', 'drizzle') });
   console.log('Migrations applied.');
 });

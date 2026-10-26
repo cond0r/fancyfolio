@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEnv } from '@fancyfolio/contracts';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import type { Sql } from 'postgres';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import type { Pool } from 'pg';
 import * as v from 'valibot';
 import type { TestProject } from 'vitest/node';
 import { roleEnv, setRolePasswords } from '../scripts/roles.ts';
@@ -38,20 +39,27 @@ export function roleUrl(base: string, role: string, password: string, pooler = f
   return url.href;
 }
 
-async function writeRefusal(owner: Sql): Promise<string | null> {
-  const [{ bypass }] = await owner<{ bypass: boolean }[]>`
+async function writeRefusal(pool: Pool): Promise<string | null> {
+  const owner = drizzle(pool);
+  const {
+    rows: [{ bypass }],
+  } = await owner.execute<{ bypass: boolean }>(sql`
     select rolsuper or rolbypassrls as bypass from pg_roles where rolname = current_user
-  `;
+  `);
   if (!bypass) {
     return 'the target owner role lacks BYPASSRLS, so forced RLS hides rows from it; run only the catalog suite';
   }
-  const [{ migrated }] = await owner<{ migrated: boolean }[]>`
+  const {
+    rows: [{ migrated }],
+  } = await owner.execute<{ migrated: boolean }>(sql`
     select to_regclass('drizzle.__drizzle_migrations') is not null as migrated
-  `;
+  `);
   const [{ latest }] = migrated
-    ? await owner<{ latest: string | null }[]>`
-        select max(created_at)::text as latest from drizzle.__drizzle_migrations
-      `
+    ? (
+        await owner.execute<{ latest: string | null }>(sql`
+          select max(created_at)::text as latest from drizzle.__drizzle_migrations
+        `)
+      ).rows
     : [{ latest: null }];
   const journalHead = latestMigration(
     readFileSync(join(migrations, 'meta', '_journal.json'), 'utf8'),
@@ -62,10 +70,13 @@ async function writeRefusal(owner: Sql): Promise<string | null> {
   if (latest !== journalHead) {
     return "the target database is not at this checkout's latest migration; migrate it first";
   }
-  const held = authTables
-    .map((table) => owner`exists (select from ${owner(`public.${table}`)})`)
-    .reduce((either, next) => owner`${either} or ${next}`);
-  const [row] = await owner<{ held: boolean }[]>`select ${held} as held`;
+  const held = sql.join(
+    authTables.map((table) => sql`exists (select from public.${sql.identifier(table)})`),
+    sql` or `,
+  );
+  const {
+    rows: [row],
+  } = await owner.execute<{ held: boolean }>(sql`select ${held} as held`);
   return row.held ? 'the target database holds auth rows; run only the catalog suite' : null;
 }
 
@@ -87,8 +98,9 @@ async function useTarget(project: TestProject): Promise<undefined> {
 
 async function migrateTestDatabase(ownerUrl: string): Promise<void> {
   const owner = connect(ownerUrl);
+  const db = drizzle(owner);
   try {
-    await owner`
+    await db.execute(sql`
       do $$
       declare
         role_name text;
@@ -103,9 +115,9 @@ async function migrateTestDatabase(ownerUrl: string): Promise<void> {
         end loop;
       end
       $$
-    `;
-    await migrate(drizzle(owner), { migrationsFolder: migrations });
-    await setRolePasswords(owner, process.env);
+    `);
+    await migrate(db, { migrationsFolder: migrations });
+    await setRolePasswords(db, process.env);
   } finally {
     await owner.end();
   }
@@ -130,19 +142,21 @@ export default async function setup(
   const maintenanceUrl = new URL(env.TEST_DATABASE_URL);
   maintenanceUrl.pathname = '/postgres';
   const maintenance = connect(maintenanceUrl.href);
-  const session = await maintenance.reserve();
+  const session = await maintenance.connect();
   const close = async () => {
     session.release();
     await maintenance.end();
   };
 
   try {
-    const [{ locked }] = await session<{ locked: boolean }[]>`
-      select pg_try_advisory_lock(hashtext('fancyfolio_test')) as locked
-    `;
+    const {
+      rows: [{ locked }],
+    } = await session.query<{ locked: boolean }>(
+      "select pg_try_advisory_lock(hashtext('fancyfolio_test')) as locked",
+    );
     if (!locked) throw new Error('Another database test run holds the fancyfolio_test lock');
-    await session`drop database if exists fancyfolio_test with (force)`;
-    await session`create database fancyfolio_test`;
+    await session.query('drop database if exists fancyfolio_test with (force)');
+    await session.query('create database fancyfolio_test');
     await migrateTestDatabase(env.TEST_DATABASE_URL);
   } catch (error) {
     await close();

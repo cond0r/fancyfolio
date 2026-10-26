@@ -1,20 +1,34 @@
 import { inspect } from 'node:util';
+import { DrizzleQueryError, type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { DatabaseError } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { type RoleSql, scramVerifier, setRolePasswords } from '../scripts/roles.ts';
 
 const verifier = /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}=$/;
 
-function recordingSql() {
-  const texts: string[] = [];
-  const values: string[] = [];
-  const sql: RoleSql = {
-    async begin(run) {
-      await run(async (strings, ...bound) => {
-        texts.push(strings.join('$?'));
-        values.push(...bound);
+const dialect = new PgDialect();
+
+function fakeSql(send: (text: string, params: unknown[]) => void): RoleSql {
+  return {
+    async transaction(run) {
+      await run({
+        async execute(query: SQL) {
+          const { sql, params } = dialect.sqlToQuery(query);
+          send(sql, params);
+        },
       });
     },
   };
+}
+
+function recordingSql() {
+  const texts: string[] = [];
+  const values: unknown[] = [];
+  const sql = fakeSql((text, params) => {
+    texts.push(text);
+    values.push(...params);
+  });
   return { sql, texts, values };
 }
 
@@ -36,7 +50,7 @@ describe('setRolePasswords', () => {
     await setRolePasswords(fake.sql, passwords);
     expect(fake.values).toHaveLength(2);
     for (const value of fake.values) expect(value).toMatch(verifier);
-    for (const sent of [...fake.texts, ...fake.values]) {
+    for (const sent of [...fake.texts, ...fake.values.map(String)]) {
       expect(sent).not.toContain(passwords.FF_APP_PASSWORD);
       expect(sent).not.toContain(passwords.FF_AUTH_PASSWORD);
     }
@@ -44,10 +58,11 @@ describe('setRolePasswords', () => {
 
   it.each([
     {
-      thrown: Object.assign(new Error('permission denied'), {
-        name: 'PostgresError',
-        code: '42501',
-      }),
+      thrown: new DrizzleQueryError(
+        'select app.set_login_password($1, $2)',
+        ['ff_app', 'SCRAM-SHA-256$4096:fixture'],
+        Object.assign(new DatabaseError('permission denied', 0, 'error'), { code: '42501' }),
+      ),
       reason: 'SQLSTATE 42501',
     },
     {
@@ -59,13 +74,9 @@ describe('setRolePasswords', () => {
       reason: 'socket hang up',
     },
   ])('reports $reason for an error thrown as $thrown.name', async ({ thrown, reason }) => {
-    const sql: RoleSql = {
-      async begin(run) {
-        await run(async (strings) => {
-          if (strings.join('').includes("set_login_password('ff_app'")) throw thrown;
-        });
-      },
-    };
+    const sql = fakeSql((text) => {
+      if (text.includes("set_login_password('ff_app'")) throw thrown;
+    });
     const error = await setRolePasswords(sql, {
       FF_APP_PASSWORD: 'a'.repeat(32),
       FF_AUTH_PASSWORD: 'b'.repeat(32),

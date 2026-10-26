@@ -1,13 +1,10 @@
-import { is, SQL, type SQLWrapper, sql } from 'drizzle-orm';
+import { is, type Logger, SQL, type SQLWrapper, sql } from 'drizzle-orm';
+import { drizzle, type NodePgDatabase, type NodePgQueryResultHKT } from 'drizzle-orm/node-postgres';
 import type { PgQueryResultKind } from 'drizzle-orm/pg-core';
 import type { PgRaw } from 'drizzle-orm/pg-core/query-builders/raw';
-import {
-  drizzle,
-  type PostgresJsDatabase,
-  type PostgresJsQueryResultHKT,
-} from 'drizzle-orm/postgres-js';
+import type { Pool } from 'pg';
 import * as v from 'valibot';
-import { connect } from './client.ts';
+import { connect, logConnectionError } from './client.ts';
 
 const contextSchema = v.variant('kind', [
   v.strictObject({
@@ -21,15 +18,13 @@ const contextSchema = v.variant('kind', [
 
 export type TenantContext = v.InferInput<typeof contextSchema>;
 
-type DrizzleTransaction = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
-
 export type TenantTransaction = Pick<
-  DrizzleTransaction,
+  NodePgDatabase,
   'select' | 'insert' | 'update' | 'delete' | '$count'
 > & {
   execute: <TRow extends Record<string, unknown> = Record<string, unknown>>(
     query: SQLWrapper,
-  ) => PgRaw<PgQueryResultKind<PostgresJsQueryResultHKT, TRow>>;
+  ) => PgRaw<PgQueryResultKind<NodePgQueryResultHKT, TRow>>;
 };
 
 type TenantWork<T> = (tx: TenantTransaction, tenantId: string | null) => Promise<T>;
@@ -38,8 +33,16 @@ export type TenantDatabase = {
   withTenant: <T>(context: TenantContext, fn: TenantWork<T>) => Promise<T>;
 };
 
-export function tenantDatabase(url: string): TenantDatabase {
-  const db = drizzle(connect(url));
+export type TenantPool = { pool: Pool; logger?: Logger };
+
+const tenantLimits = {
+  connectionTimeoutMillis: 5000,
+  query_timeout: 7000,
+  keepAlive: true,
+};
+
+export function tenantDatabase(url: string, options: { max?: number } = {}): TenantDatabase {
+  const db = { pool: connect(url, { ...tenantLimits, max: options.max }) };
   let roleCheck: Promise<void> | undefined;
   return {
     withTenant: async (context, fn) => {
@@ -53,23 +56,54 @@ export function tenantDatabase(url: string): TenantDatabase {
   };
 }
 
-async function refuseBypassingRole(db: PostgresJsDatabase): Promise<void> {
-  const bypass = await db.transaction(
-    async (tx) => {
-      await tx.execute(sql`select set_config('statement_timeout', '5s', true)`);
-      const [role] = await tx.execute<{ bypass: boolean }>(
-        sql`select rolsuper or rolbypassrls as bypass from pg_catalog.pg_roles where rolname = current_user`,
-      );
-      return role?.bypass;
-    },
-    { accessMode: 'read only' },
-  );
+async function transaction<T>(
+  { pool, logger }: TenantPool,
+  setTransaction: SQL | null,
+  work: (db: NodePgDatabase) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  const lost = Promise.withResolvers<never>();
+  const onError = (error: Error) => {
+    logConnectionError();
+    lost.reject(error);
+  };
+  client.on('error', onError);
+  const run = async () => {
+    await client.query('begin');
+    const db = drizzle({ client, logger });
+    if (setTransaction !== null) await db.execute(setTransaction);
+    const result = await work(db);
+    await client.query('commit');
+    return result;
+  };
+  let failed = true;
+  try {
+    const result = await Promise.race([run(), lost.promise]);
+    failed = false;
+    return result;
+  } finally {
+    client.off('error', onError);
+    // destroyed instead of rolled back: a rollback on a half-open socket waits out query_timeout
+    client.release(failed);
+  }
+}
+
+async function refuseBypassingRole(db: TenantPool): Promise<void> {
+  const bypass = await transaction(db, sql`set transaction read only`, async (tx) => {
+    await tx.execute(sql`select set_config('statement_timeout', '5s', true)`);
+    const {
+      rows: [role],
+    } = await tx.execute<{ bypass: boolean }>(
+      sql`select rolsuper or rolbypassrls as bypass from pg_catalog.pg_roles where rolname = current_user`,
+    );
+    return role?.bypass;
+  });
   if (bypass !== false) {
     throw new Error('withTenant refuses a database role with SUPERUSER or BYPASSRLS');
   }
 }
 
-function plain(tx: DrizzleTransaction): TenantTransaction {
+function plain(tx: NodePgDatabase): TenantTransaction {
   return {
     select: tx.select.bind(tx),
     insert: tx.insert.bind(tx),
@@ -97,7 +131,7 @@ function firstTenant(context: TenantContext) {
 }
 
 export async function withTenant<T>(
-  db: PostgresJsDatabase,
+  db: TenantPool,
   input: TenantContext,
   fn: TenantWork<T>,
 ): Promise<T> {
@@ -107,20 +141,23 @@ export async function withTenant<T>(
   const userId = context.kind === 'user' ? context.userId : null;
   const tenant = firstTenant(context);
   const job = context.kind === 'job' ? sql`'domain-recheck'` : sql`''`;
-  return db.transaction(
+  return transaction(
+    db,
+    context.kind === 'site' ? sql`set transaction isolation level repeatable read read only` : null,
     async (raw) => {
       const tx = plain(raw);
-      const [set] = await tx.execute<Context>(
+      const {
+        rows: [set],
+      } = await tx.execute<Context>(
         sql`select set_config('statement_timeout', '5s', true), set_config('lock_timeout', '2s', true), set_config('idle_in_transaction_session_timeout', '10s', true), set_config('app.job', ${job}, true), set_config('app.user_id', coalesce(${userId}::uuid::text, ''), true), nullif(set_config('app.tenant_id', ${tenant}, true), '') as "tenantId"`,
       );
       if (userId === null || set.tenantId !== null) return fn(tx, set.tenantId);
-      const [owned] = await tx.execute<Context>(
+      const {
+        rows: [owned],
+      } = await tx.execute<Context>(
         sql`select nullif(set_config('app.tenant_id', coalesce((select id::text from public.tenants where owner_id = app.user_id()), ''), true), '') as "tenantId"`,
       );
       return fn(tx, owned.tenantId);
     },
-    context.kind === 'site'
-      ? { isolationLevel: 'repeatable read', accessMode: 'read only' }
-      : undefined,
   );
 }

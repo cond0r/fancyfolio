@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TLSSocket } from 'node:tls';
 import { inspect } from 'node:util';
-import postgres from 'postgres';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { connect, connectionOptions } from '../src/client.ts';
 
@@ -20,9 +20,8 @@ describe('connectionOptions', () => {
       host: '127.0.0.1',
       port: 6543,
       database: 'fancyfolio',
-      username: 'ff_app.abcdef',
+      user: 'ff_app.abcdef',
       password: 'p@ss/w:rd',
-      prepare: false,
       ssl: false,
     });
   });
@@ -161,18 +160,17 @@ describe('the TLS handshake with a server named by its IP', () => {
     await new Promise<void>((resolve) => server.listen(0, host, resolve));
     const address = server.address();
     if (address === null || typeof address === 'string') throw new Error('no TCP address');
-    const sql = postgres({
+    const client = new pg.Client({
       ...connectionOptions(`postgres://owner:pw@${host}:${address.port}/fancyfolio_test`, {
         DATABASE_CA_CERT: readFileSync(join(dir, 'ca.crt'), 'utf8'),
       }),
-      max: 1,
-      connect_timeout: 5,
+      connectionTimeoutMillis: 5000,
     });
     try {
-      const error = await sql`select 1`.catch((caught: unknown) => caught);
+      const error = await client.connect().catch((caught: unknown) => caught);
       return { accepted, error };
     } finally {
-      await sql.end({ timeout: 1 });
+      await client.end();
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
     }

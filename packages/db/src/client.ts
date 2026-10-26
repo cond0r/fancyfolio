@@ -1,6 +1,6 @@
 import { checkServerIdentity, type PeerCertificate } from 'node:tls';
 import { parseEnv } from '@fancyfolio/contracts';
-import postgres from 'postgres';
+import { Pool, type PoolConfig } from 'pg';
 import * as v from 'valibot';
 
 export const loopbackHosts = new Set(['127.0.0.1', 'localhost']);
@@ -42,7 +42,7 @@ export function parseDatabaseUrl(url: string) {
     host: parsed.hostname.toLowerCase(),
     port: Number(parsed.port || 5432),
     database,
-    username,
+    user: username,
     password,
   };
 }
@@ -51,7 +51,6 @@ export function connectionOptions(url: string, env: Record<string, string | unde
   const target = parseDatabaseUrl(url);
   return {
     ...target,
-    prepare: false,
     ssl: loopbackHosts.has(target.host)
       ? (false as const)
       : {
@@ -63,6 +62,17 @@ export function connectionOptions(url: string, env: Record<string, string | unde
   };
 }
 
-export function connect(url: string): postgres.Sql {
-  return postgres(connectionOptions(url, process.env));
+export function logConnectionError(): void {
+  console.error('Database connection error');
+}
+
+type PoolLimits = Pick<
+  PoolConfig,
+  'max' | 'connectionTimeoutMillis' | 'query_timeout' | 'keepAlive'
+>;
+
+export function connect(url: string, limits: PoolLimits = {}): Pool {
+  const pool = new Pool({ ...connectionOptions(url, process.env), ...limits });
+  pool.on('error', logConnectionError);
+  return pool;
 }

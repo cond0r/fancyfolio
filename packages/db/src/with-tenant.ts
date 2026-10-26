@@ -1,6 +1,6 @@
 import { is, type Logger, SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase, type NodePgQueryResultHKT } from 'drizzle-orm/node-postgres';
-import type { PgQueryResultKind } from 'drizzle-orm/pg-core';
+import type { PgQueryResultKind, PgSelectBuilder, SelectedFields } from 'drizzle-orm/pg-core';
 import type { PgRaw } from 'drizzle-orm/pg-core/query-builders/raw';
 import type { Pool } from 'pg';
 import * as v from 'valibot';
@@ -59,10 +59,11 @@ export function tenantDatabase(url: string, options: { max?: number } = {}): Ten
 async function transaction<T>(
   { pool, logger }: TenantPool,
   setTransaction: SQL | null,
-  work: (db: NodePgDatabase) => Promise<T>,
+  work: (db: NodePgDatabase, isOpen: () => boolean) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
   const lost = Promise.withResolvers<never>();
+  let open = true;
   const onError = (error: Error) => {
     logConnectionError();
     lost.reject(error);
@@ -72,7 +73,9 @@ async function transaction<T>(
     await client.query('begin');
     const db = drizzle({ client, logger });
     if (setTransaction !== null) await db.execute(setTransaction);
-    const result = await work(db);
+    const result = await work(db, () => open).finally(() => {
+      open = false;
+    });
     await client.query('commit');
     return result;
   };
@@ -82,6 +85,7 @@ async function transaction<T>(
     failed = false;
     return result;
   } finally {
+    open = false;
     client.off('error', onError);
     // destroyed instead of rolled back: a rollback on a half-open socket waits out query_timeout
     client.release(failed);
@@ -103,16 +107,40 @@ async function refuseBypassingRole(db: TenantPool): Promise<void> {
   }
 }
 
-function plain(tx: NodePgDatabase): TenantTransaction {
+function plain(tx: NodePgDatabase, isOpen: () => boolean): TenantTransaction {
+  const open = () => {
+    if (!isOpen()) throw new Error('transaction is closed');
+  };
+  function select(): PgSelectBuilder<undefined, 'db'>;
+  function select<TSelection extends SelectedFields>(
+    fields: TSelection,
+  ): PgSelectBuilder<TSelection, 'db'>;
+  function select(fields?: SelectedFields) {
+    open();
+    return fields === undefined ? tx.select() : tx.select(fields);
+  }
   return {
-    select: tx.select.bind(tx),
-    insert: tx.insert.bind(tx),
-    update: tx.update.bind(tx),
-    delete: tx.delete.bind(tx),
-    $count: tx.$count.bind(tx),
+    select,
+    insert: (table) => {
+      open();
+      return tx.insert(table);
+    },
+    update: (table) => {
+      open();
+      return tx.update(table);
+    },
+    delete: (table) => {
+      open();
+      return tx.delete(table);
+    },
+    $count: (source, filters) => {
+      open();
+      return tx.$count(source, filters);
+    },
     execute: <TRow extends Record<string, unknown> = Record<string, unknown>>(
       query: SQLWrapper,
     ) => {
+      open();
       const statement = query.getSQL?.();
       if (!is(statement, SQL)) throw new TypeError('execute takes drizzle SQL only');
       return tx.execute<TRow>(statement);
@@ -144,8 +172,8 @@ export async function withTenant<T>(
   return transaction(
     db,
     context.kind === 'site' ? sql`set transaction isolation level repeatable read read only` : null,
-    async (raw) => {
-      const tx = plain(raw);
+    async (raw, isOpen) => {
+      const tx = plain(raw, isOpen);
       const {
         rows: [set],
       } = await tx.execute<Context>(

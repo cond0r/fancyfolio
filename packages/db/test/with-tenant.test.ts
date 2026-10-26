@@ -380,6 +380,82 @@ describe('withTenant', () => {
     ]);
   });
 
+  describe('a handle kept past the end of withTenant', () => {
+    const usages: [string, (tx: TenantTransaction) => unknown][] = [
+      ['select', (tx) => tx.select().from(experiences)],
+      ['insert', (tx) => tx.insert(experiences)],
+      ['update', (tx) => tx.update(experiences)],
+      ['delete', (tx) => tx.delete(experiences)],
+      ['$count', (tx) => tx.$count(experiences)],
+      ['execute', (tx) => tx.execute(sql`select 1`)],
+    ];
+    const settled = { resolved: 'resolves', rejected: 'rejects' } as const;
+    const keep = {
+      resolved: () => withTenant(db, { kind: 'job' }, async (tx) => tx),
+      rejected: async () => {
+        let kept: TenantTransaction | undefined;
+        await withTenant(db, { kind: 'job' }, async (tx) => {
+          kept = tx;
+          throw rollback;
+        }).catch(() => undefined);
+        return kept;
+      },
+    };
+
+    describe.each(Object.entries(settled))('after withTenant %s', (outcome) => {
+      it.each(usages)('throws on %s before sending anything', async (_name, use) => {
+        const kept = await keep[outcome as keyof typeof keep]();
+        const sent = statements.length;
+        expect(kept).toBeDefined();
+        expect(() => use(kept as TenantTransaction)).toThrow('transaction is closed');
+        expect(statements).toHaveLength(sent);
+      });
+    });
+
+    it('leaves a released client usable by the next caller', async () => {
+      await onPoolOfOne(async (pooled) => {
+        const kept = await withTenant(pooled, { kind: 'job' }, async (tx) => tx);
+        expect(() =>
+          kept.execute(sql`select U&"set\\005fconfig"('app.tenant_id', ${other.tenantId}, true)`),
+        ).toThrow('transaction is closed');
+        expect(
+          await withTenant(pooled, { kind: 'job' }, async (tx) => (await context(tx)).tenant),
+        ).toBeNull();
+      });
+    });
+
+    it('throws on a call fired after fn resolves, while the commit is in flight', async () => {
+      let late: Promise<{ error: unknown; settled: boolean }> | undefined;
+      let settled = false;
+      let sent = -1;
+      await withTenant(db, { kind: 'job' }, (tx) => {
+        const done = Promise.resolve();
+        late = done.then(async () => {
+          for (let hop = 0; hop < 10; hop += 1) await Promise.resolve();
+          sent = statements.length;
+          try {
+            tx.execute(sql`select 1`);
+          } catch (error) {
+            return { error, settled };
+          }
+          return { error: undefined, settled };
+        });
+        return done;
+      });
+      settled = true;
+      expect(await late).toEqual({ error: new Error('transaction is closed'), settled: false });
+      expect(statements).toHaveLength(sent);
+    });
+
+    it('still serves every call made inside fn', async () => {
+      const rows = await withTenant(db, { kind: 'user', userId: owner.userId }, async (tx) => ({
+        count: await tx.$count(tenants),
+        seen: (await tx.execute(sql`select 1 as one`)).rows,
+      }));
+      expect(rows).toEqual({ count: 1, seen: [{ one: 1 }] });
+    });
+  });
+
   it('gives app code a handle whose only member is withTenant', async () => {
     const handle = tenantDatabase(appUrl);
     expect(handle).not.toBeInstanceOf(PgDatabase);

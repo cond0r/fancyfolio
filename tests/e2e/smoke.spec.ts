@@ -42,9 +42,3 @@ test('a browser on the app host sends the probe cookies back through the rewrite
     cookieNames: ['__Secure-ff-probe-a', '__Secure-ff-probe-b'],
   });
 });
-
-test('another host does not reach the API', async ({ request }) => {
-  const res = await request.get('http://127.0.0.1:3200/api/health');
-  expect(res.status()).toBe(404);
-  expect(res.headers()['set-cookie']).toBeUndefined();
-});

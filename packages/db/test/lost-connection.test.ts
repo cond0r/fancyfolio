@@ -46,6 +46,14 @@ describe.runIf(mode === 'local')('a connection lost inside withTenant', () => {
   const alive = (db: ReturnType<typeof tenantDatabase>) =>
     db.withTenant({ kind: 'job' }, (tx) => tx.execute(sql`select 1`));
 
+  const outcome = async (run: () => PromiseLike<unknown>): Promise<unknown> => {
+    try {
+      return await run();
+    } catch (error) {
+      return error;
+    }
+  };
+
   it('opens at most the pool size it is given', async () => {
     const db = tenantDatabase(appUrl, { max: 1 });
     const pids = await Promise.all(
@@ -97,18 +105,12 @@ describe.runIf(mode === 'local')('a connection lost inside withTenant', () => {
       });
       await Promise.race([written.promise, Promise.allSettled([next])]);
       late.push(
-        await tx.execute(sql`select current_setting('app.tenant_id', true) as tenant`).then(
-          (result) => result,
-          (error: unknown) => error,
+        await outcome(() =>
+          tx.execute(sql`select current_setting('app.tenant_id', true) as tenant`),
         ),
-        await tx
-          .update(projects)
-          .set({ name: 'Overwritten' })
-          .where(eq(projects.name, 'Kept'))
-          .then(
-            (result) => result,
-            (error: unknown) => error,
-          ),
+        await outcome(() =>
+          tx.update(projects).set({ name: 'Overwritten' }).where(eq(projects.name, 'Kept')),
+        ),
       );
       lateSent.resolve();
     });
@@ -198,7 +200,7 @@ describe.runIf(mode === 'local')('a connection lost inside withTenant', () => {
     await expect(
       db.withTenant({ kind: 'job' }, async (tx) => {
         await tx.execute(sql`select ${'lost-connection-late'}::text`).catch(() => {});
-        late = await tx.execute(sql`select 2`).catch((error: unknown) => error);
+        late = await outcome(() => tx.execute(sql`select 2`));
       }),
     ).rejects.toBeInstanceOf(Error);
     await vi.waitFor(() => expect(late).toBeInstanceOf(Error));

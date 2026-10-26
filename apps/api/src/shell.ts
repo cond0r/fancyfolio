@@ -1,6 +1,6 @@
-import type { ErrorBody } from '@fancyfolio/contracts';
-import { sValidator } from '@hono/standard-validator';
+import { type ErrorBody, errorBody } from '@fancyfolio/contracts';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
+import { describeRoute, resolver, validator } from 'hono-openapi';
 import * as v from 'valibot';
 
 export type Env = { Variables: { requestId: string } };
@@ -76,7 +76,39 @@ function internalError(thrown: unknown, c: Context<Env>) {
 export const onError: ErrorHandler<Env> = internalError;
 
 export function pathParams<Schema extends v.GenericSchema>(schema: Schema) {
-  return sValidator('param', schema, (result, c: Context<Env>) => {
+  return validator('param', schema, (result, c: Context<Env>) => {
     if (!result.success) return notFound(c);
   });
+}
+
+const statusText = { 200: 'OK', 404: 'Not found', 500: 'Internal error' } as const;
+
+type Status = keyof typeof statusText;
+
+function described(status: Status, schema: v.GenericSchema) {
+  return [status, { description: statusText[status], schema }] as const;
+}
+
+export function responds(schema: v.GenericSchema, ...errors: Exclude<Status, 200 | 500>[]) {
+  const contracts = new Map<number, { description: string; schema: v.GenericSchema }>([
+    described(200, schema),
+    ...errors.map((status) => described(status, errorBody)),
+    described(500, errorBody),
+  ]);
+  const check: MiddlewareHandler = async (c, next) => {
+    await next();
+    const contract = contracts.get(c.res.status);
+    if (contract === undefined) throw new Error('Response status outside the route contract');
+    v.parse(contract.schema, await c.res.clone().json());
+  };
+  const responses = Object.fromEntries(
+    [...contracts].map(([status, contract]) => [
+      status,
+      {
+        description: contract.description,
+        content: { 'application/json': { schema: resolver(contract.schema) } },
+      },
+    ]),
+  );
+  return Object.assign(check, describeRoute({ responses }));
 }

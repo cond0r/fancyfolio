@@ -17,6 +17,7 @@ import {
   createUser,
   deleteUsers,
   requireWritable,
+  rows,
 } from '../../../../packages/db/test/fixtures.ts';
 import type {} from '../../../../packages/db/test/setup.ts';
 
@@ -50,11 +51,11 @@ beforeAll(async () => {
   lena.userId = await createUser(auth, 'Lena Fischer', 'lena.sites@example.test');
   omar.userId = await createUser(auth, 'Omar Haddad', 'omar.sites@example.test');
   nadia.userId = await createUser(auth, 'Nadia Okafor', 'nadia.sites@example.test');
-  amara.tenantId = await createTenant(app, amara.userId, 'amara-sites');
-  kenji.tenantId = await createTenant(app, kenji.userId, 'kenji-sites');
-  lena.tenantId = await createTenant(app, lena.userId, 'lena-sites');
-  omar.tenantId = await createTenant(app, omar.userId, 'omar-sites');
-  nadia.tenantId = await createTenant(app, nadia.userId, 'nadia-sites');
+  amara.tenantId = await createTenant(db, amara.userId, 'amara-sites');
+  kenji.tenantId = await createTenant(db, kenji.userId, 'kenji-sites');
+  lena.tenantId = await createTenant(db, lena.userId, 'lena-sites');
+  omar.tenantId = await createTenant(db, omar.userId, 'omar-sites');
+  nadia.tenantId = await createTenant(db, nadia.userId, 'nadia-sites');
 
   expected = await asOwner(amara, async (tx) => {
     const [profile] = await tx
@@ -230,15 +231,15 @@ async function get(path: string) {
 
 const notFound = { status: 404, body: { error: 'Not found', requestId: expect.any(String) } };
 
-async function rows() {
+async function tenantRows() {
   return Promise.all(
     [amara, kenji, lena, omar].map((owner) =>
       asOwner(owner, async (tx) => ({
-        domains: (await tx.execute(sql`select * from domains order by id`)).rows,
-        caseStudies: (await tx.execute(sql`select * from case_studies order by id`)).rows,
-        profiles: (await tx.execute(sql`select * from profiles`)).rows,
-        experiences: (await tx.execute(sql`select * from experiences order by id`)).rows,
-        projects: (await tx.execute(sql`select * from projects order by id`)).rows,
+        domains: await rows(tx)(sql`select * from domains order by id`),
+        caseStudies: await rows(tx)(sql`select * from case_studies order by id`),
+        profiles: await rows(tx)(sql`select * from profiles`),
+        experiences: await rows(tx)(sql`select * from experiences order by id`),
+        projects: await rows(tx)(sql`select * from projects order by id`),
       })),
     ),
   );
@@ -308,9 +309,7 @@ describe('GET /api/v1/sites/:key', () => {
       const read = get('/api/v1/sites/nadia-sites');
       await vi.waitFor(
         async () => {
-          const {
-            rows: [blocked],
-          } = await drizzle(app).execute<{ n: number }>(sql`
+          const [blocked] = await rows<{ n: number }>(drizzle(app))(sql`
             select count(*)::int as n from pg_stat_activity
             where wait_event_type = 'Lock' and query ilike '%case_studies%'
           `);
@@ -366,7 +365,7 @@ describe('GET /api/v1/sites/:key/case-studies/:slug', () => {
 
 describe('the public routes only read', () => {
   it('leave every row as it was after reads, refusals and other methods', async () => {
-    const before = await rows();
+    const before = await tenantRows();
     for (const key of ['amara-sites', 'amara.example.test', 'kenji-sites', 'lena.example.test']) {
       await api.request(`/api/v1/sites/${key}`);
       await api.request(`/api/v1/sites/${key}/case-studies/billing-rewrite`);
@@ -384,7 +383,7 @@ describe('the public routes only read', () => {
         expect(res.status).toBe(404);
       }
     }
-    expect(await rows()).toEqual(before);
+    expect(await tenantRows()).toEqual(before);
     expect(before[0].domains).toHaveLength(1);
     expect(before[0].caseStudies).toHaveLength(3);
     expect(before[2].domains).toHaveLength(1);

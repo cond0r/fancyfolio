@@ -7,13 +7,13 @@ import { connect } from '../src/client.ts';
 import { caseStudies, experiences, profiles, projects } from '../src/schema/content.ts';
 import { tenants } from '../src/schema/tenants.ts';
 import { type TenantPool, type TenantTransaction, withTenant } from '../src/with-tenant.ts';
-import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
+import { createTenant, createUser, deleteUsers, requireWritable, rows } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
-const db = drizzle(app);
-const tenantPool: TenantPool = { pool: app };
+const db: TenantPool = { pool: app };
+const noContext = drizzle(app);
 const denied = { cause: { code: '42501' } };
 const refusedBy = (constraint: string) => ({
   cause: { code: '23514', constraint },
@@ -58,8 +58,8 @@ const forgedRow: Record<TableName, (tenantId: string, updatedAt?: SQL) => SQL> =
 
 async function seed(target: Seeded, name: string, email: string, subdomain: string) {
   target.userId = await createUser(auth, name, email);
-  target.tenantId = await createTenant(app, target.userId, subdomain);
-  await withTenant(tenantPool, { kind: 'user', userId: target.userId }, async (tx) => {
+  target.tenantId = await createTenant(db, target.userId, subdomain);
+  await withTenant(db, { kind: 'user', userId: target.userId }, async (tx) => {
     const tenantId = target.tenantId;
     await tx.insert(profiles).values({ tenantId, displayName: name });
     const [experience] = await tx
@@ -97,42 +97,42 @@ afterAll(async () => {
 });
 
 function asOwner<T>(owner: Seeded, fn: (tx: TenantTransaction) => Promise<T>) {
-  return withTenant(tenantPool, { kind: 'user', userId: owner.userId }, fn);
+  return withTenant(db, { kind: 'user', userId: owner.userId }, fn);
 }
 
 async function tenantsOf(tx: TenantTransaction, name: TableName) {
-  const { rows } = await tx.execute<{ tenant: string }>(
+  const found = await rows<{ tenant: string }>(tx)(
     sql`select tenant_id::text as tenant from ${tables[name]}`,
   );
-  return [...new Set(rows.map((row) => row.tenant))];
+  return [...new Set(found.map((row) => row.tenant))];
 }
 
 describe.each(tableNames)('%s', (name) => {
   const table = tables[name];
 
   it('shows no row and refuses an insert without a context and in the job context', async () => {
-    expect((await db.execute(sql`select tenant_id from ${table}`)).rows).toEqual([]);
-    await expect(db.execute(forgedRow[name](a.tenantId))).rejects.toMatchObject(denied);
-    await withTenant(tenantPool, { kind: 'job' }, async (tx) => {
+    expect(await rows(noContext)(sql`select tenant_id from ${table}`)).toEqual([]);
+    await expect(noContext.execute(forgedRow[name](a.tenantId))).rejects.toMatchObject(denied);
+    await withTenant(db, { kind: 'job' }, async (tx) => {
       expect(await tenantsOf(tx, name)).toEqual([]);
     });
     await expect(
-      withTenant(tenantPool, { kind: 'job' }, (tx) => tx.execute(forgedRow[name](a.tenantId))),
+      withTenant(db, { kind: 'job' }, (tx) => tx.execute(forgedRow[name](a.tenantId))),
     ).rejects.toMatchObject(denied);
   });
 
   it("shows A only A's rows", async () => {
     await asOwner(a, async (tx) => {
       expect(await tenantsOf(tx, name)).toEqual([a.tenantId]);
-      expect(
-        (await tx.execute(sql`select 1 from ${table} where tenant_id = ${b.tenantId}`)).rows,
-      ).toEqual([]);
+      expect(await rows(tx)(sql`select 1 from ${table} where tenant_id = ${b.tenantId}`)).toEqual(
+        [],
+      );
     });
   });
 
   it("lets A update and delete none of B's rows, which stay as they were", async () => {
     const before = await asOwner(b, (tx) =>
-      tx.execute(sql`select * from ${table} order by updated_at`),
+      rows(tx)(sql`select * from ${table} order by updated_at`),
     );
     await asOwner(a, async (tx) => {
       const updated = await tx.execute(
@@ -145,9 +145,9 @@ describe.each(tableNames)('%s', (name) => {
       }
     });
     const after = await asOwner(b, (tx) =>
-      tx.execute(sql`select * from ${table} order by updated_at`),
+      rows(tx)(sql`select * from ${table} order by updated_at`),
     );
-    expect(after.rows).toEqual(before.rows);
+    expect(after).toEqual(before);
   });
 
   it("refuses A an insert for B's tenant", async () => {
@@ -161,12 +161,12 @@ describe.each(tableNames)('%s', (name) => {
     const rollback = new Error('rollback');
     try {
       await expect(
-        withTenant(tenantPool, { kind: 'user', userId, onboarding: true }, (tx, tenantId) =>
+        withTenant(db, { kind: 'user', userId, onboarding: true }, (tx, tenantId) =>
           tx.execute(forgedRow[name](tenantId ?? '')),
         ),
       ).rejects.toMatchObject(denied);
       await expect(
-        withTenant(tenantPool, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
+        withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
           const id = tenantId ?? '';
           await tx
             .insert(tenants)
@@ -189,28 +189,22 @@ describe.each(tableNames)('%s', (name) => {
       let outcome: unknown;
       try {
         await expect(
-          withTenant(
-            tenantPool,
-            { kind: 'user', userId, onboarding: true },
-            async (tx, tenantId) => {
-              const id = tenantId ?? '';
-              await tx
-                .insert(tenants)
-                .values({ id, subdomain: `noor-${name.replace('_', '-')}`, ownerId: userId });
-              await tx.execute(forgedRow[name](id, sql`${stamp}::timestamptz`));
-              const {
-                rows: [row],
-              } = await tx.execute<{ stamped: boolean }>(
-                sql`select bool_and(updated_at between now() and clock_timestamp()) as stamped from ${table}`,
-              );
-              const stale = await tx.execute(
-                sql`update ${table} set tenant_id = tenant_id where updated_at = ${stamp}::timestamptz`,
-              );
-              const fresh = await tx.execute(sql`update ${table} set tenant_id = tenant_id`);
-              outcome = { stamped: row.stamped, stale: stale.rowCount, fresh: fresh.rowCount };
-              throw rollback;
-            },
-          ),
+          withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
+            const id = tenantId ?? '';
+            await tx
+              .insert(tenants)
+              .values({ id, subdomain: `noor-${name.replace('_', '-')}`, ownerId: userId });
+            await tx.execute(forgedRow[name](id, sql`${stamp}::timestamptz`));
+            const [row] = await rows<{ stamped: boolean }>(tx)(
+              sql`select bool_and(updated_at between now() and clock_timestamp()) as stamped from ${table}`,
+            );
+            const stale = await tx.execute(
+              sql`update ${table} set tenant_id = tenant_id where updated_at = ${stamp}::timestamptz`,
+            );
+            const fresh = await tx.execute(sql`update ${table} set tenant_id = tenant_id`);
+            outcome = { stamped: row.stamped, stale: stale.rowCount, fresh: fresh.rowCount };
+            throw rollback;
+          }),
         ).rejects.toBe(rollback);
         expect(outcome).toEqual({ stamped: true, stale: 0, fresh: 1 });
       } finally {
@@ -221,17 +215,13 @@ describe.each(tableNames)('%s', (name) => {
 
   it('moves updated_at on every update, whatever value the statement sets', async () => {
     const latest = async (tx: TenantTransaction) => {
-      const {
-        rows: [row],
-      } = await tx.execute<{ stamp: string }>(
+      const [row] = await rows<{ stamp: string }>(tx)(
         sql`select max(updated_at)::text as stamp from ${table}`,
       );
       return row;
     };
     const moved = async (tx: TenantTransaction, since: string) => {
-      const {
-        rows: [row],
-      } = await tx.execute<{ moved: boolean }>(
+      const [row] = await rows<{ moved: boolean }>(tx)(
         sql`select bool_and(updated_at > ${since}::timestamptz) as moved from ${table}`,
       );
       return row.moved;
@@ -262,7 +252,7 @@ describe.each(tableNames)('%s', (name) => {
 describe('the public site context', () => {
   it('reads the profile, experiences, projects and only the published case study', async () => {
     const seen = await withTenant(
-      tenantPool,
+      db,
       { kind: 'site', site: 'ines-content' },
       async (tx, tenantId) => ({
         tenantId,
@@ -291,9 +281,7 @@ describe('the public site context', () => {
         sql`delete from ${tables[name]} where tenant_id = ${a.tenantId}`,
       ]) {
         await expect(
-          withTenant(tenantPool, { kind: 'site', site: 'ines-content' }, (tx) =>
-            tx.execute(statement),
-          ),
+          withTenant(db, { kind: 'site', site: 'ines-content' }, (tx) => tx.execute(statement)),
         ).rejects.toMatchObject(readOnly);
       }
     },
@@ -367,9 +355,7 @@ describe('the source hash', () => {
       );
       await tx.execute(sql`update case_studies set source_hash = ${stored} where id = ${id}`);
       await tx.execute(sql`update case_studies set ${change} where id = ${id}`);
-      const {
-        rows: [row],
-      } = await tx.execute<{ hash: string | null }>(
+      const [row] = await rows<{ hash: string | null }>(tx)(
         sql`select source_hash as hash from case_studies where id = ${id}`,
       );
       return row.hash;

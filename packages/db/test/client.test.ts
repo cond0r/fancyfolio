@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
+import { rows } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
@@ -15,9 +16,7 @@ it('prepares no statements, so a transaction pooler can carry it', async () => {
     const db = drizzle(session);
     await db.execute(sql`select 1 as one`);
     await db.execute(sql`select 1 as one`);
-    const {
-      rows: [{ prepared }],
-    } = await db.execute<{ prepared: number }>(sql`
+    const [{ prepared }] = await rows<{ prepared: number }>(db)(sql`
       select count(*)::int as prepared from pg_catalog.pg_prepared_statements
     `);
     expect(prepared).toBe(0);
@@ -29,9 +28,7 @@ it('prepares no statements, so a transaction pooler can carry it', async () => {
 it('logs in as ff_app and ff_auth through the role URLs', async () => {
   const [asApp, asAuth] = await Promise.all(
     [app, auth].map(async (pool) => {
-      const {
-        rows: [row],
-      } = await drizzle(pool).execute<{ name: string }>(sql`select current_user as name`);
+      const [row] = await rows<{ name: string }>(drizzle(pool))(sql`select current_user as name`);
       return row;
     }),
   );

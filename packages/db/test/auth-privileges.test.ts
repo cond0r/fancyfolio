@@ -1,10 +1,10 @@
-import { sql } from 'drizzle-orm';
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { type ExtractTablesWithRelations, sql } from 'drizzle-orm';
+import { drizzle, type NodePgTransaction } from 'drizzle-orm/node-postgres';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { authTables } from './auth-tables.ts';
-import { requireWritable } from './fixtures.ts';
+import { requireWritable, rows } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
@@ -16,7 +16,10 @@ afterAll(async () => {
   await Promise.all([app.end(), auth.end()]);
 });
 
-type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0];
+type Transaction = NodePgTransaction<
+  Record<string, never>,
+  ExtractTablesWithRelations<Record<string, never>>
+>;
 
 async function inRollback(pool: Pool, run: (tx: Transaction) => Promise<void>): Promise<void> {
   const rollback = new Error('rollback');
@@ -43,9 +46,7 @@ describe.each(authTables)('ff_app on %s', (table) => {
 describe('ff_auth', () => {
   it('selects, inserts, updates and deletes rows in every auth table', async () => {
     await inRollback(auth, async (tx) => {
-      const {
-        rows: [user],
-      } = await tx.execute<{ id: string }>(sql`
+      const [user] = await rows<{ id: string }>(tx)(sql`
         insert into users (name, email) values ('Ines Okafor', 'ines@example.test') returning id
       `);
       await tx.execute(sql`

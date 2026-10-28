@@ -5,13 +5,13 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { tenants } from '../src/schema/tenants.ts';
 import { type TenantPool, withTenant } from '../src/with-tenant.ts';
-import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
+import { createTenant, createUser, deleteUsers, requireWritable, rows } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
-const db = drizzle(app);
-const tenantPool: TenantPool = { pool: app };
+const db: TenantPool = { pool: app };
+const noContext = drizzle(app);
 const denied = { cause: { code: '42501' } };
 const a = { userId: '', tenantId: '' };
 const b = { userId: '', tenantId: '' };
@@ -20,8 +20,8 @@ beforeAll(async () => {
   requireWritable();
   a.userId = await createUser(auth, 'Ines Okafor', 'ines@example.test');
   b.userId = await createUser(auth, 'Rafael Mendes', 'rafael@example.test');
-  a.tenantId = await createTenant(app, a.userId, 'ines');
-  b.tenantId = await createTenant(app, b.userId, 'rafael');
+  a.tenantId = await createTenant(db, a.userId, 'ines');
+  b.tenantId = await createTenant(db, b.userId, 'rafael');
 });
 
 afterAll(async () => {
@@ -30,7 +30,7 @@ afterAll(async () => {
 });
 
 function rowsOf(userId: string) {
-  return withTenant(tenantPool, { kind: 'user', userId }, (tx) =>
+  return withTenant(db, { kind: 'user', userId }, (tx) =>
     tx
       .select({ id: tenants.id, subdomain: tenants.subdomain, ownerId: tenants.ownerId })
       .from(tenants),
@@ -39,22 +39,22 @@ function rowsOf(userId: string) {
 
 describe('tenants as ff_app without a context', () => {
   it('reads no row through raw SQL or the query builder', async () => {
-    expect((await db.execute(sql`select id from tenants`)).rowCount).toBe(0);
-    expect(await db.select().from(tenants)).toEqual([]);
+    expect((await noContext.execute(sql`select id from tenants`)).rowCount).toBe(0);
+    expect(await noContext.select().from(tenants)).toEqual([]);
   });
 
   it('cannot insert', async () => {
     await expect(
-      db.insert(tenants).values({ id: randomUUID(), subdomain: 'nobody', ownerId: a.userId }),
+      noContext
+        .insert(tenants)
+        .values({ id: randomUUID(), subdomain: 'nobody', ownerId: a.userId }),
     ).rejects.toMatchObject(denied);
   });
 
   it('reads no row and cannot insert in the job context', async () => {
-    expect(
-      await withTenant(tenantPool, { kind: 'job' }, (tx) => tx.select().from(tenants)),
-    ).toEqual([]);
+    expect(await withTenant(db, { kind: 'job' }, (tx) => tx.select().from(tenants))).toEqual([]);
     await expect(
-      withTenant(tenantPool, { kind: 'job' }, (tx) =>
+      withTenant(db, { kind: 'job' }, (tx) =>
         tx.insert(tenants).values({ id: randomUUID(), subdomain: 'nobody', ownerId: a.userId }),
       ),
     ).rejects.toMatchObject(denied);
@@ -63,13 +63,11 @@ describe('tenants as ff_app without a context', () => {
 
 describe("tenants as ff_app in tenant A's context", () => {
   it("reads only A's row through the query builder and raw SQL", async () => {
-    await withTenant(tenantPool, { kind: 'user', userId: a.userId }, async (tx) => {
+    await withTenant(db, { kind: 'user', userId: a.userId }, async (tx) => {
       expect(await tx.select({ id: tenants.id }).from(tenants)).toEqual([{ id: a.tenantId }]);
-      expect((await tx.execute(sql`select id from tenants`)).rows).toEqual([{ id: a.tenantId }]);
+      expect(await rows(tx)(sql`select id from tenants`)).toEqual([{ id: a.tenantId }]);
       expect(await tx.select().from(tenants).where(eq(tenants.id, b.tenantId))).toEqual([]);
-      expect((await tx.execute(sql`select id from tenants where id = ${b.tenantId}`)).rows).toEqual(
-        [],
-      );
+      expect(await rows(tx)(sql`select id from tenants where id = ${b.tenantId}`)).toEqual([]);
     });
   });
 
@@ -80,16 +78,16 @@ describe("tenants as ff_app in tenant A's context", () => {
     ];
     for (const statement of attempts) {
       await expect(
-        withTenant(tenantPool, { kind: 'user', userId: a.userId }, (tx) => tx.execute(statement)),
+        withTenant(db, { kind: 'user', userId: a.userId }, (tx) => tx.execute(statement)),
       ).rejects.toMatchObject(denied);
     }
     await expect(
-      withTenant(tenantPool, { kind: 'user', userId: a.userId }, (tx) =>
+      withTenant(db, { kind: 'user', userId: a.userId }, (tx) =>
         tx.update(tenants).set({ subdomain: 'taken' }).where(eq(tenants.id, b.tenantId)),
       ),
     ).rejects.toMatchObject(denied);
     await expect(
-      withTenant(tenantPool, { kind: 'user', userId: a.userId }, (tx) =>
+      withTenant(db, { kind: 'user', userId: a.userId }, (tx) =>
         tx.delete(tenants).where(eq(tenants.id, b.tenantId)),
       ),
     ).rejects.toMatchObject(denied);
@@ -100,12 +98,12 @@ describe("tenants as ff_app in tenant A's context", () => {
 
   it('cannot update or delete its own row: the subdomain is immutable', async () => {
     await expect(
-      withTenant(tenantPool, { kind: 'user', userId: a.userId }, (tx) =>
+      withTenant(db, { kind: 'user', userId: a.userId }, (tx) =>
         tx.update(tenants).set({ subdomain: 'renamed' }).where(eq(tenants.id, a.tenantId)),
       ),
     ).rejects.toMatchObject(denied);
     await expect(
-      withTenant(tenantPool, { kind: 'user', userId: a.userId }, (tx) =>
+      withTenant(db, { kind: 'user', userId: a.userId }, (tx) =>
         tx.delete(tenants).where(eq(tenants.id, a.tenantId)),
       ),
     ).rejects.toMatchObject(denied);
@@ -120,9 +118,7 @@ describe("tenants as ff_app in tenant A's context", () => {
     ['a new tenant id', () => ({ id: randomUUID(), subdomain: 'forged', ownerId: a.userId })],
   ])('cannot insert a row with %s', async (_case, row) => {
     await expect(
-      withTenant(tenantPool, { kind: 'user', userId: a.userId }, (tx) =>
-        tx.insert(tenants).values(row()),
-      ),
+      withTenant(db, { kind: 'user', userId: a.userId }, (tx) => tx.insert(tenants).values(row())),
     ).rejects.toMatchObject(denied);
     expect(await rowsOf(b.userId)).toEqual([
       { id: b.tenantId, subdomain: 'rafael', ownerId: b.userId },

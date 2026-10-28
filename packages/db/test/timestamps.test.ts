@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { domains, projects } from '../src/schema/content.ts';
 import { type TenantPool, withTenant } from '../src/with-tenant.ts';
-import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
+import { createTenant, createUser, deleteUsers, requireWritable, rows } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
@@ -14,7 +14,7 @@ const owner = { userId: '', tenantId: '' };
 beforeAll(async () => {
   requireWritable();
   owner.userId = await createUser(auth, 'Sofia Brandt', 'sofia.timestamps@example.test');
-  owner.tenantId = await createTenant(app, owner.userId, 'sofia-timestamps');
+  owner.tenantId = await createTenant(db, owner.userId, 'sofia-timestamps');
 });
 
 afterAll(async () => {
@@ -32,9 +32,7 @@ it('reads created_at on projects and domains as the Postgres text, microseconds 
     });
     const [project] = await tx.select({ createdAt: projects.createdAt }).from(projects);
     const [domain] = await tx.select({ createdAt: domains.createdAt }).from(domains);
-    const {
-      rows: [text],
-    } = await tx.execute<{ project: string; domain: string }>(
+    const [text] = await rows<{ project: string; domain: string }>(tx)(
       sql`select (select created_at::text from projects) as project, (select created_at::text from domains) as domain`,
     );
     return { project: project.createdAt, domain: domain.createdAt, text };

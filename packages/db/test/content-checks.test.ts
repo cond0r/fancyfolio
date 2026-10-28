@@ -12,6 +12,7 @@ import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { connect } from '../src/client.ts';
 import { caseStudies, domains, experiences, profiles, projects } from '../src/schema/content.ts';
+import { rows } from './fixtures.ts';
 
 const { appUrl, ownerUrl } = inject('db');
 const app = connect(appUrl);
@@ -226,9 +227,7 @@ const sweeps = [
 ] as const;
 
 async function installed(table: PgTable, name: string): Promise<SQL> {
-  const {
-    rows: [row],
-  } = await db.execute<{ definition: string }>(
+  const [row] = await rows<{ definition: string }>(db)(
     sql`select pg_get_constraintdef(oid) as definition from pg_constraint where contype = 'c' and conname = ${name} and conrelid = ${`public.${getTableName(table)}`}::regclass`,
   );
   if (row === undefined) throw new Error(`no CHECK named ${name}`);
@@ -258,8 +257,8 @@ function linkDisagreements(corpus: string[]) {
 }
 
 async function verdictsDiffer(query: SQL, corpus: string[], contract: (value: string) => boolean) {
-  const { rows } = await db.execute<{ value: string; accepted: boolean }>(query);
-  const verdicts = rows.map(({ value, accepted }) => ({
+  const answers = await rows<{ value: string; accepted: boolean }>(db)(query);
+  const verdicts = answers.map(({ value, accepted }) => ({
     value,
     contract: contract(value),
     database: accepted,
@@ -335,10 +334,10 @@ describe('the content migrations', () => {
               sql`alter table pg_temp.${name} add constraint ${sql.identifier(check.name)} check (${check.value})`,
             );
           }
-          const { rows } = await tx.execute<(typeof compared)[number]>(
+          const constraints = await rows<(typeof compared)[number]>(tx)(
             sql`select generated.conname as name, pg_get_constraintdef(installed.oid) as installed, pg_get_constraintdef(generated.oid) as generated from pg_constraint generated left join pg_constraint installed on installed.conname = generated.conname and installed.conrelid = ${`public.${getTableName(table)}`}::regclass where generated.conrelid = ${`pg_temp.${getTableName(table)}`}::regclass and generated.contype = 'c'`,
           );
-          compared.push(...rows);
+          compared.push(...constraints);
         }
         throw rollback;
       })

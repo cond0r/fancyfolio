@@ -41,19 +41,19 @@ export function roleUrl(base: string, role: string, password: string, pooler = f
 
 async function writeRefusal(pool: Pool): Promise<string | null> {
   const owner = drizzle(pool);
-  const {
-    rows: [{ bypass }],
-  } = await owner.execute<{ bypass: boolean }>(sql`
+  const [{ bypass }] = (
+    await owner.execute<{ bypass: boolean }>(sql`
     select rolsuper or rolbypassrls as bypass from pg_roles where rolname = current_user
-  `);
+  `)
+  ).rows;
   if (!bypass) {
     return 'the target owner role lacks BYPASSRLS, so forced RLS hides rows from it; run only the catalog suite';
   }
-  const {
-    rows: [{ migrated }],
-  } = await owner.execute<{ migrated: boolean }>(sql`
+  const [{ migrated }] = (
+    await owner.execute<{ migrated: boolean }>(sql`
     select to_regclass('drizzle.__drizzle_migrations') is not null as migrated
-  `);
+  `)
+  ).rows;
   const [{ latest }] = migrated
     ? (
         await owner.execute<{ latest: string | null }>(sql`
@@ -74,9 +74,7 @@ async function writeRefusal(pool: Pool): Promise<string | null> {
     authTables.map((table) => sql`exists (select from public.${sql.identifier(table)})`),
     sql` or `,
   );
-  const {
-    rows: [row],
-  } = await owner.execute<{ held: boolean }>(sql`select ${held} as held`);
+  const [row] = (await owner.execute<{ held: boolean }>(sql`select ${held} as held`)).rows;
   return row.held ? 'the target database holds auth rows; run only the catalog suite' : null;
 }
 
@@ -149,11 +147,11 @@ export default async function setup(
   };
 
   try {
-    const {
-      rows: [{ locked }],
-    } = await session.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock(hashtext('fancyfolio_test')) as locked",
-    );
+    const [{ locked }] = (
+      await session.query<{ locked: boolean }>(
+        "select pg_try_advisory_lock(hashtext('fancyfolio_test')) as locked",
+      )
+    ).rows;
     if (!locked) throw new Error('Another database test run holds the fancyfolio_test lock');
     await session.query('drop database if exists fancyfolio_test with (force)');
     await session.query('create database fancyfolio_test');

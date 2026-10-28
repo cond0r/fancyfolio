@@ -11,13 +11,13 @@ import {
   type TenantTransaction,
   withTenant,
 } from '../src/with-tenant.ts';
-import { createTenant, createUser, deleteUsers, requireWritable } from './fixtures.ts';
+import { createTenant, createUser, deleteUsers, requireWritable, rows } from './fixtures.ts';
 
 const { appUrl, authUrl } = inject('db');
 const app = connect(appUrl);
 const auth = connect(authUrl);
-const db = drizzle(app);
-const tenantPool: TenantPool = { pool: app };
+const db: TenantPool = { pool: app };
+const noContext = drizzle(app);
 const notJob = { cause: { code: '42501' } };
 const inFuture = { cause: { code: '23514', constraint: 'domains_claim_time_check' } };
 const taken = { cause: { code: '23505', constraint: 'domains_verified_hostname_unique' } };
@@ -46,7 +46,7 @@ const owners = [live, pending, lapsed];
 type Row = { hostname: string; verified: string | null; checked: string | null };
 
 function asOwner<T>(owner: Owner, fn: (tx: TenantTransaction) => Promise<T>) {
-  return withTenant(tenantPool, { kind: 'user', userId: owner.userId }, fn);
+  return withTenant(db, { kind: 'user', userId: owner.userId }, fn);
 }
 
 function setDomain(owner: Owner, change: SQL) {
@@ -56,10 +56,8 @@ function setDomain(owner: Owner, change: SQL) {
 }
 
 async function rowOf(owner: Owner): Promise<Row> {
-  const {
-    rows: [row],
-  } = await asOwner(owner, (tx) =>
-    tx.execute<Row>(
+  const [row] = await asOwner(owner, (tx) =>
+    rows<Row>(tx)(
       sql`select hostname, verified_at::text as verified, checked_at::text as checked from domains`,
     ),
   );
@@ -67,10 +65,8 @@ async function rowOf(owner: Owner): Promise<Row> {
 }
 
 async function resolve(key: string | null): Promise<string | null> {
-  const {
-    rows: [row],
-  } = await withTenant(tenantPool, { kind: 'job' }, (tx) =>
-    tx.execute<{ id: string | null }>(sql`select app.resolve_site(${key}::text) as id`),
+  const [row] = await withTenant(db, { kind: 'job' }, (tx) =>
+    rows<{ id: string | null }>(tx)(sql`select app.resolve_site(${key}::text) as id`),
   );
   return row.id;
 }
@@ -79,18 +75,17 @@ const token = (seed: string) => seed.padEnd(43, '_');
 const tokenOf = (owner: Owner) => token(owner.subdomain);
 
 function recordTxt(host: string | null, token: string | null, seen: boolean | null) {
-  return withTenant(tenantPool, { kind: 'job' }, (tx) =>
+  return withTenant(db, { kind: 'job' }, (tx) =>
     tx.execute(sql`select app.record_txt(${host}::text, ${token}::text, ${seen}::boolean)`),
   );
 }
 
-async function toRecheck(max: number | null) {
-  const { rows } = await withTenant(tenantPool, { kind: 'job' }, (tx) =>
-    tx.execute<{ hostname: string; challenge_token: string }>(
+function toRecheck(max: number | null) {
+  return withTenant(db, { kind: 'job' }, (tx) =>
+    rows<{ hostname: string; challenge_token: string }>(tx)(
       sql`select hostname, challenge_token from app.domains_to_recheck(${max}::integer)`,
     ),
   );
-  return rows;
 }
 
 async function reset() {
@@ -109,7 +104,7 @@ beforeAll(async () => {
   requireWritable();
   for (const owner of owners) {
     owner.userId = await createUser(auth, owner.subdomain, `${owner.subdomain}@example.test`);
-    owner.tenantId = await createTenant(app, owner.userId, owner.subdomain);
+    owner.tenantId = await createTenant(db, owner.userId, owner.subdomain);
     await asOwner(owner, (tx) =>
       tx.insert(domains).values({
         tenantId: owner.tenantId,
@@ -162,7 +157,7 @@ describe('app.resolve_site', () => {
     await setDomain(pending, sql`checked_at = now() - interval '1 minute'`);
     expect(await resolve(pending.hostname)).toBeNull();
     expect(
-      await withTenant(tenantPool, { kind: 'site', site: pending.subdomain }, (tx) =>
+      await withTenant(db, { kind: 'site', site: pending.subdomain }, (tx) =>
         tx.select({ hostname: domains.hostname }).from(domains),
       ),
     ).toEqual([]);
@@ -181,20 +176,18 @@ describe('app.resolve_site', () => {
   it('finds a hostname through the verified-hostname index, never by scanning domains', async () => {
     await reset();
     const scansOf = async (tx: TenantTransaction) => {
-      const { rows } = await tx.execute<{ via: string; scans: number }>(sql`
+      const counts = await rows<{ via: string; scans: number }>(tx)(sql`
         select c.relname as via, pg_stat_get_xact_numscans(c.oid)::int as scans from pg_class c
         where c.oid = 'public.domains'::regclass
           or c.oid in (select indexrelid from pg_index where indrelid = 'public.domains'::regclass)
       `);
-      return new Map(rows.map(({ via, scans }) => [via, scans]));
+      return new Map(counts.map(({ via, scans }) => [via, scans]));
     };
-    const outcome = await withTenant(tenantPool, { kind: 'job' }, async (tx) => {
+    const outcome = await withTenant(db, { kind: 'job' }, async (tx) => {
       await tx.execute(sql`set local enable_seqscan = off`);
       await tx.execute(sql`set local jit = off`);
       const before = await scansOf(tx);
-      const {
-        rows: [row],
-      } = await tx.execute<{ id: string | null }>(
+      const [row] = await rows<{ id: string | null }>(tx)(
         sql`select app.resolve_site(${live.hostname}::text) as id`,
       );
       const after = await scansOf(tx);
@@ -223,28 +216,24 @@ describe('app.domains_to_recheck', () => {
     const crowd: string[] = [];
 
     beforeAll(async () => {
-      const { rows: users } = await drizzle(auth).execute<{ id: string }>(sql`
+      const users = await rows<{ id: string }>(drizzle(auth))(sql`
         insert into users (name, email)
         select 'Crowd ' || n, 'crowd-' || n || '@example.test' from generate_series(1, 501) as n
         returning id
       `);
       crowd.push(...users.map((user) => user.id));
       for (const [index, userId] of crowd.entries()) {
-        await withTenant(
-          tenantPool,
-          { kind: 'user', userId, onboarding: true },
-          async (tx, tenantId) => {
-            const id = tenantId ?? '';
-            await tx.insert(tenants).values({ id, subdomain: `crowd-${index}`, ownerId: userId });
-            await tx.insert(domains).values({
-              tenantId: id,
-              hostname: `crowd-${index}.example`,
-              challengeToken: token(`t${index}`),
-              verifiedAt: sql`now()`,
-              checkedAt: sql`now()`,
-            });
-          },
-        );
+        await withTenant(db, { kind: 'user', userId, onboarding: true }, async (tx, tenantId) => {
+          const id = tenantId ?? '';
+          await tx.insert(tenants).values({ id, subdomain: `crowd-${index}`, ownerId: userId });
+          await tx.insert(domains).values({
+            tenantId: id,
+            hostname: `crowd-${index}.example`,
+            challengeToken: token(`t${index}`),
+            verifiedAt: sql`now()`,
+            checkedAt: sql`now()`,
+          });
+        });
       }
     });
 
@@ -346,12 +335,12 @@ describe('the re-check functions', () => {
     await setDomain(live, sql`checked_at = now() - interval '2 days'`);
     const before = await Promise.all(owners.map(rowOf));
     await expect(
-      withTenant(tenantPool, context(), (tx) =>
+      withTenant(db, context(), (tx) =>
         tx.execute(sql`select hostname, challenge_token from app.domains_to_recheck(500)`),
       ),
     ).rejects.toMatchObject(notJob);
     await expect(
-      withTenant(tenantPool, context(), (tx) =>
+      withTenant(db, context(), (tx) =>
         tx.execute(
           sql`select app.record_txt(${live.hostname}::text, ${tokenOf(live)}::text, true)`,
         ),
@@ -362,10 +351,12 @@ describe('the re-check functions', () => {
 
   it('refuse a session without any context', async () => {
     await expect(
-      db.execute(sql`select hostname from app.domains_to_recheck(500)`),
+      noContext.execute(sql`select hostname from app.domains_to_recheck(500)`),
     ).rejects.toMatchObject(notJob);
     await expect(
-      db.execute(sql`select app.record_txt(${live.hostname}::text, ${tokenOf(live)}::text, true)`),
+      noContext.execute(
+        sql`select app.record_txt(${live.hostname}::text, ${tokenOf(live)}::text, true)`,
+      ),
     ).rejects.toMatchObject(notJob);
   });
 });
@@ -497,10 +488,8 @@ describe('the domains table', () => {
   it('keeps a challenge token of 32 random bytes in base64url, and one of 64 characters', async () => {
     for (const value of [randomBytes(32).toString('base64url'), '-_'.repeat(32)]) {
       await setDomain(pending, sql`challenge_token = ${value}`);
-      const {
-        rows: [row],
-      } = await asOwner(pending, (tx) =>
-        tx.execute<{ token: string }>(sql`select challenge_token as token from domains`),
+      const [row] = await asOwner(pending, (tx) =>
+        rows<{ token: string }>(tx)(sql`select challenge_token as token from domains`),
       );
       expect(row.token).toBe(value);
     }
@@ -518,7 +507,7 @@ describe('the domains table', () => {
   it('shows a context without the owner only a live domain, until checked_at + 72 h', async () => {
     await reset();
     const publicView = (owner: Owner) =>
-      withTenant(tenantPool, { kind: 'site', site: owner.subdomain }, (tx) =>
+      withTenant(db, { kind: 'site', site: owner.subdomain }, (tx) =>
         tx.select({ hostname: domains.hostname }).from(domains),
       );
     expect(await publicView(live)).toEqual([{ hostname: live.hostname }]);
@@ -533,19 +522,19 @@ describe('the domains table', () => {
 
   it('lets neither the public context nor the job context write a domain row', async () => {
     await expect(
-      withTenant(tenantPool, { kind: 'site', site: live.subdomain }, (tx) =>
+      withTenant(db, { kind: 'site', site: live.subdomain }, (tx) =>
         tx
           .update(domains)
           .set({ checkedAt: sql`now()` })
           .where(eq(domains.tenantId, live.tenantId)),
       ),
     ).rejects.toMatchObject({ cause: { code: '25006' } });
-    const updated = await withTenant(tenantPool, { kind: 'job' }, (tx) =>
+    const updated = await withTenant(db, { kind: 'job' }, (tx) =>
       tx.update(domains).set({ checkedAt: sql`now()` }).where(eq(domains.tenantId, live.tenantId)),
     );
     expect(updated.rowCount).toBe(0);
     await expect(
-      withTenant(tenantPool, { kind: 'job' }, (tx) =>
+      withTenant(db, { kind: 'job' }, (tx) =>
         tx
           .insert(domains)
           .values({ tenantId: randomUUID(), hostname: 'job.example', challengeToken: token('x') }),
@@ -556,18 +545,14 @@ describe('the domains table', () => {
 
 describe('the domain row version', () => {
   const versionOf = async (owner: Owner) => {
-    const {
-      rows: [row],
-    } = await asOwner(owner, (tx) =>
-      tx.execute<{ version: string }>(sql`select updated_at::text as version from domains`),
+    const [row] = await asOwner(owner, (tx) =>
+      rows<{ version: string }>(tx)(sql`select updated_at::text as version from domains`),
     );
     return row.version;
   };
   const movedSince = async (owner: Owner, version: string) => {
-    const {
-      rows: [row],
-    } = await asOwner(owner, (tx) =>
-      tx.execute<{ moved: boolean }>(
+    const [row] = await asOwner(owner, (tx) =>
+      rows<{ moved: boolean }>(tx)(
         sql`select updated_at > ${version}::timestamptz and updated_at <= clock_timestamp() as moved from domains`,
       ),
     );

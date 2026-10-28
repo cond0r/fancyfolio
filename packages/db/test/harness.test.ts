@@ -7,6 +7,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { setRolePasswords } from '../scripts/roles.ts';
 import { connect } from '../src/client.ts';
+import { rows } from './fixtures.ts';
 import { latestMigration } from './journal.ts';
 import { roleUrl } from './setup.ts';
 
@@ -183,12 +184,10 @@ describe.runIf(inject('db').mode === 'local')('the roles migration', () => {
       await owner.execute(sql`alter role ff_app bypassrls createdb createrole`);
       await owner.execute(sql`alter role ff_resolver login bypassrls createdb createrole`);
       await owner.$client.query(readFileSync(rolesMigration, 'utf8'));
-      const roles = (
-        await owner.execute(sql`
+      const roles = await rows(owner)(sql`
         select rolname, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole from pg_roles
         where rolname in ('ff_app', 'ff_auth', 'ff_resolver') order by rolname
-      `)
-      ).rows;
+      `);
       expect(roles).toEqual(
         ['ff_app', 'ff_auth', 'ff_resolver'].map((rolname) => ({
           rolname,
@@ -243,12 +242,10 @@ describe.runIf(inject('db').mode === 'local')('db:roles', () => {
     try {
       await owner.execute(sql`revoke temporary on database fancyfolio_test from current_user`);
       await setRolePasswords(owner, process.env);
-      const [{ helpers }] = (
-        await owner.execute<{ helpers: number }>(sql`
+      const [{ helpers }] = await rows<{ helpers: number }>(owner)(sql`
         select count(*)::int as helpers from pg_proc
         where proname = 'set_login_password' or pronamespace = pg_my_temp_schema()
-      `)
-      ).rows;
+      `);
       expect(helpers).toBe(0);
     } finally {
       await owner.execute(sql`grant temporary on database fancyfolio_test to current_user`);
@@ -279,12 +276,10 @@ describe.runIf(inject('db').mode === 'local')('db:roles', () => {
       await owner.execute(sql`alter role ff_app nologin`);
       await owner.execute(sql`alter role ff_auth nologin`);
       await setRolePasswords(owner, process.env);
-      const roles = (
-        await owner.execute(sql`
+      const roles = await rows(owner)(sql`
         select rolname, rolcanlogin from pg_roles
         where rolname in ('ff_app', 'ff_auth') order by rolname
-      `)
-      ).rows;
+      `);
       expect(roles).toEqual([
         { rolname: 'ff_app', rolcanlogin: true },
         { rolname: 'ff_auth', rolcanlogin: true },
@@ -335,15 +330,13 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
   afterAll(() => owner.$client.end());
 
   async function state() {
-    const [row] = (
-      await owner.execute(sql`
+    const [row] = await rows(owner)(sql`
       select
         (select oid::int from pg_database where datname = current_database()) as database,
         (select count(*)::int from drizzle.__drizzle_migrations) as migrations,
         (select count(*)::int from public.users) as users,
         (select count(*)::int from public.tenants) as tenants
-    `)
-    ).rows;
+    `);
     return row;
   }
 
@@ -363,12 +356,10 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
         update drizzle.__drizzle_migrations set created_at = created_at - 1
         where id = (select max(id) from drizzle.__drizzle_migrations)
       `);
-      const journal = async () =>
-        (
-          await pending.execute(
-            sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`,
-          )
-        ).rows;
+      const journal = () =>
+        rows(pending)(
+          sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`,
+        );
       const before = await journal();
       const targeted = runDbSuites(
         {
@@ -382,8 +373,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
       expect(targeted.output).toContain('Test Files  1 passed (1)');
       expect(targeted.status).toBe(0);
       expect(await journal()).toEqual(before);
-      const [{ name }] = (await asApp.execute<{ name: string }>(sql`select current_user as name`))
-        .rows;
+      const [{ name }] = await rows<{ name: string }>(asApp)(sql`select current_user as name`);
       expect(name).toBe('ff_app');
     } finally {
       await Promise.all([pending.$client.end(), asApp.$client.end()]);
@@ -394,13 +384,11 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
   it('creates and migrates nothing and leaves no row or role changed on an empty database', {
     timeout: 120_000,
   }, async () => {
-    const roles = async () =>
-      (
-        await owner.execute(sql`
+    const roles = () =>
+      rows(owner)(sql`
       select oid::int, rolname, rolcanlogin, rolbypassrls from pg_catalog.pg_roles
       where left(rolname, 3) = 'ff_' order by rolname
-    `)
-      ).rows;
+    `);
     await owner.execute(sql`drop role if exists ff_bypass_probe`);
     await owner.execute(sql`create role ff_bypass_probe nologin`);
     try {
@@ -455,8 +443,7 @@ describe.runIf(inject('db').mode === 'local')('the target mode', () => {
   );
 
   it("counts the auth rows in public even when the owner's own schema shadows a table", async () => {
-    const [{ name }] = (await owner.execute<{ name: string }>(sql`select current_user as name`))
-      .rows;
+    const [{ name }] = await rows<{ name: string }>(owner)(sql`select current_user as name`);
     try {
       await owner.execute(sql`create schema ${sql.identifier(name)}`);
       await owner.execute(sql`create table ${sql.identifier(name)}.users (id int)`);

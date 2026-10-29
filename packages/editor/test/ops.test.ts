@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { type Doc, docOf } from '../src/core/model.ts';
-import { apply, type Op } from '../src/core/ops.ts';
+import { docOf } from '../src/core/model.ts';
+import { apply } from '../src/core/ops.ts';
+import type { Doc, Op } from '../src/core/types.ts';
 import { docProblems, randomOp, seeded, seeds, snapshot } from './generate.ts';
 
 const start = docOf([

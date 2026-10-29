@@ -1,5 +1,5 @@
-import { type Block, type BlockKind, type Doc, isRaw, isSameKind } from '../src/core/model.ts';
-import type { Op } from '../src/core/ops.ts';
+import { isRaw, isSameKind } from '../src/core/model.ts';
+import type { Block, BlockKind, Doc, Op } from '../src/core/types.ts';
 
 export type Random = { int(below: number): number; pick<T>(items: readonly T[]): T };
 

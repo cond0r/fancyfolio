@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { emptyHistory, record, redo, undo } from '../src/core/history.ts';
-import type { Block } from '../src/core/model.ts';
-import { apply, type Op } from '../src/core/ops.ts';
-import { createEditor, type Editor } from '../src/core/store.ts';
+import { apply } from '../src/core/ops.ts';
+import { createEditor } from '../src/core/store.ts';
+import type { Block, Editor, Op } from '../src/core/types.ts';
 import { counter, docProblems, randomOp, seeded, seeds, snapshot } from './generate.ts';
 
 function editorAt(markdown: string, clock = { now: 0 }): Editor {

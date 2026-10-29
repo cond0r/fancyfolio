@@ -1,4 +1,17 @@
 import * as editor from '@fancyfolio/editor';
+import type {
+  Block,
+  BlockId,
+  BlockKind,
+  DialectFallback,
+  Doc,
+  Editor,
+  EditorOptions,
+  HeadingLevel,
+  Op,
+  SaveResult,
+  Source,
+} from '@fancyfolio/editor/types';
 import { describe, expect, it } from 'vitest';
 import { counter } from './generate.ts';
 
@@ -17,5 +30,23 @@ describe('the package root', () => {
       ok: true,
       markdown: 'ab\n',
     });
+  });
+
+  it('exports the public types from ./types and no value', async () => {
+    expect(Object.keys(await import('@fancyfolio/editor/types'))).toEqual([]);
+    const exported: [
+      Block?,
+      BlockId?,
+      BlockKind?,
+      DialectFallback?,
+      Doc?,
+      Editor?,
+      EditorOptions?,
+      HeadingLevel?,
+      Op?,
+      SaveResult?,
+      Source?,
+    ] = [];
+    expect(exported).toEqual([]);
   });
 });

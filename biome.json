@@ -476,7 +476,8 @@
                       "!micromark-extension-gfm-task-list-item",
                       "!remark-parse",
                       "!remark-stringify",
-                      "!unified"
+                      "!unified",
+                      "!./types.ts"
                     ],
                     "message": "The dialect imports only its own parser and serializer packages."
                   }

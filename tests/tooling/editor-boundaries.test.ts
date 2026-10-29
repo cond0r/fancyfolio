@@ -1,7 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { transformWithOxc } from 'vite';
 import { afterAll, describe, expect, it } from 'vitest';
 
 const root = join(import.meta.dirname, '..', '..');
@@ -89,7 +98,7 @@ describe(`${dialectModule} imports no React, Jotai, DOM or workspace module`, ()
   it('passes the parser packages it needs', () => {
     const result = lintAt(
       dialectModule,
-      "import type { Root } from 'mdast';\nimport { directiveFromMarkdown } from 'mdast-util-directive';\nimport { gfmFootnoteFromMarkdown } from 'mdast-util-gfm-footnote';\nimport { gfmStrikethroughFromMarkdown } from 'mdast-util-gfm-strikethrough';\nimport { gfmTableFromMarkdown } from 'mdast-util-gfm-table';\nimport { gfmTaskListItemFromMarkdown } from 'mdast-util-gfm-task-list-item';\nimport { directive } from 'micromark-extension-directive';\nimport { gfmFootnote } from 'micromark-extension-gfm-footnote';\nimport { gfmStrikethrough } from 'micromark-extension-gfm-strikethrough';\nimport { gfmTable } from 'micromark-extension-gfm-table';\nimport { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';\nimport remarkParse from 'remark-parse';\nimport remarkStringify from 'remark-stringify';\nimport { unified } from 'unified';\n\nexport const used: unknown[] = [directiveFromMarkdown, gfmFootnoteFromMarkdown, gfmStrikethroughFromMarkdown, gfmTableFromMarkdown, gfmTaskListItemFromMarkdown, directive, gfmFootnote, gfmStrikethrough, gfmTable, gfmTaskListItem, remarkParse, remarkStringify, unified];\nexport type Tree = Root;\n",
+      "import type { Root } from 'mdast';\nimport { directiveFromMarkdown } from 'mdast-util-directive';\nimport { gfmFootnoteFromMarkdown } from 'mdast-util-gfm-footnote';\nimport { gfmStrikethroughFromMarkdown } from 'mdast-util-gfm-strikethrough';\nimport { gfmTableFromMarkdown } from 'mdast-util-gfm-table';\nimport { gfmTaskListItemFromMarkdown } from 'mdast-util-gfm-task-list-item';\nimport { directive } from 'micromark-extension-directive';\nimport { gfmFootnote } from 'micromark-extension-gfm-footnote';\nimport { gfmStrikethrough } from 'micromark-extension-gfm-strikethrough';\nimport { gfmTable } from 'micromark-extension-gfm-table';\nimport { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';\nimport remarkParse from 'remark-parse';\nimport remarkStringify from 'remark-stringify';\nimport { unified } from 'unified';\nimport type { DialectFallback } from './types.ts';\n\nexport const used: unknown[] = [directiveFromMarkdown, gfmFootnoteFromMarkdown, gfmStrikethroughFromMarkdown, gfmTableFromMarkdown, gfmTaskListItemFromMarkdown, directive, gfmFootnote, gfmStrikethrough, gfmTable, gfmTaskListItem, remarkParse, remarkStringify, unified];\nexport type Tree = Root | DialectFallback;\n",
     );
     expect(result.output).not.toContain('lint/');
     expect(result.status).toBe(0);
@@ -296,7 +305,10 @@ describe('packages/editor/src/core imports no React, DOM, Next or workspace pack
 
 describe('packages/editor has no import cycle', () => {
   it.each([
-    ['a value import', "import { history } from './history.ts';\n\nexport const ops = () => history;\n"],
+    [
+      'a value import',
+      "import { history } from './history.ts';\n\nexport const ops = () => history;\n",
+    ],
     [
       'a type-only import',
       "import type { History } from './history.ts';\n\nexport const ops = (value: History) => value;\n",
@@ -308,6 +320,57 @@ describe('packages/editor has no import cycle', () => {
     });
     expect(result.output).toContain('lint/suspicious/noImportCycles');
     expect(result.status).not.toBe(0);
+  });
+});
+
+const typeDeclaration =
+  /^(?:export\s+)?(?:declare|type|interface|enum|namespace)\s|^export\s*\*|^export\s*\{[^}]*\btype\s/m;
+
+async function typeFileProblem(path: string, source: string): Promise<string | undefined> {
+  if (basename(path) === 'types.ts') {
+    const { code } = await transformWithOxc(source, path);
+    return code.trim() === 'export {};' ? undefined : `${path} holds a value`;
+  }
+  return typeDeclaration.test(source) ? `${path} declares or re-exports a type` : undefined;
+}
+
+describe('packages/editor declares types only in types.ts files', () => {
+  it.each([
+    ['a types.ts holding a constant', 'core/types.ts', 'export const level = 1;\n'],
+    ['a types.ts re-exporting a value', 'core/types.ts', "export { load } from './markdown.ts';\n"],
+    ['a code file exporting a type alias', 'core/ops.ts', "export type Op = { type: 'a' };\n"],
+    [
+      'a code file declaring a local type',
+      'core/ops.ts',
+      'type Local = 1;\n\nexport const one: Local = 1;\n',
+    ],
+    ['a code file declaring an interface', 'core/ops.ts', 'interface Local {\n  one: 1;\n}\n'],
+    ['an index re-exporting a type', 'index.ts', "export type { Op } from './core/types.ts';\n"],
+    [
+      'an index re-exporting a type among values',
+      'index.ts',
+      "export {\n  apply,\n  type Op,\n} from './core/ops.ts';\n",
+    ],
+    ['an index re-exporting a whole module', 'index.ts', "export * from './core/ops.ts';\n"],
+    [
+      'a module augmentation outside types.ts',
+      'dialect.ts',
+      "declare module 'mdast' {\n  interface CodeData {\n    flag?: true;\n  }\n}\n",
+    ],
+  ])('refuses %s', async (_name, path, source) => {
+    expect(await typeFileProblem(path, source)).toBeDefined();
+  });
+
+  it('holds for every source file of the editor package', async () => {
+    const sources = join(root, 'packages', 'editor', 'src');
+    const files = readdirSync(sources, { recursive: true, encoding: 'utf8' }).filter((file) =>
+      /\.tsx?$/.test(file),
+    );
+    expect(files).toContain('index.ts');
+    const problems = await Promise.all(
+      files.map((file) => typeFileProblem(file, readFileSync(join(sources, file), 'utf8'))),
+    );
+    expect(problems.filter((problem) => problem !== undefined)).toEqual([]);
   });
 });
 

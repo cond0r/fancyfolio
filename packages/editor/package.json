@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./dialect": "./src/dialect.ts"
+    "./dialect": "./src/dialect.ts",
+    "./types": "./src/types.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."

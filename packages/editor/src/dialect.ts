@@ -22,23 +22,8 @@ import { gfmTable } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
-import { type Data, type Processor, type Transformer, unified } from 'unified';
-
-export type DialectFallback = 'column' | 'images' | 'depth' | 'directives' | 'cells' | 'references';
-
-declare module 'mdast' {
-  interface CodeData {
-    dialectFallback?: DialectFallback;
-  }
-}
-
-type MicromarkExtension = NonNullable<Data['micromarkExtensions']>[number];
-type Construct = Exclude<
-  NonNullable<NonNullable<MicromarkExtension['document']>[string]>,
-  unknown[]
->;
-
-type State = ReturnType<Construct['tokenize']>;
+import { type Processor, type Transformer, unified } from 'unified';
+import type { Construct, DialectFallback, State } from './types.ts';
 
 const maxDepth = 100;
 const maxColumn = 100;

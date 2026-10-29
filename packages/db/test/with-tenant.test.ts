@@ -425,6 +425,29 @@ describe('withTenant', () => {
       expect(await late).toEqual({ error: new Error('transaction is closed'), settled: false });
       expect(statements).toHaveLength(sent);
     });
+
+    it('rejects a builder made inside fn and awaited while the next caller holds the connection', async () => {
+      const single: TenantPool = { pool: connect(appUrl, { max: 1 }) };
+      try {
+        const kept = await withTenant(
+          single,
+          { kind: 'user', userId: owner.userId },
+          async (tx) => ({ builder: tx.select().from(experiences) }),
+        );
+        const seen = await withTenant(
+          single,
+          { kind: 'user', userId: other.userId },
+          async (tx) => ({
+            kept: await outcomeOf(() => kept.builder),
+            context: await context(tx),
+          }),
+        );
+        expect(seen.kept).toHaveProperty('cause', new Error('transaction is closed'));
+        expect(seen.context).toEqual({ tenant: other.tenantId, user: other.userId, owner: true });
+      } finally {
+        await single.pool.end();
+      }
+    });
   });
 
   it('gives app code a handle whose only member is withTenant', async () => {

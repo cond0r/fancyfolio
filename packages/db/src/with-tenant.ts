@@ -71,7 +71,17 @@ async function transaction<T>(
   client.on('error', onError);
   const run = async () => {
     await client.query('begin');
-    const db = drizzle({ client, logger });
+    const guarded = new Proxy(client, {
+      get: (target, key) => {
+        const value: unknown = Reflect.get(target, key, target);
+        if (key !== 'query' || typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          if (!open) throw new Error('transaction is closed');
+          return Reflect.apply(value, target, args);
+        };
+      },
+    });
+    const db = drizzle({ client: guarded, logger });
     if (setTransaction !== null) await db.execute(setTransaction);
     const result = await work(db, () => open).finally(() => {
       open = false;

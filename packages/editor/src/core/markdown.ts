@@ -1,23 +1,18 @@
 import type { Heading, Nodes, Paragraph, Root, RootContent, Text } from 'mdast';
 import { parseMarkdown, stringifyMarkdown } from '../dialect.ts';
-import {
-  type Block,
-  type BlockId,
-  type BlockKind,
-  type Doc,
-  docOf,
-  type HeadingLevel,
-  isCanonicalText,
-  isSameKind,
-  type Source,
-} from './model.ts';
-
-export type SaveResult =
-  | { readonly ok: true; readonly markdown: string }
-  | { readonly ok: false; readonly reason: 'misread'; readonly blockId: BlockId }
-  | { readonly ok: false; readonly reason: 'guard' };
-
-type Read = (BlockKind & { readonly text: string }) | null;
+import { docOf, isCanonicalText, isSameKind } from './model.ts';
+import type {
+  Block,
+  BlockId,
+  BlockKind,
+  Doc,
+  HeadingLevel,
+  Part,
+  Read,
+  SaveResult,
+  Source,
+  Verdict,
+} from './types.ts';
 
 const reads = new WeakMap<Source, Read>();
 const rawTypes = new WeakMap<Block, readonly string[]>();
@@ -153,17 +148,6 @@ function canonical(block: Block): string {
   canonicals.set(block, chosen);
   return chosen;
 }
-
-type Part = {
-  readonly block: Block;
-  readonly gap: string;
-  readonly markdown: string;
-  readonly verbatim: boolean;
-};
-
-type Verdict =
-  | SaveResult
-  | { readonly ok: false; readonly reason: 'unread'; readonly ids: ReadonlySet<BlockId> };
 
 function parsedAlone(markdown: string): Root {
   // the parser drops a BOM only at the start of the body, where save never writes one

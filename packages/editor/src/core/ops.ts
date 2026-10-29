@@ -1,45 +1,5 @@
-import {
-  type Block,
-  type BlockId,
-  type BlockKind,
-  type Doc,
-  type DocView,
-  type HeadingLevel,
-  isCanonicalText,
-  isRaw,
-  isSameKind,
-  kindOf,
-  withKind,
-} from './model.ts';
-
-export type Op =
-  | {
-      readonly type: 'insertText';
-      readonly id: BlockId;
-      readonly offset: number;
-      readonly text: string;
-    }
-  | {
-      readonly type: 'deleteText';
-      readonly id: BlockId;
-      readonly from: number;
-      readonly to: number;
-    }
-  | {
-      readonly type: 'splitBlock';
-      readonly id: BlockId;
-      readonly offset: number;
-      readonly newId: BlockId;
-      readonly kind: BlockKind;
-    }
-  | { readonly type: 'mergeBlocks'; readonly id: BlockId }
-  | { readonly type: 'setType'; readonly id: BlockId; readonly kind: BlockKind };
-
-export type Change = {
-  readonly put: readonly Block[];
-  readonly ids?: readonly BlockId[];
-  readonly drop: readonly BlockId[];
-};
+import { isCanonicalText, isRaw, isSameKind, kindOf, withKind } from './model.ts';
+import type { Block, BlockId, BlockKind, Change, Doc, DocView, HeadingLevel, Op } from './types.ts';
 
 function refuse(op: Op, reason: string): never {
   throw new RangeError(`${op.type} refused: ${reason}`);

@@ -1,24 +1,9 @@
-import { type Atom, atom, createStore, type PrimitiveAtom, type Store } from 'jotai/vanilla';
+import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
 import { emptyHistory, record, redo, undo } from './history.ts';
-import { load, type SaveResult, save } from './markdown.ts';
-import { type Block, type BlockId, type Doc, type DocView, docOf } from './model.ts';
-import { type Op, plan } from './ops.ts';
-
-export type Editor = {
-  readonly store: Store;
-  readonly ids: Atom<readonly BlockId[]>;
-  readonly blocks: ReadonlyMap<BlockId, Atom<Block>>;
-  dispatch(op: Op): void;
-  undo(): boolean;
-  redo(): boolean;
-  doc(): Doc;
-  markdown(): SaveResult;
-};
-
-export type EditorOptions = {
-  readonly now: () => number;
-  readonly newId: () => BlockId;
-};
+import { load, save } from './markdown.ts';
+import { docOf } from './model.ts';
+import { plan } from './ops.ts';
+import type { Block, BlockId, Doc, DocView, Editor, EditorOptions, Op } from './types.ts';
 
 export function createEditor(markdown: string, options: EditorOptions): Editor {
   const store = createStore();

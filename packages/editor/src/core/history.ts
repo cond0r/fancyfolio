@@ -1,19 +1,4 @@
-import type { Op } from './ops.ts';
-
-export type Step = {
-  readonly op: Op;
-  readonly inverse: Op;
-  readonly started: number;
-  readonly at: number;
-};
-
-export type History = {
-  readonly done: readonly Step[];
-  readonly undone: readonly Step[];
-  readonly sealed: boolean;
-};
-
-export type Travel = { readonly history: History; readonly op: Op; readonly inverse: Op };
+import type { History, Op, Step, Travel } from './types.ts';
 
 export const emptyHistory: History = { done: [], undone: [], sealed: true };
 

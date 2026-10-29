@@ -5,8 +5,9 @@ import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
 import { describe, expect, it } from 'vitest';
 import { load, save } from '../src/core/markdown.ts';
-import { type Block, type Doc, docOf } from '../src/core/model.ts';
-import { apply, type Op } from '../src/core/ops.ts';
+import { docOf } from '../src/core/model.ts';
+import { apply } from '../src/core/ops.ts';
+import type { Block, Doc, Op } from '../src/core/types.ts';
 import { parseMarkdown, remarkDialect, remarkDirectiveAllowlist } from '../src/dialect.ts';
 import {
   counter,

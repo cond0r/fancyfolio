@@ -16,6 +16,12 @@
   },
   "linter": {
     "rules": {
+      "suspicious": {
+        "noImportCycles": {
+          "level": "error",
+          "options": { "ignoreTypes": false }
+        }
+      },
       "style": {
         "noRestrictedImports": {
           "level": "error",
@@ -43,6 +49,16 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["**", "!packages/editor/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noImportCycles": "off"
+          }
+        }
+      }
+    },
     {
       "includes": ["apps/web/**"],
       "linter": {

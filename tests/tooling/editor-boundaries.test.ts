@@ -11,12 +11,14 @@ afterAll(() => {
   for (const dir of tempTrees) rmSync(dir, { recursive: true, force: true });
 });
 
-function lintAt(path: string, source: string) {
+function lintAt(path: string, source: string, neighbours: Record<string, string> = {}) {
   const tree = mkdtempSync(join(tmpdir(), 'ff-lint-'));
   tempTrees.push(tree);
   copyFileSync(join(root, 'biome.json'), join(tree, 'biome.json'));
-  mkdirSync(dirname(join(tree, path)), { recursive: true });
-  writeFileSync(join(tree, path), source);
+  for (const [file, text] of Object.entries({ ...neighbours, [path]: source })) {
+    mkdirSync(dirname(join(tree, file)), { recursive: true });
+    writeFileSync(join(tree, file), text);
+  }
   const result = spawnSync(
     join(root, 'node_modules', '.bin', 'biome'),
     ['lint', '--colors=off', '--vcs-use-ignore-file=false', path],
@@ -288,6 +290,23 @@ describe('packages/editor/src/core imports no React, DOM, Next or workspace pack
   ])('refuses the expression %s', (expression) => {
     const result = lintAt(module, `export const value = ${expression};\n`);
     expect(result.output).toContain('lint/style/noRestrictedGlobals');
+    expect(result.status).not.toBe(0);
+  });
+});
+
+describe('packages/editor has no import cycle', () => {
+  it.each([
+    ['a value import', "import { history } from './history.ts';\n\nexport const ops = () => history;\n"],
+    [
+      'a type-only import',
+      "import type { History } from './history.ts';\n\nexport const ops = (value: History) => value;\n",
+    ],
+  ])('refuses a core module that imports back through %s', (_name, source) => {
+    const result = lintAt('packages/editor/src/core/ops.ts', source, {
+      'packages/editor/src/core/history.ts':
+        "import { ops } from './ops.ts';\n\nexport type History = number;\nexport const history = () => ops;\n",
+    });
+    expect(result.output).toContain('lint/suspicious/noImportCycles');
     expect(result.status).not.toBe(0);
   });
 });

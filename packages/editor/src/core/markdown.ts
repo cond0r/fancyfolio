@@ -1,12 +1,12 @@
-import type { Heading, Nodes, Paragraph, Root, RootContent, Text } from 'mdast';
+import type { Nodes, Root, RootContent } from 'mdast';
 import { parseMarkdown, stringifyMarkdown } from '../dialect.ts';
-import { docOf, escapedLines, isCanonicalText, isSameKind, textOf } from './model.ts';
+import { docOf, isCanonicalText, isRaw, sameJson } from './model.ts';
+import { builtins, fieldsFor, propsFor } from './registry.ts';
 import type {
+  AnyComponent,
   Block,
   BlockId,
-  BlockKind,
   Doc,
-  HeadingLevel,
   Part,
   Read,
   SaveResult,
@@ -18,13 +18,32 @@ const reads = new WeakMap<Source, Read>();
 const rawTypes = new WeakMap<Block, readonly string[]>();
 const canonicals = new WeakMap<Block, string>();
 
-function modelled(node: RootContent | undefined): (BlockKind & { text: string }) | undefined {
-  if (node?.type !== 'paragraph' && node?.type !== 'heading') return undefined;
-  const text = textOf(node);
-  if (text === undefined || !isCanonicalText(text)) return undefined;
-  return node.type === 'heading'
-    ? { type: 'heading', level: node.depth as HeadingLevel, text }
-    : { type: 'paragraph', text };
+function matchOf(node: RootContent): string {
+  return node.type === 'leafDirective' || node.type === 'containerDirective'
+    ? `${node.type}:${node.name}`
+    : node.type;
+}
+
+function modelled(node: RootContent | undefined): Exclude<Read, null> | undefined {
+  if (node === undefined) return undefined;
+  const component = builtins.matches.get(matchOf(node));
+  const read = component?.markdown.read(node);
+  if (component === undefined || read === undefined) return undefined;
+  const props = propsFor(component, read.props);
+  const fields = fieldsFor(component, read.fields);
+  return props === undefined || fields === undefined
+    ? undefined
+    : { type: component.name, props, fields };
+}
+
+function rawBlock(id: BlockId, text: string): Block {
+  return { id, type: 'raw', props: {}, fields: { text } };
+}
+
+function codecOf(block: Block): AnyComponent['markdown'] {
+  const codec = builtins.components.get(block.type)?.markdown;
+  if (codec === undefined) throw new Error(`block type ${block.type} has no markdown codec`);
+  return codec;
 }
 
 function span(node: Nodes): { start: number; end: number } {
@@ -59,7 +78,7 @@ export function load(markdown: string, newId: () => BlockId): Doc {
   const body = lf.replace(/^\uFEFF/, '');
   const tree = parseMarkdown(lf);
   if (isGuarded(tree)) {
-    const block: Block = { id: nextId(), type: 'raw', text: body };
+    const block = rawBlock(nextId(), body);
     const source: Source = { markdown: body, afterId: null, gap: '', trailing: '' };
     return docOf([block], new Map([[block.id, source]]));
   }
@@ -71,7 +90,7 @@ export function load(markdown: string, newId: () => BlockId): Doc {
     const lineStart = Math.max(end, body.lastIndexOf('\n', at.start - 1) + 1);
     const slice = body.slice(lineStart, at.end);
     const read = modelled(node);
-    const block: Block = { ...(read ?? { type: 'raw', text: slice }), id: nextId() };
+    const block: Block = read === undefined ? rawBlock(nextId(), slice) : { ...read, id: nextId() };
     const source: Source = {
       markdown: slice,
       afterId: blocks.at(-1)?.id ?? null,
@@ -84,50 +103,41 @@ export function load(markdown: string, newId: () => BlockId): Doc {
     sources.set(block.id, source);
     end = at.end;
   }
-  if (blocks.length === 0) return docOf([{ id: nextId(), type: 'paragraph', text: '' }]);
+  if (blocks.length === 0) {
+    return docOf([{ id: nextId(), type: 'paragraph', props: {}, fields: { text: '' } }]);
+  }
   return docOf(blocks, sources);
 }
 
 function written(block: Block): string {
-  const children: Text[] = block.text === '' ? [] : [{ type: 'text', value: block.text }];
-  const node: Paragraph | Heading =
-    block.type === 'heading'
-      ? { type: 'heading', depth: block.level, children }
-      : { type: 'paragraph', children };
+  const node = codecOf(block).write(block);
   return stringifyMarkdown({ type: 'root', children: [node] })
     .replace(/\n$/, '')
     .replace(/(?<=::):/g, '\\:');
 }
 
 function matches(read: Read | undefined, block: Block): boolean {
-  return read != null && isSameKind(read, block) && read.text === block.text;
+  return (
+    read != null &&
+    read.type === block.type &&
+    sameJson(read.props, block.props) &&
+    sameJson(read.fields, block.fields)
+  );
 }
 
 function readsBack(block: Block, nodes: readonly RootContent[]): boolean {
   return matches(nodes.length === 1 ? modelled(nodes[0]) : undefined, block);
 }
 
-function escaped(block: Block): string {
-  const lines = escapedLines(block.text);
-  if (block.type === 'heading') {
-    const text = lines.join('&#10;');
-    return `${'#'.repeat(block.level)}${text === '' ? '' : ` ${text}`}`;
-  }
-  return lines.reduce((joined, line, index) => {
-    const blank = line === '' || lines[index - 1] === '';
-    return index === 0 ? line : `${joined}${blank ? '&#10;' : '\n'}${line}`;
-  }, '');
-}
-
 function canonical(block: Block): string {
-  if (block.type === 'raw') return block.text;
+  if (isRaw(block.type)) return block.fields.text;
   const cached = canonicals.get(block);
   if (cached !== undefined) return cached;
   const markdown = written(block);
   const chosen =
     markdown === '' || readsBack(block, parseMarkdown(markdown).children)
       ? markdown
-      : escaped(block);
+      : (codecOf(block).escaped?.(block) ?? markdown);
   canonicals.set(block, chosen);
   return chosen;
 }
@@ -149,7 +159,7 @@ function sourceRead(source: Source): Read {
 function typesAlone(block: Block): readonly string[] {
   const known = rawTypes.get(block);
   if (known !== undefined) return known;
-  const types = parsedAlone(block.text).children.map((node) => node.type);
+  const types = parsedAlone(block.fields.text).children.map((node) => node.type);
   rawTypes.set(block, types);
   return types;
 }
@@ -159,9 +169,11 @@ function writing(
   source: Source | undefined,
   escaping: boolean,
 ): { markdown: string; verbatim: boolean } {
-  if (block.type === 'raw')
-    return { markdown: block.text, verbatim: block.text === source?.markdown };
-  if (escaping) return { markdown: escaped(block), verbatim: false };
+  if (isRaw(block.type)) {
+    return { markdown: block.fields.text, verbatim: block.fields.text === source?.markdown };
+  }
+  const escaped = escaping ? codecOf(block).escaped?.(block) : undefined;
+  if (escaped !== undefined) return { markdown: escaped, verbatim: false };
   if (source !== undefined && matches(sourceRead(source), block)) {
     return { markdown: source.markdown, verbatim: true };
   }
@@ -197,7 +209,6 @@ function layout(doc: Doc, escaping: ReadonlySet<BlockId>): { parts: Part[]; exac
   }
   return { parts, exact };
 }
-
 function joined(parts: readonly Part[], trailing: string | undefined): string {
   const body = parts.map((part) => part.gap + part.markdown).join('');
   if (trailing !== undefined) return body + trailing;
@@ -236,7 +247,7 @@ function verdict(parts: readonly Part[], trailing: string | undefined): Verdict 
   const tree = parseMarkdown(markdown);
   if (isGuarded(tree)) {
     const [only] = parts;
-    return parts.length === 1 && only?.block.type === 'raw'
+    return parts.length === 1 && only !== undefined && isRaw(only.block.type)
       ? { ok: true, markdown }
       : { ok: false, reason: 'guard' };
   }
@@ -245,7 +256,7 @@ function verdict(parts: readonly Part[], trailing: string | undefined): Verdict 
   const unread = new Set<BlockId>();
   for (const [index, { block }] of parts.entries()) {
     const nodes = found[index];
-    if (block.type !== 'raw') {
+    if (!isRaw(block.type)) {
       if (!readsBack(block, nodes)) unread.add(block.id);
       continue;
     }

@@ -40,6 +40,12 @@ function mdast(markdown: string): Root {
   );
 }
 
+const raw = (text: string) => ({ type: 'raw', props: {}, fields: { text } });
+
+const paragraph = { type: 'paragraph', props: {} };
+
+const para = (text: string) => ({ ...paragraph, fields: { text } });
+
 function shape(blocks: readonly Block[]) {
   return blocks.map(({ id: _id, ...rest }) => rest);
 }
@@ -145,16 +151,16 @@ describe('markdown in and out', () => {
 
   it.each(unmodelled)('loads %s as one raw block holding its source', (_name, body) => {
     const blocks = snapshot(loaded(body));
-    const raw = blocks.filter((block) => block.type === 'raw').map((block) => block.text);
-    expect(raw.join('\n\n')).toBe(body);
+    const texts = blocks.filter((block) => block.type === 'raw').map((block) => block.fields.text);
+    expect(texts.join('\n\n')).toBe(body);
     expect(output(loaded(body))).toBe(body);
   });
 
   it('models a plain paragraph and a heading as text', () => {
     expect(shape(snapshot(loaded('# A *b*?\n\nPlain 10:30 \\* text\n## x')))).toEqual([
-      { type: 'raw', text: '# A *b*?' },
-      { type: 'paragraph', text: 'Plain 10:30 * text' },
-      { type: 'heading', level: 2, text: 'x' },
+      raw('# A *b*?'),
+      para('Plain 10:30 * text'),
+      { type: 'heading', props: { level: 2 }, fields: { text: 'x' } },
     ]);
   });
 
@@ -165,21 +171,21 @@ describe('markdown in and out', () => {
     ['a typed star', '*not emphasis*', '\\*not emphasis\\*\n'],
     ['a typed heading marker', '# not a heading', '\\# not a heading\n'],
   ])('saves %s as text that reads back the same', (_name, text, saved) => {
-    const doc = docOf([{ id: 'p', type: 'paragraph', text }]);
+    const doc = docOf([{ id: 'p', ...para(text) }]);
     expect(output(doc)).toBe(saved);
-    expect(shape(snapshot(loaded(saved)))).toEqual([{ type: 'paragraph', text }]);
+    expect(shape(snapshot(loaded(saved)))).toEqual([para(text)]);
   });
 
   it('writes nothing for empty paragraphs and one empty paragraph for an empty body', () => {
     const doc = docOf([
-      { id: 'a', type: 'paragraph', text: '' },
-      { id: 'b', type: 'paragraph', text: 'x' },
-      { id: 'c', type: 'raw', text: '' },
-      { id: 'd', type: 'paragraph', text: '' },
+      { id: 'a', ...para('') },
+      { id: 'b', ...para('x') },
+      { id: 'c', ...raw('') },
+      { id: 'd', ...para('') },
     ]);
     expect(output(doc)).toBe('x\n');
-    expect(output(docOf([{ id: 'a', type: 'paragraph', text: '' }]))).toBe('');
-    expect(shape(snapshot(loaded('')))).toEqual([{ type: 'paragraph', text: '' }]);
+    expect(output(docOf([{ id: 'a', ...para('') }]))).toBe('');
+    expect(shape(snapshot(loaded('')))).toEqual([para('')]);
   });
 
   it('gives every loaded block its own id', () => {
@@ -206,7 +212,7 @@ describe('markdown in and out', () => {
 
   it('loads a guarded body as one raw block holding the whole source', () => {
     const body = `${'- '.repeat(51)}x\n\nmore`;
-    expect(shape(snapshot(loaded(body)))).toEqual([{ type: 'raw', text: body }]);
+    expect(shape(snapshot(loaded(body)))).toEqual([raw(body)]);
     expect(roundTrip(body)).toBe(body);
   });
 });
@@ -220,7 +226,7 @@ describe('text blocks read back exactly', () => {
     ['a backslash and a hash on two lines', '\\\n\\\n\n#'],
   ])('writes %s so it reads back as typed', (_name, text) => {
     for (const kind of kinds.filter((each) => each.type !== 'raw')) {
-      const doc = docOf([{ ...kind, id: 'p', text }]);
+      const doc = docOf([{ ...kind, id: 'p', fields: { text } }]);
       const saved = output(doc);
       expect(shape(snapshot(loaded(saved))), JSON.stringify(kind)).toEqual(shape(snapshot(doc)));
     }
@@ -231,7 +237,7 @@ describe('text blocks read back exactly', () => {
     for (let run = 0; run < 100; run += 1) {
       const kind = random.pick(kinds.filter((each) => each.type !== 'raw'));
       const text = randomText(random, 8);
-      const doc = docOf([{ ...kind, id: 'p', text }]);
+      const doc = docOf([{ ...kind, id: 'p', fields: { text } }]);
       const where = `seed ${seed} run ${run} ${JSON.stringify({ kind, text })}`;
       expect(shape(snapshot(loaded(output(doc)))), where).toEqual(shape(snapshot(doc)));
     }
@@ -341,8 +347,9 @@ function liveCounts(node: Nodes, counts = new Map<string, number>()): Map<string
 
 function typesOf(doc: Doc): string[] {
   return snapshot(doc).flatMap((block) => {
-    if (block.type === 'raw') return parseMarkdown(block.text).children.map((node) => node.type);
-    return block.type === 'paragraph' && block.text === '' ? [] : [block.type];
+    const { text } = block.fields;
+    if (block.type === 'raw') return parseMarkdown(text).children.map((node) => node.type);
+    return block.type === 'paragraph' && text === '' ? [] : [block.type];
   });
 }
 
@@ -355,7 +362,7 @@ function expectReadsAs(markdown: string, doc: Doc, where: string) {
   expect(keptInOrder(textOnly(loaded(markdown)), textOnly(doc)), where).toEqual(textOnly(doc));
   const model = new Map<string, number>();
   for (const block of snapshot(doc).filter((each) => each.type === 'raw')) {
-    liveCounts(parseMarkdown(block.text), model);
+    liveCounts(parseMarkdown(block.fields.text), model);
   }
   for (const [type, count] of liveCounts(tree)) {
     expect(count, `${where} ${type}`).toBeLessThanOrEqual(model.get(type) ?? 0);
@@ -365,7 +372,7 @@ function expectReadsAs(markdown: string, doc: Doc, where: string) {
 function textOnly(doc: Doc) {
   return shape(
     snapshot(doc).filter(
-      (block) => block.type !== 'raw' && (block.type !== 'paragraph' || block.text !== ''),
+      (block) => block.type !== 'raw' && (block.type !== 'paragraph' || block.fields.text !== ''),
     ),
   );
 }
@@ -427,17 +434,15 @@ describe('a load and save with no edit gives the body back', () => {
 
   it('reads a second BOM as text, as the renderer does', () => {
     const body = `${bom}${bom}# T\n`;
-    expect(shape(snapshot(loaded(body)))).toEqual([{ type: 'paragraph', text: `${bom}# T` }]);
+    expect(shape(snapshot(loaded(body)))).toEqual([para(`${bom}# T`)]);
     expect(render(output(loaded(body)))).toBe(render(body));
   });
 
   it('loads a character reference that decodes to a carriage return as raw source', () => {
     const doc = loaded('a&#13;b\n');
-    expect(shape(snapshot(doc))).toEqual([{ type: 'raw', text: 'a&#13;b' }]);
+    expect(shape(snapshot(doc))).toEqual([raw('a&#13;b')]);
     const id = doc.ids[0] as string;
-    expect(output(apply(doc, { type: 'insertText', id, offset: 0, text: 'x' }).doc)).toBe(
-      'xa&#13;b\n',
-    );
+    expect(output(apply(doc, typed(id, 0, 'x')).doc)).toBe('xa&#13;b\n');
   });
 
   it.each(seeds)('for random bodies (seed %i)', (seed) => {
@@ -449,31 +454,35 @@ describe('a load and save with no edit gives the body back', () => {
   });
 });
 
+function typed(blockId: string, offset: number, text: string): Op {
+  return { kind: 'insertText', blockId, field: 'text', offset, text };
+}
+
 function typedAfter(body: string, text: string) {
   const doc = loaded(body);
   const last = doc.ids.at(-1) as string;
-  const end = doc.blocks.get(last)?.text.length ?? 0;
+  const end = doc.blocks.get(last)?.fields.text.length ?? 0;
   const split = apply(doc, {
-    type: 'splitBlock',
-    id: last,
+    kind: 'splitBlock',
+    blockId: last,
+    field: 'text',
     offset: end,
     newId: 'typed',
-    kind: { type: 'paragraph' },
+    ...paragraph,
   }).doc;
-  return apply(split, { type: 'insertText', id: 'typed', offset: 0, text }).doc;
+  return apply(split, typed('typed', 0, text)).doc;
 }
 
 function emptied(body: string, index: number): Doc {
   const doc = loaded(body);
   const id = doc.ids[index] as string;
-  const to = doc.blocks.get(id)?.text.length ?? 0;
-  return apply(doc, { type: 'deleteText', id, from: 0, to }).doc;
+  const to = doc.blocks.get(id)?.fields.text.length ?? 0;
+  return apply(doc, { kind: 'deleteText', blockId: id, field: 'text', from: 0, to }).doc;
 }
 
 function indented(body: string, index: number): Doc {
   const doc = loaded(body);
-  return apply(doc, { type: 'insertText', id: doc.ids[index] as string, offset: 0, text: '  ' })
-    .doc;
+  return apply(doc, typed(doc.ids[index] as string, 0, '  ')).doc;
 }
 
 describe('an edit changes only the block it touches', () => {
@@ -500,8 +509,8 @@ describe('an edit changes only the block it touches', () => {
     [
       'a list item emptied below indented code',
       docOf([
-        { id: 'code', type: 'raw', text: '    code' },
-        { id: 'item', type: 'raw', text: '-' },
+        { id: 'code', ...raw('    code') },
+        { id: 'item', ...raw('-') },
       ]),
     ],
   ])('refuses or keeps every block after %s', (name, doc) => {
@@ -522,7 +531,8 @@ describe('an edit changes only the block it touches', () => {
     ],
   ])('saves a body once %s is deleted', (name, body, index) => {
     const emptiedDoc = emptied(body, index);
-    const doc = apply(emptiedDoc, { type: 'mergeBlocks', id: emptiedDoc.ids[index] as string }).doc;
+    const blockId = emptiedDoc.ids[index] as string;
+    const doc = apply(emptiedDoc, { kind: 'mergeBlocks', blockId }).doc;
     const result = save(doc);
     expect(result, name).toEqual({ ok: true, markdown: expect.any(String) });
     if (result.ok) expectReadsAs(result.markdown, doc, name);
@@ -546,8 +556,8 @@ describe('an edit changes only the block it touches', () => {
 
   it('refuses an edit that makes the body trip a parser limit', () => {
     const doc = docOf([
-      { id: 'q', type: 'raw', text: `${'> '.repeat(150)}a` },
-      { id: 'p', type: 'paragraph', text: 'edited' },
+      { id: 'q', ...raw(`${'> '.repeat(150)}a`) },
+      { id: 'p', ...para('edited') },
     ]);
     expect(save(doc)).toEqual({ ok: false, reason: 'guard' });
   });
@@ -556,22 +566,21 @@ describe('an edit changes only the block it touches', () => {
     const body = 'Title\n=====\n\ntext\n';
     const doc = loaded(body);
     const id = doc.ids[0] as string;
-    for (const op of [
-      { type: 'insertText', id, offset: 5, text: 'x' },
-      { type: 'splitBlock', id, offset: 2, newId: 'n', kind: { type: 'paragraph' } },
-    ] satisfies Op[]) {
+    const ops: Op[] = [
+      typed(id, 5, 'x'),
+      { kind: 'splitBlock', blockId: id, field: 'text', offset: 2, newId: 'n', ...paragraph },
+    ];
+    for (const op of ops) {
       const edit = apply(doc, op);
-      expect(output(apply(edit.doc, edit.inverse).doc), op.type).toBe(body);
+      expect(output(edit.doc), op.kind).not.toBe(body);
+      expect(output(apply(edit.doc, edit.inverse).doc), op.kind).toBe(body);
     }
   });
 
   it('rewrites an unedited block whose source would read differently next to new blocks', () => {
     const plain = loaded('[x] and [^1]\n');
     const doc = docOf(
-      [
-        { id: 'd', type: 'raw', text: '[x]: https://example.test\n\n[^1]: note' },
-        ...snapshot(plain),
-      ],
+      [{ id: 'd', ...raw('[x]: https://example.test\n\n[^1]: note') }, ...snapshot(plain)],
       plain.sources,
     );
     const saved = output(doc);
@@ -582,14 +591,14 @@ describe('an edit changes only the block it touches', () => {
   it('finds a heading whose position starts at the definition before it', () => {
     const doc = loaded('[x]: https://example.test\nx\n===\n\nPlain\n');
     const id = doc.ids[2] as string;
-    const edited = apply(doc, { type: 'insertText', id, offset: 0, text: 'y' }).doc;
+    const edited = apply(doc, typed(id, 0, 'y')).doc;
     expect(output(edited)).toBe('[x]: https://example.test\nx\n===\n\nyPlain\n');
   });
 
   it('keeps plain text plain next to a definition it would otherwise use', () => {
     const doc = docOf([
-      { id: 'd', type: 'raw', text: '[x]: https://example.test' },
-      { id: 'p', type: 'paragraph', text: '[y][x] and [x]' },
+      { id: 'd', ...raw('[x]: https://example.test') },
+      { id: 'p', ...para('[y][x] and [x]') },
     ]);
     const saved = output(doc);
     expect(textOnly(loaded(saved))).toEqual(textOnly(doc));
@@ -597,9 +606,9 @@ describe('an edit changes only the block it touches', () => {
   });
 
   it('writes a block that starts with a BOM so it keeps its meaning at the start', () => {
-    const raw = docOf([{ id: 'r', type: 'raw', text: `${bom}[x]: javascript:alert(1)\n*y* [x]` }]);
-    expect(render(output(raw))).not.toContain('<a');
-    const text = docOf([{ id: 'p', type: 'paragraph', text: `${bom}# h` }]);
+    const source = docOf([{ id: 'r', ...raw(`${bom}[x]: javascript:alert(1)\n*y* [x]`) }]);
+    expect(render(output(source))).not.toContain('<a');
+    const text = docOf([{ id: 'p', ...para(`${bom}# h`) }]);
     expect(textOnly(loaded(output(text)))).toEqual(textOnly(text));
   });
 
@@ -607,12 +616,12 @@ describe('an edit changes only the block it touches', () => {
     const body = '\\-\n'.repeat(6666);
     const doc = loaded(body);
     const id = doc.ids[0] as string;
-    const edited = apply(doc, { type: 'insertText', id, offset: 0, text: 'x' }).doc;
+    const edited = apply(doc, typed(id, 0, 'x')).doc;
     const saved = output(edited);
     expect(saved.length).toBeLessThanOrEqual(body.length + 1);
     expect(textOnly(loaded(saved))).toEqual(textOnly(edited));
     for (const text of ['a:::b ::: c::::\n:::d', '::::::', ':'.repeat(6666)]) {
-      const colons = docOf([{ id: 'p', type: 'paragraph', text }]);
+      const colons = docOf([{ id: 'p', ...para(text) }]);
       expect(fences(output(colons)), text.slice(0, 12)).toBe(0);
       expect(textOnly(loaded(output(colons)))).toEqual(textOnly(colons));
     }
@@ -622,7 +631,7 @@ describe('an edit changes only the block it touches', () => {
     const body = '# a\n## b\nText one\n\n\n| t |\n| - |\nlast *x*';
     const doc = loaded(body);
     const id = doc.ids[2] as string;
-    const saved = output(apply(doc, { type: 'insertText', id, offset: 0, text: 'x' }).doc);
+    const saved = output(apply(doc, typed(id, 0, 'x')).doc);
     expect(saved).toBe('# a\n## b\n\nxText one\n\n\n| t |\n| - |\nlast *x*');
   });
 
@@ -639,7 +648,7 @@ describe('an edit changes only the block it touches', () => {
           `x${char}\n`,
           `${char}${char}${char}`,
         ]) {
-          const doc = docOf([{ ...kind, id: 'p', text }]);
+          const doc = docOf([{ ...kind, id: 'p', fields: { text } }]);
           expect(textOnly(loaded(output(doc))), JSON.stringify({ kind, text })).toEqual(
             textOnly(doc),
           );

@@ -1,29 +1,13 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Heading, Paragraph, Text } from 'mdast';
-import type { Block, BlockId, BlockKind, Doc, Json, NoProps, Source } from './types.ts';
+import type { Block, BlockId, Doc, Json, NoProps, Source } from './types.ts';
 
 export function isCanonicalText(text: string): boolean {
   return text.isWellFormed() && !/[\r\0]/.test(text);
 }
 
-export function isRaw(kind: BlockKind): boolean {
-  return kind.type === 'raw';
-}
-
-export function kindOf(block: Block): BlockKind {
-  return block.type === 'heading' ? { type: 'heading', level: block.level } : { type: block.type };
-}
-
-export function isSameKind(a: BlockKind, b: BlockKind): boolean {
-  return (
-    a.type === b.type && (a.type !== 'heading' || (b.type === 'heading' && a.level === b.level))
-  );
-}
-
-export function withKind(kind: BlockKind, id: BlockId, text: string): Block {
-  return kind.type === 'heading'
-    ? { type: 'heading', level: kind.level, id, text }
-    : { type: kind.type, id, text };
+export function isRaw(type: string): boolean {
+  return type === 'raw';
 }
 
 export function isRecord(value: unknown): value is { readonly [key: string]: unknown } {

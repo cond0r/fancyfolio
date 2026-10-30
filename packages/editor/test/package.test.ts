@@ -26,7 +26,8 @@ describe('the package root', () => {
     });
     const doc = load('a\n', counter());
     const [id = ''] = doc.ids;
-    expect(save(apply(doc, { type: 'insertText', id, offset: 1, text: 'b' }).doc)).toEqual({
+    const op = { kind: 'insertText', blockId: id, field: 'text', offset: 1, text: 'b' } as const;
+    expect(save(apply(doc, op).doc)).toEqual({
       ok: true,
       markdown: 'ab\n',
     });

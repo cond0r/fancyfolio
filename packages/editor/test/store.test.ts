@@ -19,6 +19,22 @@ function saved(editor: Editor): string {
 
 const body = '# Title\n\nMeet at 10:30\n\n| a |\n| - |\n| 1 |\n';
 
+function insertAt(blockId: string, offset: number, text: string): Op {
+  return { kind: 'insertText', blockId, field: 'text', offset, text };
+}
+
+function cut(blockId: string, offset: number, newId: string): Op {
+  return {
+    kind: 'splitBlock',
+    blockId,
+    field: 'text',
+    offset,
+    newId,
+    type: 'paragraph',
+    props: {},
+  };
+}
+
 function idAt(editor: ReturnType<typeof createEditor>, index: number): string {
   const id = editor.store.get(editor.ids)[index];
   if (id === undefined) throw new Error(`no block at ${index}`);
@@ -46,7 +62,7 @@ describe('the editor store', () => {
   it('keeps every editor in its own store', () => {
     const one = editorAt('one\n');
     const two = editorAt('two\n');
-    one.dispatch({ type: 'insertText', id: idAt(one, 0), offset: 3, text: '!' });
+    one.dispatch(insertAt(idAt(one, 0), 3, '!'));
     expect(saved(one)).toBe('one!\n');
     expect(saved(two)).toBe('two\n');
     expect(one.store).not.toBe(two.store);
@@ -64,7 +80,7 @@ describe('the editor store', () => {
     editor.store.sub(editor.ids, () => {
       orders += 1;
     });
-    editor.dispatch({ type: 'insertText', id: second as string, offset: 0, text: 'x' });
+    editor.dispatch(insertAt(second as string, 0, 'x'));
     expect(seen).toEqual([second]);
     expect(orders).toBe(0);
   });
@@ -78,9 +94,9 @@ describe('the editor store', () => {
         if (!editor.blocks.has(each)) missing.push(each);
       }
     });
-    editor.dispatch({ type: 'splitBlock', id, offset: 1, newId: 'n', kind: { type: 'paragraph' } });
-    expect(state(editor).blocks.map((block) => block.text)).toEqual(['a', 'b']);
-    editor.dispatch({ type: 'mergeBlocks', id: 'n' });
+    editor.dispatch(cut(id, 1, 'n'));
+    expect(state(editor).blocks.map((block) => block.fields.text)).toEqual(['a', 'b']);
+    editor.dispatch({ kind: 'mergeBlocks', blockId: 'n' });
     expect(missing).toEqual([]);
     expect([...editor.blocks.keys()]).toEqual([id]);
   });
@@ -88,7 +104,9 @@ describe('the editor store', () => {
   it('refuses a bad op without changing a thing', () => {
     const editor = editorAt(body);
     const before = state(editor);
-    expect(() => editor.dispatch({ type: 'mergeBlocks', id: idAt(editor, 0) })).toThrow(RangeError);
+    expect(() => editor.dispatch({ kind: 'mergeBlocks', blockId: idAt(editor, 0) })).toThrow(
+      RangeError,
+    );
     expect(state(editor)).toEqual(before);
     expect(editor.undo()).toBe(false);
   });
@@ -135,9 +153,9 @@ describe('the editor store', () => {
     const sizes = new Set<number>();
     for (let cycle = 0; cycle < 10_000; cycle += 1) {
       const newId = `n${cycle}`;
-      editor.dispatch({ type: 'splitBlock', id, offset: 1, newId, kind: { type: 'paragraph' } });
+      editor.dispatch(cut(id, 1, newId));
       sizes.add(editor.blocks.size);
-      editor.dispatch({ type: 'mergeBlocks', id: newId });
+      editor.dispatch({ kind: 'mergeBlocks', blockId: newId });
     }
     expect([...sizes]).toEqual([2]);
     expect([...editor.blocks.keys()]).toEqual([id]);
@@ -156,7 +174,7 @@ describe('undo and redo', () => {
       [6, 't'],
       [7, ' 10:30'],
     ] as const) {
-      editor.dispatch({ type: 'insertText', id, offset, text });
+      editor.dispatch(insertAt(id, offset, text));
     }
     expect(saved(editor)).toBe('Meet at 10:30\n');
     expect(editor.undo()).toBe(true);
@@ -170,11 +188,11 @@ describe('undo and redo', () => {
   it('starts a new step when typing jumps, changes block or follows another op', () => {
     const editor = editorAt('ab\n\ncd\n');
     const [first, second] = editor.store.get(editor.ids) as [string, string];
-    editor.dispatch({ type: 'insertText', id: first, offset: 2, text: 'x' });
-    editor.dispatch({ type: 'insertText', id: first, offset: 0, text: 'y' });
-    editor.dispatch({ type: 'insertText', id: second, offset: 0, text: 'z' });
-    editor.dispatch({ type: 'deleteText', id: second, from: 0, to: 1 });
-    editor.dispatch({ type: 'insertText', id: second, offset: 0, text: 'w' });
+    editor.dispatch(insertAt(first, 2, 'x'));
+    editor.dispatch(insertAt(first, 0, 'y'));
+    editor.dispatch(insertAt(second, 0, 'z'));
+    editor.dispatch({ kind: 'deleteText', blockId: second, field: 'text', from: 0, to: 1 });
+    editor.dispatch(insertAt(second, 0, 'w'));
     const saves = [saved(editor)];
     while (editor.undo()) saves.push(saved(editor));
     expect(saves).toEqual([
@@ -190,10 +208,10 @@ describe('undo and redo', () => {
   it('does not join typing after an undo to the step before it', () => {
     const editor = editorAt('a\n');
     const id = idAt(editor, 0);
-    editor.dispatch({ type: 'insertText', id, offset: 1, text: 'b' });
-    editor.dispatch({ type: 'splitBlock', id, offset: 2, newId: 'n', kind: { type: 'paragraph' } });
+    editor.dispatch(insertAt(id, 1, 'b'));
+    editor.dispatch(cut(id, 2, 'n'));
     editor.undo();
-    editor.dispatch({ type: 'insertText', id, offset: 2, text: 'c' });
+    editor.dispatch(insertAt(id, 2, 'c'));
     editor.undo();
     expect(saved(editor)).toBe('ab\n');
     expect(editor.redo()).toBe(true);
@@ -203,9 +221,9 @@ describe('undo and redo', () => {
   it('drops the redo steps when a new op follows an undo', () => {
     const editor = editorAt('a\n');
     const id = idAt(editor, 0);
-    editor.dispatch({ type: 'setType', id, kind: { type: 'heading', level: 2 } });
+    editor.dispatch({ kind: 'setType', blockId: id, type: 'heading', props: { level: 2 } });
     editor.undo();
-    editor.dispatch({ type: 'insertText', id, offset: 0, text: 'x' });
+    editor.dispatch(insertAt(id, 0, 'x'));
     expect(editor.redo()).toBe(false);
     expect(saved(editor)).toBe('xa\n');
   });
@@ -242,13 +260,13 @@ describe('undo steps over a session', () => {
     const clock = { now: 0 };
     const editor = editorAt('a\n', clock);
     const id = idAt(editor, 0);
-    editor.dispatch({ type: 'insertText', id, offset: 1, text: 'b' });
+    editor.dispatch(insertAt(id, 1, 'b'));
     clock.now = 900;
-    editor.dispatch({ type: 'insertText', id, offset: 2, text: 'c' });
+    editor.dispatch(insertAt(id, 2, 'c'));
     clock.now = 1950;
-    editor.dispatch({ type: 'insertText', id, offset: 3, text: 'd' });
+    editor.dispatch(insertAt(id, 3, 'd'));
     clock.now = 0;
-    editor.dispatch({ type: 'insertText', id, offset: 4, text: 'e' });
+    editor.dispatch(insertAt(id, 4, 'e'));
     expect(editor.undo()).toBe(true);
     expect(saved(editor)).toBe('abcd\n');
     expect(editor.undo()).toBe(true);
@@ -287,11 +305,11 @@ describe('undo steps over a session', () => {
     let offset = 0;
     for (const [text, at] of typed) {
       clock.now = at;
-      editor.dispatch({ type: 'insertText', id, offset, text });
+      editor.dispatch(insertAt(id, offset, text));
       offset += text.length;
     }
     const texts: string[] = [];
-    while (editor.undo()) texts.push(state(editor).blocks[0]?.text ?? '');
+    while (editor.undo()) texts.push(state(editor).blocks[0]?.fields.text ?? '');
     expect(texts).toEqual(undone);
   });
 
@@ -300,14 +318,15 @@ describe('undo steps over a session', () => {
     const id = idAt(editor, 0);
     let text = 'x';
     const read = {
-      type: 'insertText' as const,
-      id,
+      kind: 'insertText' as const,
+      blockId: id,
+      field: 'text',
       offset: 0,
       get text() {
         return text;
       },
     };
-    const mutated: Op = { type: 'insertText', id, offset: 0, text: 'y' };
+    const mutated: Op = insertAt(id, 0, 'y');
     editor.dispatch(read);
     editor.dispatch(mutated);
     text = '<script>';
@@ -323,7 +342,7 @@ describe('undo steps over a session', () => {
     const editor = editorAt('a\n');
     const id = idAt(editor, 0);
     for (let step = 0; step < 600; step += 1) {
-      editor.dispatch({ type: 'insertText', id, offset: 0, text: 'x' });
+      editor.dispatch(insertAt(id, 0, 'x'));
     }
     let undone = 0;
     while (editor.undo()) undone += 1;
@@ -334,11 +353,11 @@ describe('undo steps over a session', () => {
   it('refuses setting a block to the kind it has and keeps the redo steps', () => {
     const editor = editorAt('a\n');
     const id = idAt(editor, 0);
-    editor.dispatch({ type: 'setType', id, kind: { type: 'heading', level: 2 } });
+    editor.dispatch({ kind: 'setType', blockId: id, type: 'heading', props: { level: 2 } });
     editor.undo();
-    expect(() => editor.dispatch({ type: 'setType', id, kind: { type: 'paragraph' } })).toThrow(
-      RangeError,
-    );
+    expect(() =>
+      editor.dispatch({ kind: 'setType', blockId: id, type: 'paragraph', props: {} }),
+    ).toThrow(RangeError);
     expect(editor.redo()).toBe(true);
     expect(saved(editor)).toBe('## a\n');
   });
@@ -346,9 +365,9 @@ describe('undo steps over a session', () => {
   it('gives a block its own atom back when undo or redo brings it back', () => {
     const editor = editorAt('ab\n');
     const id = idAt(editor, 0);
-    editor.dispatch({ type: 'splitBlock', id, offset: 1, newId: 'n', kind: { type: 'paragraph' } });
+    editor.dispatch(cut(id, 1, 'n'));
     const atom = editor.blocks.get('n');
-    editor.dispatch({ type: 'mergeBlocks', id: 'n' });
+    editor.dispatch({ kind: 'mergeBlocks', blockId: 'n' });
     expect(editor.blocks.has('n')).toBe(false);
     editor.undo();
     expect(editor.blocks.get('n')).toBe(atom);
@@ -359,36 +378,35 @@ describe('undo steps over a session', () => {
     expect(editor.blocks.has('n')).toBe(false);
     editor.redo();
     expect(editor.blocks.get('n')).toBe(atom);
-    expect(state(editor).blocks.map((block) => block.text)).toEqual(['a', 'b']);
+    expect(state(editor).blocks.map((block) => block.fields.text)).toEqual(['a', 'b']);
   });
 
   it('refuses a malformed op from the wire and keeps undo working', () => {
     const editor = editorAt('Hello world\n');
     const id = idAt(editor, 0);
-    const wire = `{"type":"insertText","id":${JSON.stringify(id)},"offset":0,"text":123}`;
+    const wire = `{"kind":"insertText","blockId":${JSON.stringify(id)},"field":"text","offset":0,"text":123}`;
     expect(() => editor.dispatch(JSON.parse(wire))).toThrow(RangeError);
-    editor.dispatch({ type: 'insertText', id, offset: 0, text: 'x' });
+    editor.dispatch(insertAt(id, 0, 'x'));
     expect(editor.undo()).toBe(true);
     expect(saved(editor)).toBe('Hello world\n');
     expect(editor.undo()).toBe(false);
   });
 
   it('joins typing into a step that keeps only the op fields', () => {
-    const first = JSON.parse('{"type":"insertText","id":"a","offset":0,"text":"x","extra":1}');
-    const typed = record(emptyHistory, first, { type: 'deleteText', id: 'a', from: 0, to: 1 }, 0);
-    const joined = record(
-      typed,
-      { type: 'insertText', id: 'a', offset: 1, text: 'y' },
-      { type: 'deleteText', id: 'a', from: 1, to: 2 },
-      10,
+    const first = JSON.parse(
+      '{"kind":"insertText","blockId":"a","field":"text","offset":0,"text":"x","extra":1}',
     );
-    const undone = undo(joined);
-    expect(undone?.op).toEqual({ type: 'deleteText', id: 'a', from: 0, to: 2 });
-    expect(undone && redo(undone.history)?.op).toEqual({
-      type: 'insertText',
-      id: 'a',
-      offset: 0,
-      text: 'xy',
+    const deleted = (from: number, to: number): Op => ({
+      kind: 'deleteText',
+      blockId: 'a',
+      field: 'text',
+      from,
+      to,
     });
+    const once = record(emptyHistory, first, deleted(0, 1), 0);
+    const joined = record(once, insertAt('a', 1, 'y'), deleted(1, 2), 10);
+    const undone = undo(joined);
+    expect(undone?.op).toEqual(deleted(0, 2));
+    expect(undone && redo(undone.history)?.op).toEqual(insertAt('a', 0, 'xy'));
   });
 });

@@ -1,4 +1,4 @@
-import { isRaw, isSameKind } from '../src/core/model.ts';
+import { isRaw, sameJson } from '../src/core/model.ts';
 import type { Block, BlockKind, Doc, Op } from '../src/core/types.ts';
 
 export type Random = { int(below: number): number; pick<T>(items: readonly T[]): T };
@@ -64,13 +64,13 @@ const pieces = [
 ];
 
 export const kinds: readonly BlockKind[] = [
-  { type: 'paragraph' },
-  { type: 'paragraph' },
-  { type: 'heading', level: 1 },
-  { type: 'heading', level: 2 },
-  { type: 'heading', level: 3 },
-  { type: 'heading', level: 6 },
-  { type: 'raw' },
+  { type: 'paragraph', props: {} },
+  { type: 'paragraph', props: {} },
+  { type: 'heading', props: { level: 1 } },
+  { type: 'heading', props: { level: 2 } },
+  { type: 'heading', props: { level: 3 } },
+  { type: 'heading', props: { level: 6 } },
+  { type: 'raw', props: {} },
 ];
 
 export function randomText(random: Random, max = 4): string {
@@ -90,51 +90,61 @@ function pair(random: Random, text: string): [number, number] {
   return a <= b ? [a, b] : [b, a];
 }
 
-function movable(from: BlockKind, text: string, to: BlockKind, kept = ''): boolean {
+function movable(from: string, text: string, to: string, kept = ''): boolean {
   if (isRaw(from) && isRaw(to) && text !== '' && kept !== '') return false;
   return text === '' || isRaw(from) === isRaw(to);
 }
 
+function isSameKind(a: BlockKind, b: BlockKind): boolean {
+  return a.type === b.type && sameJson(a.props, b.props);
+}
+
 export function randomOp(doc: Doc, random: Random, newId: () => string, kindsAllowed = kinds): Op {
   const index = random.int(doc.ids.length);
-  const id = doc.ids[index] as string;
-  const block = doc.blocks.get(id) as Block;
+  const blockId = doc.ids[index] as string;
+  const block = doc.blocks.get(blockId) as Block;
+  const text = block.fields.text as string;
+  const field = 'text';
   for (;;) {
     switch (random.int(5)) {
       case 0:
         return {
-          type: 'insertText',
-          id,
-          offset: random.pick(boundaries(block.text)),
+          kind: 'insertText',
+          blockId,
+          field,
+          offset: random.pick(boundaries(text)),
           text: randomText(random),
         };
       case 1: {
-        const [from, to] = pair(random, block.text);
-        if (from < to) return { type: 'deleteText', id, from, to };
+        const [from, to] = pair(random, text);
+        if (from < to) return { kind: 'deleteText', blockId, field, from, to };
         break;
       }
       case 2: {
-        const offset = random.pick(boundaries(block.text));
-        const tail = block.text.slice(offset);
-        const head = block.text.slice(0, offset);
-        const allowed = kindsAllowed.filter((kind) => movable(block, tail, kind, head));
+        const offset = random.pick(boundaries(text));
+        const tail = text.slice(offset);
+        const head = text.slice(0, offset);
+        const allowed = kindsAllowed.filter((kind) => movable(block.type, tail, kind.type, head));
         if (allowed.length > 0) {
-          return { type: 'splitBlock', id, offset, newId: newId(), kind: random.pick(allowed) };
+          const { type, props } = random.pick(allowed);
+          return { kind: 'splitBlock', blockId, field, offset, newId: newId(), type, props };
         }
         break;
       }
       case 3: {
         const previous = doc.blocks.get(doc.ids[index - 1] ?? '');
-        if (previous !== undefined && movable(block, block.text, previous, previous.text)) {
-          return { type: 'mergeBlocks', id };
+        const kept = previous?.fields.text as string;
+        if (previous !== undefined && movable(block.type, text, previous.type, kept)) {
+          return { kind: 'mergeBlocks', blockId };
         }
         break;
       }
-      default: {
+      case 4: {
         const allowed = kindsAllowed.filter(
-          (kind) => !isSameKind(kind, block) && movable(block, block.text, kind),
+          (kind) => !isSameKind(kind, block) && movable(block.type, text, kind.type),
         );
-        if (allowed.length > 0) return { type: 'setType', id, kind: random.pick(allowed) };
+        if (allowed.length > 0) return { kind: 'setType', blockId, ...random.pick(allowed) };
+        break;
       }
     }
   }
@@ -151,10 +161,11 @@ export function docProblems(doc: Doc): string[] {
       problems.push(`missing block ${id}`);
       continue;
     }
-    if (!block.text.isWellFormed() || /[\r\0]/.test(block.text)) problems.push(`bad text ${id}`);
-    if (block.type === 'heading' && ![1, 2, 3, 4, 5, 6].includes(block.level)) {
-      problems.push(`bad level ${id}`);
+    for (const text of Object.values(block.fields)) {
+      if (!text.isWellFormed() || /[\r\0]/.test(text)) problems.push(`bad text ${id}`);
     }
+    const level = block.type === 'heading' ? Reflect.get(Object(block.props), 'level') : 1;
+    if (![1, 2, 3, 4, 5, 6].includes(level)) problems.push(`bad level ${id}`);
   }
   return problems;
 }

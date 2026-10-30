@@ -7,7 +7,7 @@ import { registryOf } from './registry.ts';
 import type { Block, BlockId, Doc, DocView, Editor, EditorOptions, Op } from './types.ts';
 
 export function createEditor(markdown: string, options: EditorOptions): Editor {
-  registryOf(options.components ?? []);
+  const registry = registryOf(options.components ?? []);
   const store = createStore();
   const initial = load(markdown, options.newId);
   const ids = atom(initial.ids);
@@ -29,7 +29,7 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
   };
 
   function commit(input: Op, recorded?: Op): { op: Op; reverse: Op } {
-    const { op, change, inverse } = plan(view, input);
+    const { op, change, inverse } = plan(view, input, registry);
     const reverse = recorded ?? inverse;
     for (const block of change.put) {
       const existing = blocks.get(block.id) ?? retired.get(input);

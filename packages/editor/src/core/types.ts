@@ -16,6 +16,10 @@ export type Json =
 
 export type Fields = { readonly [field: string]: string };
 
+export type BlockKind = { readonly type: string; readonly props: Json };
+
+export type Block = BlockKind & { readonly id: BlockId; readonly fields: Fields };
+
 export type TypedBlock<Props, Field extends string> = {
   readonly id: BlockId;
   readonly type: string;
@@ -60,13 +64,6 @@ export type Registry = {
   readonly matches: ReadonlyMap<string, AnyComponent>;
 };
 
-export type BlockKind =
-  | { readonly type: 'paragraph' }
-  | { readonly type: 'heading'; readonly level: HeadingLevel }
-  | { readonly type: 'raw' };
-
-export type Block = BlockKind & { readonly id: BlockId; readonly text: string };
-
 export type Source = {
   readonly markdown: string;
   readonly afterId: BlockId | null;
@@ -87,32 +84,43 @@ export type DocView = {
 
 export type Op =
   | {
-      readonly type: 'insertText';
-      readonly id: BlockId;
+      readonly kind: 'insertText';
+      readonly blockId: BlockId;
+      readonly field: string;
       readonly offset: number;
       readonly text: string;
     }
   | {
-      readonly type: 'deleteText';
-      readonly id: BlockId;
+      readonly kind: 'deleteText';
+      readonly blockId: BlockId;
+      readonly field: string;
       readonly from: number;
       readonly to: number;
     }
   | {
-      readonly type: 'splitBlock';
-      readonly id: BlockId;
+      readonly kind: 'splitBlock';
+      readonly blockId: BlockId;
+      readonly field: string;
       readonly offset: number;
       readonly newId: BlockId;
-      readonly kind: BlockKind;
+      readonly type: string;
+      readonly props: Json;
     }
-  | { readonly type: 'mergeBlocks'; readonly id: BlockId }
-  | { readonly type: 'setType'; readonly id: BlockId; readonly kind: BlockKind };
+  | { readonly kind: 'mergeBlocks'; readonly blockId: BlockId }
+  | {
+      readonly kind: 'setType';
+      readonly blockId: BlockId;
+      readonly type: string;
+      readonly props: Json;
+    };
 
 export type Change = {
   readonly put: readonly Block[];
   readonly ids?: readonly BlockId[];
   readonly drop: readonly BlockId[];
 };
+
+export type Planned = { readonly op: Op; readonly change: Change; readonly inverse: Op };
 
 export type Step = {
   readonly op: Op;
@@ -151,7 +159,7 @@ export type SaveResult =
   | { readonly ok: false; readonly reason: 'misread'; readonly blockId: BlockId }
   | { readonly ok: false; readonly reason: 'guard' };
 
-export type Read = (BlockKind & { readonly text: string }) | null;
+export type Read = (BlockKind & { readonly fields: Fields }) | null;
 
 export type Part = {
   readonly block: Block;

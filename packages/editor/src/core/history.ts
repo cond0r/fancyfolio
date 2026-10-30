@@ -8,18 +8,19 @@ const maxSteps = 500;
 
 function continued(step: Step | undefined, op: Op, at: number): Step | undefined {
   const last = step?.op;
-  if (step === undefined || last?.type !== 'insertText' || op.type !== 'insertText') {
+  if (step === undefined || last?.kind !== 'insertText' || op.kind !== 'insertText') {
     return undefined;
   }
-  if (last.id !== op.id || op.offset !== last.offset + last.text.length) return undefined;
-  if (last.text.includes('\n')) return undefined;
+  if (last.blockId !== op.blockId || last.field !== op.field) return undefined;
+  if (op.offset !== last.offset + last.text.length || last.text.includes('\n')) return undefined;
   if (Math.abs(at - step.at) > typingPause || Math.abs(at - step.started) > stepSpan) {
     return undefined;
   }
+  const { blockId, field, offset } = last;
   const text = last.text + op.text;
   return {
-    op: { type: 'insertText', id: op.id, offset: last.offset, text },
-    inverse: { type: 'deleteText', id: op.id, from: last.offset, to: last.offset + text.length },
+    op: { kind: 'insertText', blockId, field, offset, text },
+    inverse: { kind: 'deleteText', blockId, field, from: offset, to: offset + text.length },
     started: step.started,
     at,
   };

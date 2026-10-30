@@ -41,7 +41,13 @@ describe('the cost of a save', () => {
   it('serializes only the edited block and parses the body once per save', () => {
     const doc = load(body, counter());
     const id = doc.ids[3] as string;
-    const edited = apply(doc, { type: 'insertText', id, offset: 0, text: 'x' }).doc;
+    const edited = apply(doc, {
+      kind: 'insertText',
+      blockId: id,
+      field: 'text',
+      offset: 0,
+      text: 'x',
+    }).doc;
     calls.parse = 0;
     expect(save(edited)).toEqual({
       ok: true,
@@ -55,9 +61,12 @@ describe('the cost of a save', () => {
   it('parses an edited body at most twice however many raw blocks are left open', () => {
     const open = Array.from(
       { length: 400 },
-      (_, i) => ({ id: `r${i}`, type: 'raw', text: '```\nx' }) as const,
+      (_, i) => ({ id: `r${i}`, type: 'raw', props: {}, fields: { text: '```\nx' } }) as const,
     );
-    const doc = docOf([...open, { id: 'p', type: 'paragraph', text: 'typed' }]);
+    const doc = docOf([
+      ...open,
+      { id: 'p', type: 'paragraph', props: {}, fields: { text: 'typed' } },
+    ]);
     calls.parse = 0;
     const result = save(doc);
     expect(calls.parse).toBeLessThanOrEqual(2);

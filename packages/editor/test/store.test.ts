@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { heading } from '../src/core/heading.ts';
 import { emptyHistory, record, redo, undo } from '../src/core/history.ts';
 import { apply } from '../src/core/ops.ts';
+import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { Block, Editor, Op } from '../src/core/types.ts';
+import type { AnyComponent, Block, Editor, Op } from '../src/core/types.ts';
 import { counter, docProblems, randomOp, seeded, seeds, snapshot } from './generate.ts';
 
 function editorAt(markdown: string, clock = { now: 0 }): Editor {
@@ -89,6 +91,42 @@ describe('the editor store', () => {
     expect(() => editor.dispatch({ type: 'mergeBlocks', id: idAt(editor, 0) })).toThrow(RangeError);
     expect(state(editor)).toEqual(before);
     expect(editor.undo()).toBe(false);
+  });
+
+  it.each([
+    ['a second paragraph', [paragraph]],
+    ['a second heading reader', [{ ...paragraph, name: 'title', markdown: heading.markdown }]],
+    ['a component named raw', [{ ...paragraph, name: 'raw', markdown: heading.markdown }]],
+    [
+      'two components named the same',
+      [
+        {
+          ...paragraph,
+          name: 'note',
+          markdown: { ...paragraph.markdown, match: 'leafDirective:a' },
+        },
+        {
+          ...paragraph,
+          name: 'note',
+          markdown: { ...paragraph.markdown, match: 'leafDirective:b' },
+        },
+      ],
+    ],
+    [
+      'a component with a repeated field',
+      [
+        {
+          ...paragraph,
+          name: 'pair',
+          fields: ['text', 'text'],
+          markdown: { ...paragraph.markdown, match: 'leafDirective:pair' },
+        },
+      ],
+    ],
+  ] satisfies [string, AnyComponent[]][])('refuses to start with %s', (_name, components) => {
+    expect(() => createEditor(body, { now: () => 0, newId: counter(), components })).toThrow(
+      RangeError,
+    );
   });
 
   it('holds only live blocks after 10,000 insert and delete cycles', () => {

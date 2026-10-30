@@ -3,9 +3,11 @@ import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
 import { docOf } from './model.ts';
 import { plan } from './ops.ts';
+import { registryOf } from './registry.ts';
 import type { Block, BlockId, Doc, DocView, Editor, EditorOptions, Op } from './types.ts';
 
 export function createEditor(markdown: string, options: EditorOptions): Editor {
+  registryOf(options.components ?? []);
   const store = createStore();
   const initial = load(markdown, options.newId);
   const ids = atom(initial.ids);

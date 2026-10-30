@@ -1,8 +1,64 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Atom, Store } from 'jotai/vanilla';
+import type { RootContent } from 'mdast';
 
 export type BlockId = string;
 
 export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+
+export type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly Json[]
+  | { readonly [key: string]: Json };
+
+export type Fields = { readonly [field: string]: string };
+
+export type TypedBlock<Props, Field extends string> = {
+  readonly id: BlockId;
+  readonly type: string;
+  readonly props: Props;
+  readonly fields: { readonly [F in Field]: string };
+};
+
+export type Codec<Props, Field extends string> = {
+  readonly match:
+    | 'paragraph'
+    | 'heading'
+    | `leafDirective:${string}`
+    | `containerDirective:${string}`;
+  read(
+    node: RootContent,
+  ): { readonly props: Props; readonly fields: { readonly [F in Field]: string } } | undefined;
+  write(block: TypedBlock<Props, Field>): RootContent;
+  escaped?(block: TypedBlock<Props, Field>): string;
+};
+
+export type Component<Name extends string, Props, Field extends string> = {
+  readonly name: Name;
+  readonly props: StandardSchemaV1<unknown, Props>;
+  readonly fields: readonly Field[];
+  readonly markdown: Codec<Props, Field>;
+};
+
+export type AnyComponent = Component<string, unknown, string>;
+
+export type NoProps = { readonly [key: string]: never };
+
+export type HeadingProps = { readonly level: HeadingLevel };
+
+export type Fallback = Omit<Component<'raw', NoProps, 'text'>, 'markdown'>;
+
+export type Registered = Omit<AnyComponent, 'markdown'> & {
+  readonly markdown?: AnyComponent['markdown'];
+};
+
+export type Registry = {
+  readonly components: ReadonlyMap<string, Registered>;
+  readonly matches: ReadonlyMap<string, AnyComponent>;
+};
 
 export type BlockKind =
   | { readonly type: 'paragraph' }
@@ -87,6 +143,7 @@ export type Editor = {
 export type EditorOptions = {
   readonly now: () => number;
   readonly newId: () => BlockId;
+  readonly components?: readonly AnyComponent[];
 };
 
 export type SaveResult =

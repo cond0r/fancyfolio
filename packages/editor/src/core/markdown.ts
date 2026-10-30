@@ -1,6 +1,6 @@
 import type { Heading, Nodes, Paragraph, Root, RootContent, Text } from 'mdast';
 import { parseMarkdown, stringifyMarkdown } from '../dialect.ts';
-import { docOf, isCanonicalText, isSameKind } from './model.ts';
+import { docOf, escapedLines, isCanonicalText, isSameKind, textOf } from './model.ts';
 import type {
   Block,
   BlockId,
@@ -17,13 +17,6 @@ import type {
 const reads = new WeakMap<Source, Read>();
 const rawTypes = new WeakMap<Block, readonly string[]>();
 const canonicals = new WeakMap<Block, string>();
-
-function textOf(node: Paragraph | Heading): string | undefined {
-  const parts = node.children.filter((child): child is Text => child.type === 'text');
-  return parts.length === node.children.length
-    ? parts.map((part) => part.value).join('')
-    : undefined;
-}
 
 function modelled(node: RootContent | undefined): (BlockKind & { text: string }) | undefined {
   if (node?.type !== 'paragraph' && node?.type !== 'heading') return undefined;
@@ -114,18 +107,8 @@ function readsBack(block: Block, nodes: readonly RootContent[]): boolean {
   return matches(nodes.length === 1 ? modelled(nodes[0]) : undefined, block);
 }
 
-function reference(char: string): string {
-  return `&#${char.charCodeAt(0)};`;
-}
-
 function escaped(block: Block): string {
-  const lines = block.text
-    .split('\n')
-    .map((line) =>
-      line
-        .replace(/[!-/:-@[-`{-~]/g, '\\$&')
-        .replace(/^[\t \uFEFF]+|[\t ]+$/g, (edge) => [...edge].map(reference).join('')),
-    );
+  const lines = escapedLines(block.text);
   if (block.type === 'heading') {
     const text = lines.join('&#10;');
     return `${'#'.repeat(block.level)}${text === '' ? '' : ` ${text}`}`;

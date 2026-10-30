@@ -9,7 +9,7 @@ import type { Block, BlockId, Doc, DocView, Editor, EditorOptions, Op } from './
 export function createEditor(markdown: string, options: EditorOptions): Editor {
   const registry = registryOf(options.components ?? []);
   const store = createStore();
-  const initial = load(markdown, options.newId);
+  const initial = load(markdown, options.newId, registry);
   const ids = atom(initial.ids);
   const blocks = new Map<BlockId, PrimitiveAtom<Block>>();
   for (const [id, block] of initial.blocks) blocks.set(id, atom(block));
@@ -79,6 +79,6 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     undo: () => travel(undo),
     redo: () => travel(redo),
     doc,
-    markdown: () => save(doc()),
+    markdown: () => save(doc(), registry),
   };
 }

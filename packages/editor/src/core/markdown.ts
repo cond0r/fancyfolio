@@ -9,6 +9,7 @@ import type {
   Doc,
   Part,
   Read,
+  Registry,
   SaveResult,
   Source,
   Verdict,
@@ -24,24 +25,32 @@ function matchOf(node: RootContent): string {
     : node.type;
 }
 
-function modelled(node: RootContent | undefined): Exclude<Read, null> | undefined {
+function modelled(
+  node: RootContent | undefined,
+  registry: Registry,
+): Exclude<Read, null> | undefined {
   if (node === undefined) return undefined;
-  const component = builtins.matches.get(matchOf(node));
-  const read = component?.markdown.read(node);
-  if (component === undefined || read === undefined) return undefined;
-  const props = propsFor(component, read.props);
-  const fields = fieldsFor(component, read.fields);
-  return props === undefined || fields === undefined
-    ? undefined
-    : { type: component.name, props, fields };
+  const component = registry.matches.get(matchOf(node));
+  if (component === undefined) return undefined;
+  try {
+    const read = component.markdown.read(node);
+    if (read === undefined) return undefined;
+    const props = propsFor(component, read.props);
+    const fields = fieldsFor(component, read.fields);
+    return props === undefined || fields === undefined
+      ? undefined
+      : { type: component.name, props, fields };
+  } catch {
+    return undefined;
+  }
 }
 
 function rawBlock(id: BlockId, text: string): Block {
   return { id, type: 'raw', props: {}, fields: { text } };
 }
 
-function codecOf(block: Block): AnyComponent['markdown'] {
-  const codec = builtins.components.get(block.type)?.markdown;
+function codecOf(block: Block, registry: Registry): AnyComponent['markdown'] {
+  const codec = registry.components.get(block.type)?.markdown;
   if (codec === undefined) throw new Error(`block type ${block.type} has no markdown codec`);
   return codec;
 }
@@ -71,7 +80,7 @@ function uniqueIds(newId: () => BlockId): () => BlockId {
   };
 }
 
-export function load(markdown: string, newId: () => BlockId): Doc {
+export function load(markdown: string, newId: () => BlockId, registry: Registry = builtins): Doc {
   const nextId = uniqueIds(newId);
   const lf = markdown.replace(/\r\n?/g, '\n');
   if (!isCanonicalText(lf)) throw new RangeError('load refused: the body is not canonical text');
@@ -89,7 +98,7 @@ export function load(markdown: string, newId: () => BlockId): Doc {
     const at = span(node);
     const lineStart = Math.max(end, body.lastIndexOf('\n', at.start - 1) + 1);
     const slice = body.slice(lineStart, at.end);
-    const read = modelled(node);
+    const read = modelled(node, registry);
     const block: Block = read === undefined ? rawBlock(nextId(), slice) : { ...read, id: nextId() };
     const source: Source = {
       markdown: slice,
@@ -109,8 +118,8 @@ export function load(markdown: string, newId: () => BlockId): Doc {
   return docOf(blocks, sources);
 }
 
-function written(block: Block): string {
-  const node = codecOf(block).write(block);
+function written(block: Block, registry: Registry): string {
+  const node = codecOf(block, registry).write(block);
   return stringifyMarkdown({ type: 'root', children: [node] })
     .replace(/\n$/, '')
     .replace(/(?<=::):/g, '\\:');
@@ -125,19 +134,19 @@ function matches(read: Read | undefined, block: Block): boolean {
   );
 }
 
-function readsBack(block: Block, nodes: readonly RootContent[]): boolean {
-  return matches(nodes.length === 1 ? modelled(nodes[0]) : undefined, block);
+function readsBack(block: Block, nodes: readonly RootContent[], registry: Registry): boolean {
+  return matches(nodes.length === 1 ? modelled(nodes[0], registry) : undefined, block);
 }
 
-function canonical(block: Block): string {
+function canonical(block: Block, registry: Registry): string {
   if (isRaw(block.type)) return block.fields.text;
   const cached = canonicals.get(block);
   if (cached !== undefined) return cached;
-  const markdown = written(block);
+  const markdown = written(block, registry);
   const chosen =
-    markdown === '' || readsBack(block, parseMarkdown(markdown).children)
+    markdown === '' || readsBack(block, parseMarkdown(markdown).children, registry)
       ? markdown
-      : (codecOf(block).escaped?.(block) ?? markdown);
+      : (codecOf(block, registry).escaped?.(block) ?? markdown);
   canonicals.set(block, chosen);
   return chosen;
 }
@@ -147,11 +156,11 @@ function parsedAlone(markdown: string): Root {
   return parseMarkdown(markdown.startsWith('\uFEFF') ? `\n${markdown}` : markdown);
 }
 
-function sourceRead(source: Source): Read {
+function sourceRead(source: Source, registry: Registry): Read {
   const known = reads.get(source);
   if (known !== undefined) return known;
   const nodes = parsedAlone(source.markdown).children;
-  const read = (nodes.length === 1 ? modelled(nodes[0]) : undefined) ?? null;
+  const read = (nodes.length === 1 ? modelled(nodes[0], registry) : undefined) ?? null;
   reads.set(source, read);
   return read;
 }
@@ -168,16 +177,17 @@ function writing(
   block: Block,
   source: Source | undefined,
   escaping: boolean,
+  registry: Registry,
 ): { markdown: string; verbatim: boolean } {
   if (isRaw(block.type)) {
     return { markdown: block.fields.text, verbatim: block.fields.text === source?.markdown };
   }
-  const escaped = escaping ? codecOf(block).escaped?.(block) : undefined;
+  const escaped = escaping ? codecOf(block, registry).escaped?.(block) : undefined;
   if (escaped !== undefined) return { markdown: escaped, verbatim: false };
-  if (source !== undefined && matches(sourceRead(source), block)) {
+  if (source !== undefined && matches(sourceRead(source, registry), block)) {
     return { markdown: source.markdown, verbatim: true };
   }
-  return { markdown: canonical(block), verbatim: false };
+  return { markdown: canonical(block, registry), verbatim: false };
 }
 
 function gapBefore(
@@ -191,7 +201,11 @@ function gapBefore(
   return source.afterId === before.block.id && kept ? source.gap : '\n\n';
 }
 
-function layout(doc: Doc, escaping: ReadonlySet<BlockId>): { parts: Part[]; exact: boolean } {
+function layout(
+  doc: Doc,
+  escaping: ReadonlySet<BlockId>,
+  registry: Registry,
+): { parts: Part[]; exact: boolean } {
   const parts: Part[] = [];
   let exact = true;
   let previous: BlockId | null = null;
@@ -199,7 +213,7 @@ function layout(doc: Doc, escaping: ReadonlySet<BlockId>): { parts: Part[]; exac
     const block = doc.blocks.get(id);
     if (block === undefined) throw new Error(`block ${id} is missing`);
     const source = doc.sources.get(id);
-    const { markdown, verbatim } = writing(block, source, escaping.has(id));
+    const { markdown, verbatim } = writing(block, source, escaping.has(id), registry);
     exact &&= verbatim && source?.afterId === previous;
     previous = id;
     if (/^[\t\n ]*$/.test(markdown)) continue;
@@ -241,7 +255,11 @@ function placed(parts: readonly Part[], tree: Root): RootContent[][] | BlockId {
   return found;
 }
 
-function verdict(parts: readonly Part[], trailing: string | undefined): Verdict {
+function verdict(
+  parts: readonly Part[],
+  trailing: string | undefined,
+  registry: Registry,
+): Verdict {
   const markdown = joined(parts, trailing);
   if (parts.length === 0) return { ok: true, markdown };
   const tree = parseMarkdown(markdown);
@@ -257,7 +275,7 @@ function verdict(parts: readonly Part[], trailing: string | undefined): Verdict 
   for (const [index, { block }] of parts.entries()) {
     const nodes = found[index];
     if (!isRaw(block.type)) {
-      if (!readsBack(block, nodes)) unread.add(block.id);
+      if (!readsBack(block, nodes, registry)) unread.add(block.id);
       continue;
     }
     const types = typesAlone(block);
@@ -268,13 +286,13 @@ function verdict(parts: readonly Part[], trailing: string | undefined): Verdict 
   return unread.size === 0 ? { ok: true, markdown } : { ok: false, reason: 'unread', ids: unread };
 }
 
-export function save(doc: Doc): SaveResult {
+export function save(doc: Doc, registry: Registry = builtins): SaveResult {
   const trailing = doc.sources.get(doc.ids.at(-1) ?? '')?.trailing;
-  const { parts, exact } = layout(doc, new Set());
+  const { parts, exact } = layout(doc, new Set(), registry);
   if (exact && trailing !== undefined) return { ok: true, markdown: joined(parts, trailing) };
-  const first = verdict(parts, trailing);
+  const first = verdict(parts, trailing, registry);
   if (first.ok || first.reason !== 'unread') return first;
-  const second = verdict(layout(doc, first.ids).parts, trailing);
+  const second = verdict(layout(doc, first.ids, registry).parts, trailing, registry);
   if (second.ok || second.reason !== 'unread') return second;
   const [blockId] = second.ids;
   return { ok: false, reason: 'misread', blockId };

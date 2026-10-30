@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { heading } from '../src/core/heading.ts';
 import { emptyHistory, record, redo, undo } from '../src/core/history.ts';
+import { hasKeys, noProps, schema, textNodes } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Block, Editor, Op } from '../src/core/types.ts';
+import type { AnyComponent, Block, Component, Editor, Op } from '../src/core/types.ts';
 import { counter, docProblems, randomOp, seeded, seeds, snapshot } from './generate.ts';
 
 function editorAt(markdown: string, clock = { now: 0 }): Editor {
@@ -146,6 +147,78 @@ describe('the editor store', () => {
       RangeError,
     );
   });
+
+  it('reads and writes a host component through its codec, and its misfits as raw', () => {
+    const tones = ['info', 'warning'];
+    const note: Component<'note', { tone: string }, 'text'> = {
+      name: 'note',
+      props: schema(
+        (value): value is { tone: string } =>
+          hasKeys(value, ['tone']) && tones.includes(Reflect.get(value, 'tone')),
+      ),
+      fields: ['text'],
+      markdown: {
+        match: 'leafDirective:note',
+        read(node) {
+          if (node.type !== 'leafDirective') return undefined;
+          const { tone, ...others } = node.attributes ?? {};
+          const [label, ...rest] = node.children;
+          if (typeof tone !== 'string' || Object.keys(others).length > 0) return undefined;
+          if (rest.length > 0 || (label !== undefined && label.type !== 'text')) return undefined;
+          return { props: { tone }, fields: { text: label?.value ?? '' } };
+        },
+        write: (block) => ({
+          type: 'leafDirective',
+          name: 'note',
+          attributes: { tone: block.props.tone },
+          children: textNodes(block.fields.text),
+        }),
+      },
+    };
+    const notes =
+      '::note[Ship it]{tone="info"}\n\n::note[x]{tone="loud"}\n\n::note[y]{tone="info" on="z"}\n';
+    const editor = createEditor(notes, { now: () => 0, newId: counter(), components: [note] });
+    expect(state(editor).blocks.map((block) => [block.type, block.props])).toEqual([
+      ['note', { tone: 'info' }],
+      ['raw', {}],
+      ['raw', {}],
+    ]);
+    editor.dispatch(insertAt(idAt(editor, 0), 0, 'Now: '));
+    expect(saved(editor)).toBe(notes.replace('Ship it', 'Now: Ship it'));
+  });
+
+  const fails = (): never => {
+    throw new Error('component bug');
+  };
+  const reader: AnyComponent = {
+    ...paragraph,
+    name: 'failing',
+    markdown: {
+      ...paragraph.markdown,
+      match: 'leafDirective:failing',
+      read: () => ({ props: {}, fields: { text: 'x' } }),
+    },
+  };
+
+  it.each([
+    [
+      'props schema',
+      { ...reader, props: { '~standard': { ...noProps['~standard'], validate: fails } } },
+    ],
+    ['markdown reader', { ...reader, markdown: { ...reader.markdown, read: fails } }],
+  ] satisfies [string, AnyComponent][])(
+    'loads a block as raw source when its %s throws',
+    (_name, failing) => {
+      const page = '# Title\n\n::failing[x]{a="1"}\n\nText\n';
+      const editor = createEditor(page, { now: () => 0, newId: counter(), components: [failing] });
+      expect(state(editor).blocks.map((block) => [block.type, block.fields.text])).toEqual([
+        ['heading', 'Title'],
+        ['raw', '::failing[x]{a="1"}'],
+        ['paragraph', 'Text'],
+      ]);
+      expect(saved(editor)).toBe(page);
+    },
+  );
 
   it('holds only live blocks after 10,000 insert and delete cycles', () => {
     const editor = editorAt('ab\n');

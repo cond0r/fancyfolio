@@ -11,6 +11,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@standard-schema/spec": "1.1.0",
     "jotai": "3.0.1",
     "mdast-util-directive": "^3.1.1",
     "mdast-util-gfm-footnote": "^2.1.0",

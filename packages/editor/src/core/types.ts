@@ -133,8 +133,8 @@ export type Change = {
 export type Planned = { readonly op: Op; readonly change: Change; readonly inverse: Op };
 
 export type Step = {
-  readonly op: Op;
-  readonly inverse: Op;
+  readonly ops: readonly Op[];
+  readonly inverses: readonly Op[];
   readonly started: number;
   readonly at: number;
 };
@@ -145,13 +145,17 @@ export type History = {
   readonly sealed: boolean;
 };
 
-export type Travel = { readonly history: History; readonly op: Op; readonly inverse: Op };
+export type Travel = {
+  readonly history: History;
+  readonly ops: readonly Op[];
+  readonly inverses: readonly Op[];
+};
 
 export type Editor = {
   readonly store: Store;
   readonly ids: Atom<readonly BlockId[]>;
   readonly blocks: ReadonlyMap<BlockId, Atom<Block>>;
-  dispatch(op: Op): void;
+  dispatch(...ops: Op[]): void;
   undo(): boolean;
   redo(): boolean;
   doc(): Doc;

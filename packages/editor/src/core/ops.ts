@@ -1,5 +1,5 @@
-import { isCanonicalText, isRaw, jsonOf, sameJson } from './model.ts';
-import { builtins, propsFor } from './registry.ts';
+import { isCanonicalText, isRaw, isRecord, jsonOf, sameJson } from './model.ts';
+import { builtins, fieldsFor, propsFor } from './registry.ts';
 import type {
   Block,
   BlockId,
@@ -8,6 +8,7 @@ import type {
   DocView,
   Json,
   Op,
+  Parent,
   Planned,
   Registered,
   Registry,
@@ -34,8 +35,39 @@ function field(input: unknown, key: string): unknown {
     : undefined;
 }
 
+function blockFrom(input: unknown): Block | undefined {
+  const id = field(input, 'id');
+  const type = field(input, 'type');
+  const props = jsonOf(field(input, 'props'));
+  const fields = field(input, 'fields');
+  if (!isId(id) || typeof type !== 'string' || props === undefined || !isRecord(fields)) {
+    return undefined;
+  }
+  const entries: [string, string][] = [];
+  for (const [name, text] of Object.entries(fields)) {
+    if (typeof text !== 'string') return undefined;
+    entries.push([name, text]);
+  }
+  return Object.freeze({ id, type, props, fields: Object.freeze(Object.fromEntries(entries)) });
+}
+
+function parentFrom(input: unknown): Parent | undefined {
+  if (input === null) return null;
+  const blockId = field(input, 'blockId');
+  const slot = field(input, 'slot');
+  return isId(blockId) && typeof slot === 'string' ? Object.freeze({ blockId, slot }) : undefined;
+}
+
 function opFrom(input: unknown): Op | undefined {
   const kind = field(input, 'kind');
+  if (kind === 'insertBlock') {
+    const block = blockFrom(field(input, 'block'));
+    const parent = parentFrom(field(input, 'parent'));
+    const index = field(input, 'index');
+    return block !== undefined && parent !== undefined && typeof index === 'number'
+      ? { kind, block, parent, index }
+      : undefined;
+  }
   const blockId = field(input, 'blockId');
   if (!isId(blockId)) return undefined;
   switch (kind) {
@@ -76,7 +108,13 @@ function opFrom(input: unknown): Op | undefined {
         ? { kind, blockId, type, props }
         : undefined;
     }
+    case 'setProps': {
+      const props = jsonOf(field(input, 'props'));
+      return props === undefined ? undefined : { kind, blockId, props };
+    }
     case 'mergeBlocks':
+      return { kind, blockId };
+    case 'removeBlock':
       return { kind, blockId };
     default:
       return undefined;
@@ -132,7 +170,30 @@ export function plan(view: DocView, input: unknown, registry: Registry = builtin
   return { op, ...planned(view, op, registry) };
 }
 
+function inserting(
+  view: DocView,
+  op: Extract<Op, { kind: 'insertBlock' }>,
+  registry: Registry,
+): { change: Change; inverse: Op } {
+  if (op.parent !== null) refuse(op, 'unknown slot');
+  const { block } = op;
+  if (view.blocks.get(block.id) !== undefined) refuse(op, 'id taken');
+  const component = componentOf(op, registry, block.type);
+  const props = propsOf(op, component, block.props);
+  const fields = fieldsFor(component, block.fields) ?? refuse(op, 'fields do not fit the type');
+  if (!Number.isInteger(op.index) || op.index < 0 || op.index > view.ids.length) {
+    refuse(op, 'index outside the list');
+  }
+  const ids = [...view.ids];
+  ids.splice(op.index, 0, block.id);
+  return {
+    change: { put: [{ id: block.id, type: block.type, props, fields }], ids, drop: [] },
+    inverse: { kind: 'removeBlock', blockId: block.id },
+  };
+}
+
 function planned(view: DocView, op: Op, registry: Registry): { change: Change; inverse: Op } {
+  if (op.kind === 'insertBlock') return inserting(view, op, registry);
   const { blockId } = op;
   const block = view.blocks.get(blockId) ?? refuse(op, 'unknown block');
   const component = componentOf(op, registry, block.type);
@@ -230,6 +291,20 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
         inverse: { kind: 'setType', blockId, type: block.type, props: block.props },
       };
     }
+    case 'setProps': {
+      const props = propsOf(op, component, op.props);
+      if (sameJson(props, block.props)) refuse(op, 'block already has those props');
+      return {
+        change: { put: [{ ...block, props }], drop: [] },
+        inverse: { kind: 'setProps', blockId, props: block.props },
+      };
+    }
+    case 'removeBlock':
+      if (view.ids.length <= 1) refuse(op, 'the last block stays');
+      return {
+        change: { put: [], ids: view.ids.filter((id) => id !== blockId), drop: [blockId] },
+        inverse: { kind: 'insertBlock', block, parent: null, index: view.ids.indexOf(blockId) },
+      };
   }
 }
 

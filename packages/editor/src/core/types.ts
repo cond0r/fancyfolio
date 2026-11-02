@@ -82,6 +82,8 @@ export type DocView = {
   readonly blocks: { get(id: BlockId): Block | undefined };
 };
 
+export type Parent = { readonly blockId: BlockId; readonly slot: string } | null;
+
 export type Op =
   | {
       readonly kind: 'insertText';
@@ -112,7 +114,15 @@ export type Op =
       readonly blockId: BlockId;
       readonly type: string;
       readonly props: Json;
-    };
+    }
+  | { readonly kind: 'setProps'; readonly blockId: BlockId; readonly props: Json }
+  | {
+      readonly kind: 'insertBlock';
+      readonly block: Block;
+      readonly parent: Parent;
+      readonly index: number;
+    }
+  | { readonly kind: 'removeBlock'; readonly blockId: BlockId };
 
 export type Change = {
   readonly put: readonly Block[];

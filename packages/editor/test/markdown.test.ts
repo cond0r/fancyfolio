@@ -1,4 +1,4 @@
-import type { Nodes, Root } from 'mdast';
+import type { Nodes, Root, RootContent } from 'mdast';
 import rehypeStringify from 'rehype-stringify';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
@@ -322,17 +322,19 @@ describe('random bodies', () => {
     const modelled = kinds.filter((kind) => kind.type !== 'raw');
     let next = 0;
     for (let run = 0; run < 50; run += 1) {
-      let doc = loaded(randomBody(random));
+      const body = randomBody(random);
+      let doc = loaded(body);
+      const nodes = loadedNodes(body, doc);
       for (let step = random.int(4); step >= 0; step -= 1) {
         doc = apply(
           doc,
-          randomOp(doc, random, () => `n${next++}`, modelled),
+          randomOp(doc, random, () => `n${next++}`, modelled, true),
         ).doc;
       }
       const result = save(doc);
       if (!result.ok) continue;
       const where = `seed ${seed} run ${run} ${JSON.stringify(result.markdown)}`;
-      expectReadsAs(result.markdown, doc, where);
+      expectReadsAs(result.markdown, doc, where, nodes);
     }
   });
 });
@@ -345,24 +347,43 @@ function liveCounts(node: Nodes, counts = new Map<string, number>()): Map<string
   return counts;
 }
 
-function typesOf(doc: Doc): string[] {
+function loadedNodes(body: string, doc: Doc): Map<Block, RootContent> {
+  const nodes = parseMarkdown(body).children;
+  return new Map(
+    snapshot(doc).flatMap((block, index): [Block, RootContent][] => {
+      const node = nodes[index];
+      return block.type === 'raw' && node !== undefined ? [[block, node]] : [];
+    }),
+  );
+}
+
+function rawNodes(block: Block, nodes: ReadonlyMap<Block, RootContent>): readonly RootContent[] {
+  const node = nodes.get(block);
+  return node === undefined ? parseMarkdown(block.fields.text).children : [node];
+}
+
+function typesOf(doc: Doc, nodes: ReadonlyMap<Block, RootContent>): string[] {
   return snapshot(doc).flatMap((block) => {
-    const { text } = block.fields;
-    if (block.type === 'raw') return parseMarkdown(text).children.map((node) => node.type);
-    return block.type === 'paragraph' && text === '' ? [] : [block.type];
+    if (block.type === 'raw') return rawNodes(block, nodes).map((node) => node.type);
+    return block.type === 'paragraph' && block.fields.text === '' ? [] : [block.type];
   });
 }
 
-function expectReadsAs(markdown: string, doc: Doc, where: string) {
+function expectReadsAs(
+  markdown: string,
+  doc: Doc,
+  where: string,
+  nodes: ReadonlyMap<Block, RootContent> = new Map(),
+) {
   const tree = parseMarkdown(markdown);
   expect(
     tree.children.map((node) => node.type),
     where,
-  ).toEqual(typesOf(doc));
+  ).toEqual(typesOf(doc, nodes));
   expect(keptInOrder(textOnly(loaded(markdown)), textOnly(doc)), where).toEqual(textOnly(doc));
   const model = new Map<string, number>();
   for (const block of snapshot(doc).filter((each) => each.type === 'raw')) {
-    liveCounts(parseMarkdown(block.fields.text), model);
+    for (const node of rawNodes(block, nodes)) liveCounts(node, model);
   }
   for (const [type, count] of liveCounts(tree)) {
     expect(count, `${where} ${type}`).toBeLessThanOrEqual(model.get(type) ?? 0);
@@ -562,13 +583,14 @@ describe('an edit changes only the block it touches', () => {
     expect(save(doc)).toEqual({ ok: false, reason: 'guard' });
   });
 
-  it('writes the loaded bytes again once an edit or a split is undone', () => {
+  it('writes the loaded bytes again once an edit, a split or a level change is undone', () => {
     const body = 'Title\n=====\n\ntext\n';
     const doc = loaded(body);
     const id = doc.ids[0] as string;
     const ops: Op[] = [
       typed(id, 5, 'x'),
       { kind: 'splitBlock', blockId: id, field: 'text', offset: 2, newId: 'n', ...paragraph },
+      { kind: 'setProps', blockId: id, props: { level: 2 } },
     ];
     for (const op of ops) {
       const edit = apply(doc, op);

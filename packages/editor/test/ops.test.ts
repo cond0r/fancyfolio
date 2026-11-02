@@ -3,7 +3,15 @@ import { docOf } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
 import type { AnyComponent, Doc, Op } from '../src/core/types.ts';
-import { docProblems, randomOp, seeded, seeds, snapshot } from './generate.ts';
+import {
+  answeringLater,
+  docProblems,
+  kinds,
+  randomOp,
+  seeded,
+  seeds,
+  snapshot,
+} from './generate.ts';
 
 const start = docOf([
   { id: 'a', type: 'heading', props: { level: 1 }, fields: { text: 'Title' } },
@@ -94,6 +102,37 @@ describe('each op', () => {
     expect(inverse).toEqual({ kind: 'setType', blockId: 'b', ...paragraph });
   });
 
+  it('sets the props of a block and sets the old ones back', () => {
+    const { doc, inverse } = apply(start, { kind: 'setProps', blockId: 'a', props: { level: 2 } });
+    expect(doc.blocks.get('a')).toEqual({
+      id: 'a',
+      type: 'heading',
+      props: { level: 2 },
+      fields: { text: 'Title' },
+    });
+    expect(inverse).toEqual({ kind: 'setProps', blockId: 'a', props: { level: 1 } });
+  });
+
+  it('inserts a whole block at an index and removes it back', () => {
+    const block = { id: 'n', type: 'heading', props: { level: 2 }, fields: { text: 'New' } };
+    const { doc, inverse } = apply(start, { kind: 'insertBlock', block, parent: null, index: 1 });
+    expect(doc.ids).toEqual(['a', 'n', 'b', 'c']);
+    expect(doc.blocks.get('n')).toEqual(block);
+    expect(inverse).toEqual({ kind: 'removeBlock', blockId: 'n' });
+  });
+
+  it('removes a block and inserts the whole block back at its index', () => {
+    const { doc, inverse } = apply(start, { kind: 'removeBlock', blockId: 'b' });
+    expect(doc.ids).toEqual(['a', 'c']);
+    expect(doc.blocks.has('b')).toBe(false);
+    expect(inverse).toEqual({
+      kind: 'insertBlock',
+      block: start.blocks.get('b'),
+      parent: null,
+      index: 1,
+    });
+  });
+
   it('leaves the input doc untouched', () => {
     const before = blocks(start);
     apply(start, { kind: 'mergeBlocks', blockId: 'b' });
@@ -148,7 +187,10 @@ describe('refused ops leave nothing half applied', () => {
   });
   const split = (newId: string, offset: number, kind: object = paragraph, field = 'text'): Op =>
     ({ kind: 'splitBlock', blockId: 'b', field, offset, newId, ...kind }) as Op;
+  const added = (block: object, index = 0, parent: object | null = null): Op =>
+    ({ kind: 'insertBlock', block, parent, index }) as Op;
   const heading = (level: number) => ({ type: 'heading', props: { level } });
+  const empty = { id: 'n', ...paragraph, fields: { text: '' } };
   const refused: [string, Op][] = [
     [
       'an unknown block',
@@ -177,10 +219,24 @@ describe('refused ops leave nothing half applied', () => {
     ['a split into an unknown type', split('n', 1, { type: 'list', props: {} })],
     ['a split into heading level 9', split('n', 1, heading(9))],
     ['props on a paragraph', { kind: 'setType', blockId: 'a', type: 'paragraph', props: { a: 1 } }],
+    ['setting heading level 7', { kind: 'setProps', blockId: 'a', props: { level: 7 } }],
+    ['a level with an extra key', { kind: 'setProps', blockId: 'a', props: { level: 2, x: 1 } }],
+    ['setting a level on a paragraph', { kind: 'setProps', blockId: 'b', props: { level: 2 } }],
+    ['setting the props a block has', { kind: 'setProps', blockId: 'a', props: { level: 1 } }],
     ['text in a field the block has not', insert('x', 0, 'label')],
     ['text in an inherited field', insert('x', 0, 'constructor')],
     ['text in the prototype field', insert('x', 0, '__proto__')],
     ['a split of a field the block has not', split('n', 1, paragraph, 'level')],
+    ['inserting heading level 9', added({ ...empty, ...heading(9) })],
+    ['inserting a taken id', added({ ...empty, id: 'b' })],
+    ['inserting an unknown type', added({ ...empty, type: 'table' })],
+    ['inserting a block without its field', added({ ...empty, fields: {} })],
+    ['inserting an extra field', added({ ...empty, fields: { text: '', label: 'x' } })],
+    ['inserting a lone surrogate', added({ ...empty, fields: { text: '\ud83d' } })],
+    ['inserting past the end', added(empty, 4)],
+    ['inserting before the start', added(empty, -1)],
+    ['inserting into a slot', added(empty, 0, { blockId: 'a', slot: 'body' })],
+    ['removing an unknown block', { kind: 'removeBlock', blockId: 'zz' }],
   ];
 
   it.each(refused)('refuses %s', (_name, op) => {
@@ -228,21 +284,53 @@ describe('refused ops leave nothing half applied', () => {
     expect(blocks(doc)).toEqual(before);
   });
 
-  it('refuses props whose schema answers later', () => {
-    const later: AnyComponent = {
-      name: 'later',
-      props: {
-        '~standard': { version: 1, vendor: 'test', validate: async (value) => ({ value }) },
-      },
+  it('refuses removing the last block', () => {
+    const one = docOf([{ id: 'p', ...paragraph, fields: { text: 'x' } }]);
+    expect(() => apply(one, { kind: 'removeBlock', blockId: 'p' })).toThrow(RangeError);
+    expect(blocks(one)).toEqual([{ id: 'p', ...paragraph, fields: { text: 'x' } }]);
+  });
+
+  function refusesEveryPropsOp(props: AnyComponent['props']) {
+    const failing: AnyComponent = {
+      name: 'failing',
+      props,
       fields: ['text'],
       markdown: {
-        match: 'leafDirective:later',
+        match: 'leafDirective:failing',
         read: () => undefined,
         write: () => ({ type: 'paragraph', children: [] }),
       },
     };
-    const op: Op = { kind: 'setType', blockId: 'b', type: 'later', props: {} };
-    expect(() => apply(start, op, registryOf([later]))).toThrow(RangeError);
+    const block = { id: 'f', type: 'failing', props: {}, fields: { text: '' } };
+    const doc = docOf([...blocks(start), block]);
+    const ops: Op[] = [
+      { kind: 'setProps', blockId: 'f', props: { tone: 'info' } },
+      { kind: 'setType', blockId: 'b', type: 'failing', props: {} },
+      { kind: 'insertBlock', block: { ...block, id: 'n' }, parent: null, index: 0 },
+    ];
+    for (const op of ops) {
+      expect(() => apply(doc, op, registryOf([failing]))).toThrow(
+        new RangeError(`${op.kind} refused: props fail the schema`),
+      );
+    }
+  }
+
+  it('refuses props whose schema throws', () => {
+    refusesEveryPropsOp({
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: () => {
+          throw new Error('component bug');
+        },
+      },
+    });
+  });
+
+  it('refuses props whose schema answers later and handles the answer', () => {
+    const later = answeringLater();
+    refusesEveryPropsOp(later.schema);
+    expect(later.handled()).toBe(true);
   });
 
   it('moves no text between raw source and plain text, so an empty block may cross', () => {
@@ -267,6 +355,9 @@ describe('refused ops leave nothing half applied', () => {
       fields: { text: '' },
     });
   });
+
+  const block = (fields: string) =>
+    `{"id":"n","type":"paragraph","props":{},"fields":${fields}},"parent":null,"index":0}`;
 
   it.each([
     ['text as a number', '{"kind":"insertText","blockId":"b","field":"text","offset":0,"text":1}'],
@@ -302,6 +393,15 @@ describe('refused ops leave nothing half applied', () => {
     [
       'a level next to a prototype key',
       '{"kind":"setType","blockId":"b","type":"heading","props":{"level":2,"__proto__":{"level":7}}}',
+    ],
+    ['a number text in a block', `{"kind":"insertBlock","block":${block('{"text":1}')}`],
+    [
+      'a prototype field in a block',
+      `{"kind":"insertBlock","block":${block('{"text":"","__proto__":"x"}')}`,
+    ],
+    [
+      'a missing parent',
+      '{"kind":"insertBlock","block":{"id":"n","type":"paragraph","props":{},"fields":{"text":""}},"index":0}',
     ],
     ['a number id', '{"kind":"mergeBlocks","blockId":7}'],
     ['an unknown op', '{"kind":"evil","blockId":"b"}'],
@@ -366,7 +466,7 @@ describe('random op sequences', () => {
     let next = 0;
     let doc = start;
     for (let step = 0; step < 300; step += 1) {
-      const op = randomOp(doc, random, () => `n${next++}`);
+      const op = randomOp(doc, random, () => `n${next++}`, kinds, true);
       const where = `seed ${seed} step ${step} ${JSON.stringify(op)}`;
       const { doc: after, inverse } = apply(doc, op);
       expect(docProblems(after), where).toEqual([]);
@@ -375,10 +475,14 @@ describe('random op sequences', () => {
       expect(blocks(back), where).toEqual(blocks(doc));
       const removed = doc.ids.filter((id) => !after.blocks.has(id));
       const added = after.ids.filter((id) => !doc.blocks.has(id));
-      expect(removed, where).toEqual(op.kind === 'mergeBlocks' ? [op.blockId] : []);
-      expect(added, where).toEqual(op.kind === 'splitBlock' ? [op.newId] : []);
+      const dropped = op.kind === 'mergeBlocks' || op.kind === 'removeBlock';
+      expect(removed, where).toEqual(dropped ? [op.blockId] : []);
+      expect(added, where).toEqual(
+        op.kind === 'splitBlock' ? [op.newId] : op.kind === 'insertBlock' ? [op.block.id] : [],
+      );
+      const touched = 'blockId' in op ? op.blockId : undefined;
       for (const id of after.ids) {
-        if (id !== op.blockId && !added.includes(id) && op.kind !== 'mergeBlocks') {
+        if (id !== touched && !added.includes(id) && op.kind !== 'mergeBlocks') {
           expect(after.blocks.get(id), where).toBe(doc.blocks.get(id));
         }
       }

@@ -1,5 +1,6 @@
+import { vi } from 'vitest';
 import { isRaw, sameJson } from '../src/core/model.ts';
-import type { Block, BlockKind, Doc, Op } from '../src/core/types.ts';
+import type { AnyComponent, Block, BlockKind, Doc, Op } from '../src/core/types.ts';
 
 export type Random = { int(below: number): number; pick<T>(items: readonly T[]): T };
 
@@ -19,6 +20,15 @@ export function seeded(seed: number): Random {
 export function counter(prefix = 'b'): () => string {
   let next = 0;
   return () => `${prefix}${next++}`;
+}
+
+export function answeringLater(): { schema: AnyComponent['props']; handled: () => boolean } {
+  const answer = Promise.reject(new Error('the schema answered later'));
+  const then = vi.spyOn(answer, 'then');
+  return {
+    schema: { '~standard': { version: 1, vendor: 'test', validate: () => answer } },
+    handled: () => then.mock.calls.some(([, onRejected]) => typeof onRejected === 'function'),
+  };
 }
 
 export const seeds = process.env.EDITOR_SEED
@@ -99,14 +109,20 @@ function isSameKind(a: BlockKind, b: BlockKind): boolean {
   return a.type === b.type && sameJson(a.props, b.props);
 }
 
-export function randomOp(doc: Doc, random: Random, newId: () => string, kindsAllowed = kinds): Op {
+export function randomOp(
+  doc: Doc,
+  random: Random,
+  newId: () => string,
+  kindsAllowed = kinds,
+  structural = false,
+): Op {
   const index = random.int(doc.ids.length);
   const blockId = doc.ids[index] as string;
   const block = doc.blocks.get(blockId) as Block;
   const text = block.fields.text as string;
   const field = 'text';
   for (;;) {
-    switch (random.int(5)) {
+    switch (random.int(structural ? 8 : 5)) {
       case 0:
         return {
           kind: 'insertText',
@@ -146,6 +162,27 @@ export function randomOp(doc: Doc, random: Random, newId: () => string, kindsAll
         if (allowed.length > 0) return { kind: 'setType', blockId, ...random.pick(allowed) };
         break;
       }
+      case 5: {
+        const levels = kindsAllowed.filter(
+          (kind) => kind.type === block.type && !isSameKind(kind, block),
+        );
+        if (levels.length > 0)
+          return { kind: 'setProps', blockId, props: random.pick(levels).props };
+        break;
+      }
+      case 6: {
+        const { type, props } = random.pick(kindsAllowed);
+        const fields = { text: random.int(3) === 0 ? '' : randomText(random) };
+        const at = random.int(doc.ids.length + 1);
+        return {
+          kind: 'insertBlock',
+          block: { id: newId(), type, props, fields },
+          parent: null,
+          index: at,
+        };
+      }
+      default:
+        if (doc.ids.length > 1) return { kind: 'removeBlock', blockId };
     }
   }
 }

@@ -6,7 +6,7 @@ import { apply } from '../src/core/ops.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
 import type { AnyComponent, Block, Component, Editor, Op } from '../src/core/types.ts';
-import { counter, docProblems, randomOp, seeded, seeds, snapshot } from './generate.ts';
+import { counter, docProblems, kinds, randomOp, seeded, seeds, snapshot } from './generate.ts';
 
 function editorAt(markdown: string, clock = { now: 0 }): Editor {
   return createEditor(markdown, { now: () => clock.now, newId: counter() });
@@ -307,7 +307,7 @@ describe('undo and redo', () => {
     const states: { ids: readonly string[]; blocks: Block[] }[] = [state(editor)];
     let next = 0;
     for (let step = 0; step < 200; step += 1) {
-      const op = randomOp(editor.doc(), random, () => `n${next++}`);
+      const op = randomOp(editor.doc(), random, () => `n${next++}`, kinds, true);
       const expected = apply(editor.doc(), op).doc;
       editor.dispatch(op);
       expect(docProblems(editor.doc()), `seed ${seed} step ${step}`).toEqual([]);

@@ -6,7 +6,16 @@ import { apply } from '../src/core/ops.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
 import type { AnyComponent, Block, Component, Editor, Op } from '../src/core/types.ts';
-import { counter, docProblems, kinds, randomOp, seeded, seeds, snapshot } from './generate.ts';
+import {
+  answeringLater,
+  counter,
+  docProblems,
+  kinds,
+  randomOp,
+  seeded,
+  seeds,
+  snapshot,
+} from './generate.ts';
 
 function editorAt(markdown: string, clock = { now: 0 }): Editor {
   return createEditor(markdown, { now: () => clock.now, newId: counter() });
@@ -220,6 +229,35 @@ describe('the editor store', () => {
     },
   );
 
+  it('loads a block as raw source when its props schema answers later, and handles it', () => {
+    const later = answeringLater();
+    const page = '::failing[x]{a="1"}\n\nText\n';
+    const failing = { ...reader, props: later.schema };
+    const editor = createEditor(page, { now: () => 0, newId: counter(), components: [failing] });
+    expect(state(editor).blocks.map((block) => block.type)).toEqual(['raw', 'paragraph']);
+    expect(saved(editor)).toBe(page);
+    expect(later.handled()).toBe(true);
+  });
+
+  it('refuses a dispatch whose props schema throws and keeps the doc and history', () => {
+    const failing = {
+      ...reader,
+      props: { '~standard': { ...noProps['~standard'], validate: fails } },
+    };
+    const editor = createEditor(body, { now: () => 0, newId: counter(), components: [failing] });
+    const id = idAt(editor, 1);
+    editor.dispatch(insertAt(id, 0, 'x'));
+    const before = state(editor);
+    const typed: Op = { kind: 'setType', blockId: id, type: 'failing', props: {} };
+    expect(() => editor.dispatch(insertAt(id, 0, 'y'), typed)).toThrow(
+      new RangeError('setType refused: props fail the schema'),
+    );
+    expect(state(editor)).toEqual(before);
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(body);
+    expect(editor.undo()).toBe(false);
+  });
+
   it('holds only live blocks after 10,000 insert and delete cycles', () => {
     const editor = editorAt('ab\n');
     const id = idAt(editor, 0);
@@ -325,6 +363,79 @@ describe('undo and redo', () => {
     while (editor.redo());
     expect(state(editor), `seed ${seed}`).toEqual(final);
     expect(snapshot(editor.doc())).toEqual(final.blocks);
+  });
+});
+
+describe('a dispatch of several ops', () => {
+  it('plans each op on the ones before it and undoes them as one step', () => {
+    const editor = editorAt('ab\n');
+    const id = idAt(editor, 0);
+    editor.dispatch(cut(id, 1, 'n'), insertAt('n', 0, 'x'), {
+      kind: 'setType',
+      blockId: id,
+      type: 'heading',
+      props: { level: 1 },
+    });
+    expect(saved(editor)).toBe('# a\n\nxb\n');
+    editor.dispatch(
+      { kind: 'setType', blockId: 'n', type: 'heading', props: { level: 2 } },
+      { kind: 'removeBlock', blockId: id },
+    );
+    expect(saved(editor)).toBe('## xb\n');
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe('# a\n\nxb\n');
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe('ab\n');
+    expect(editor.undo()).toBe(false);
+    expect(editor.redo() && editor.redo()).toBe(true);
+    expect(saved(editor)).toBe('## xb\n');
+  });
+
+  it('refuses the whole dispatch when one op is refused', () => {
+    const editor = editorAt(body);
+    const id = idAt(editor, 1);
+    editor.dispatch(insertAt(id, 0, 'x'));
+    const before = state(editor);
+    expect(() =>
+      editor.dispatch(
+        insertAt(id, 0, 'y'),
+        { kind: 'removeBlock', blockId: id },
+        insertAt(id, 0, 'z'),
+      ),
+    ).toThrow(RangeError);
+    expect(() => editor.dispatch()).toThrow(RangeError);
+    expect(state(editor)).toEqual(before);
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(body);
+  });
+
+  it('refuses a dispatch that moves a block text between raw source and plain text', () => {
+    const editor = editorAt(body);
+    const id = idAt(editor, 1);
+    editor.dispatch(insertAt(id, 0, 'x'));
+    const before = state(editor);
+    const text = 'xMeet at 10:30';
+    const asRaw = { id, type: 'raw', props: {}, fields: { text } };
+    const emptied: Op[] = [
+      { kind: 'deleteText', blockId: id, field: 'text', from: 0, to: text.length },
+      { kind: 'setType', blockId: id, type: 'raw', props: {} },
+    ];
+    const crossings: Op[][] = [
+      [
+        { kind: 'removeBlock', blockId: id },
+        { kind: 'insertBlock', block: asRaw, parent: null, index: 1 },
+      ],
+      [...emptied, insertAt(id, 0, text)],
+    ];
+    for (const ops of crossings) {
+      expect(() => editor.dispatch(...ops)).toThrow(RangeError);
+      expect(state(editor)).toEqual(before);
+    }
+    editor.dispatch(...emptied);
+    expect(state(editor).blocks[1]).toEqual({ ...asRaw, fields: { text: '' } });
+    expect(editor.undo() && editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(body);
+    expect(editor.undo()).toBe(false);
   });
 });
 
@@ -476,10 +587,10 @@ describe('undo steps over a session', () => {
       from,
       to,
     });
-    const once = record(emptyHistory, first, deleted(0, 1), 0);
-    const joined = record(once, insertAt('a', 1, 'y'), deleted(1, 2), 10);
+    const once = record(emptyHistory, [first], [deleted(0, 1)], 0);
+    const joined = record(once, [insertAt('a', 1, 'y')], [deleted(1, 2)], 10);
     const undone = undo(joined);
-    expect(undone?.op).toEqual(deleted(0, 2));
-    expect(undone && redo(undone.history)?.op).toEqual(insertAt('a', 0, 'xy'));
+    expect(undone?.ops).toEqual([deleted(0, 2)]);
+    expect(undone && redo(undone.history)?.ops).toEqual([insertAt('a', 0, 'xy')]);
   });
 });

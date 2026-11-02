@@ -308,6 +308,39 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
   }
 }
 
+export function planAll(view: DocView, inputs: readonly unknown[], registry: Registry): Planned[] {
+  if (inputs.length === 0) throw new RangeError('dispatch refused: no ops');
+  const blocks = new Map<BlockId, Block | undefined>();
+  let ids = view.ids;
+  const working: DocView = {
+    get ids() {
+      return ids;
+    },
+    blocks: { get: (id) => (blocks.has(id) ? blocks.get(id) : view.blocks.get(id)) },
+  };
+  const steps = inputs.map((input) => {
+    const step = plan(working, input, registry);
+    for (const id of step.change.drop) blocks.set(id, undefined);
+    for (const block of step.change.put) blocks.set(block.id, block);
+    ids = step.change.ids ?? ids;
+    return step;
+  });
+  for (const [id, after] of blocks) {
+    const before = view.blocks.get(id);
+    if (before === undefined || after === undefined || isRaw(before.type) === isRaw(after.type)) {
+      continue;
+    }
+    if (textOf(before) !== '' && textOf(after) !== '') {
+      throw new RangeError('dispatch refused: text cannot move between raw source and plain text');
+    }
+  }
+  return steps;
+}
+
+function textOf(block: Block): string {
+  return Object.values(block.fields).join('');
+}
+
 export function apply(doc: Doc, op: Op, registry: Registry = builtins): { doc: Doc; inverse: Op } {
   const { change, inverse } = plan(doc, op, registry);
   const blocks = new Map(doc.blocks);

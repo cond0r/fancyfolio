@@ -2,9 +2,9 @@ import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
 import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
 import { docOf } from './model.ts';
-import { plan } from './ops.ts';
+import { planAll } from './ops.ts';
 import { registryOf } from './registry.ts';
-import type { Block, BlockId, Doc, DocView, Editor, EditorOptions, Op } from './types.ts';
+import type { Block, BlockId, Change, Doc, DocView, Editor, EditorOptions, Op } from './types.ts';
 
 export function createEditor(markdown: string, options: EditorOptions): Editor {
   const registry = registryOf(options.components ?? []);
@@ -28,9 +28,7 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     },
   };
 
-  function commit(input: Op, recorded?: Op): { op: Op; reverse: Op } {
-    const { op, change, inverse } = plan(view, input, registry);
-    const reverse = recorded ?? inverse;
+  function write(change: Change, input: Op, reverse: Op) {
     for (const block of change.put) {
       const existing = blocks.get(block.id) ?? retired.get(input);
       if (existing === undefined) blocks.set(block.id, atom(block));
@@ -45,13 +43,21 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
       if (dropped !== undefined) retired.set(reverse, dropped);
       blocks.delete(id);
     }
-    return { op, reverse };
+  }
+
+  function commit(inputs: readonly Op[], recorded?: readonly Op[]) {
+    const planned = planAll(view, inputs, registry);
+    const inverses = recorded ?? planned.map((each) => each.inverse);
+    planned.forEach(({ change }, index) => {
+      write(change, inputs[index], inverses[index]);
+    });
+    return { ops: planned.map((each) => each.op), inverses };
   }
 
   function travel(move: typeof undo): boolean {
     const moved = move(history);
     if (moved === undefined) return false;
-    commit(moved.op, moved.inverse);
+    commit(moved.ops, moved.inverses);
     history = moved.history;
     return true;
   }
@@ -72,9 +78,9 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     store,
     ids,
     blocks,
-    dispatch(input) {
-      const { op, reverse } = commit(input);
-      history = record(history, op, reverse, options.now());
+    dispatch(...inputs) {
+      const { ops, inverses } = commit(inputs);
+      history = record(history, ops, inverses, options.now());
     },
     undo: () => travel(undo),
     redo: () => travel(redo),

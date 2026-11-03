@@ -109,7 +109,21 @@ function selected(context: Context): Result {
 const none = () => undefined;
 
 const defaults: DefaultHandlers = {
-  insertText: none,
+  insertText(context, { text }) {
+    const at = textAt(context);
+    if (at === undefined || text === '') return undefined;
+    const typed: Op = {
+      kind: 'insertText',
+      blockId: at.blockId,
+      field: at.field,
+      offset: at.from,
+      text,
+    };
+    return {
+      ops: [...cleared(at), typed],
+      selection: caret(at.blockId, at.field, at.from + text.length),
+    };
+  },
   insertBreak(context) {
     const at = textAt(context);
     if (at === undefined || soleField(at.block) !== at.field) return undefined;

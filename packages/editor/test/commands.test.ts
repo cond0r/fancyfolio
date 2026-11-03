@@ -215,3 +215,50 @@ describe('the default delete commands', () => {
     expect(editor.undo()).toBe(false);
   });
 });
+
+describe('typing and history commands', () => {
+  it('types over a selected range and moves the caret after the text', () => {
+    const editor = editorAt('abcd\n');
+    select(editor, caret('b0', 1, 3));
+    expect(editor.command('insertText', { text: 'XY' })).toBe(true);
+    expect(saved(editor)).toBe('aXYd\n');
+    expect(editor.store.get(editor.selection)).toEqual(caret('b0', 3));
+    expect(editor.command('insertText', { text: '' })).toBe(false);
+    select(editor, blocks('b0'));
+    expect(editor.command('insertText', { text: 'z' })).toBe(false);
+    expect(saved(editor)).toBe('aXYd\n');
+  });
+
+  it('undoes and redoes the history when no component claims the command', () => {
+    const editor = editorAt('ab\n');
+    expect(editor.command('undo', {})).toBe(false);
+    select(editor, caret('b0', 2));
+    editor.command('insertText', { text: 'c' });
+    expect(editor.command('undo', {})).toBe(true);
+    expect(saved(editor)).toBe('ab\n');
+    expect(editor.command('redo', {})).toBe(true);
+    expect(saved(editor)).toBe('abc\n');
+    expect(editor.command('redo', {})).toBe(false);
+  });
+
+  it('dispatches a component result for undo instead of moving the history', () => {
+    const claiming = withCommands('claiming', {
+      undo: (context) => ({
+        ops: [
+          {
+            kind: 'insertText',
+            blockId: context.doc.ids[0] ?? '',
+            field: 'text',
+            offset: 0,
+            text: 'u',
+          },
+        ],
+      }),
+    });
+    const editor = editorAt('ab\n', [claiming]);
+    expect(editor.command('undo', {})).toBe(true);
+    expect(saved(editor)).toBe('uab\n');
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe('ab\n');
+  });
+});

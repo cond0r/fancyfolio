@@ -1,10 +1,21 @@
 import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
+import { caretIn, run } from './commands.ts';
 import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
 import { docOf } from './model.ts';
 import { planAll } from './ops.ts';
 import { registryOf } from './registry.ts';
-import type { Block, BlockId, Change, Doc, DocView, Editor, EditorOptions, Op } from './types.ts';
+import type {
+  Block,
+  BlockId,
+  Change,
+  Doc,
+  DocView,
+  Editor,
+  EditorOptions,
+  Op,
+  Selection,
+} from './types.ts';
 
 export function createEditor(markdown: string, options: EditorOptions): Editor {
   const registry = registryOf(options.components ?? []);
@@ -14,6 +25,10 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
   const blocks = new Map<BlockId, PrimitiveAtom<Block>>();
   for (const [id, block] of initial.blocks) blocks.set(id, atom(block));
   const retired = new WeakMap<Op, PrimitiveAtom<Block>>();
+  const [first] = initial.ids;
+  const firstBlock = first === undefined ? undefined : initial.blocks.get(first);
+  if (firstBlock === undefined) throw new Error('the document has no first block');
+  const selection = atom<Selection>(caretIn(firstBlock));
   let history = emptyHistory;
 
   const view: DocView = {
@@ -62,6 +77,11 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     return true;
   }
 
+  function dispatch(...inputs: Op[]) {
+    const { ops, inverses } = commit(inputs);
+    history = record(history, ops, inverses, options.now());
+  }
+
   function doc(): Doc {
     const order = store.get(ids);
     return docOf(
@@ -78,9 +98,18 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     store,
     ids,
     blocks,
-    dispatch(...inputs) {
-      const { ops, inverses } = commit(inputs);
-      history = record(history, ops, inverses, options.now());
+    selection,
+    dispatch,
+    command(name, args) {
+      const context = { doc: view, selection: store.get(selection), newId: options.newId };
+      const result = run(registry.components.values(), name, context, args);
+      if (result === undefined) {
+        if (name === 'undo') return travel(undo);
+        return name === 'redo' && travel(redo);
+      }
+      if (result.ops.length > 0) dispatch(...result.ops);
+      if (result.selection !== undefined) store.set(selection, result.selection);
+      return true;
     },
     undo: () => travel(undo),
     redo: () => travel(redo),

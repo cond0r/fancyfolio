@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type { Atom, Store } from 'jotai/vanilla';
+import type { Atom, PrimitiveAtom, Store } from 'jotai/vanilla';
 import type { RootContent } from 'mdast';
 
 export type BlockId = string;
@@ -45,6 +45,7 @@ export type Component<Name extends string, Props, Field extends string> = {
   readonly props: StandardSchemaV1<unknown, Props>;
   readonly fields: readonly Field[];
   readonly markdown: Codec<Props, Field>;
+  readonly commands?: Handlers;
 };
 
 export type AnyComponent = Component<string, unknown, string>;
@@ -124,6 +125,42 @@ export type Op =
     }
   | { readonly kind: 'removeBlock'; readonly blockId: BlockId };
 
+export type Selection =
+  | {
+      readonly kind: 'text';
+      readonly blockId: BlockId;
+      readonly field: string;
+      readonly from: number;
+      readonly to: number;
+    }
+  | { readonly kind: 'blocks'; readonly ids: readonly BlockId[] };
+
+export type NoArgs = { readonly [key: string]: never };
+
+export type Commands = {
+  readonly insertText: { readonly text: string };
+  readonly insertBreak: NoArgs;
+  readonly deleteBackward: NoArgs;
+  readonly deleteForward: NoArgs;
+  readonly deleteSelection: NoArgs;
+  readonly undo: NoArgs;
+  readonly redo: NoArgs;
+};
+
+export type Result = { readonly ops: readonly Op[]; readonly selection?: Selection } | undefined;
+
+export type Context = {
+  readonly doc: DocView;
+  readonly selection: Selection;
+  newId(): BlockId;
+};
+
+export type Handler<Args> = (context: Context, args: Args, next: () => Result) => Result;
+
+export type Handlers = { readonly [C in keyof Commands]?: Handler<Commands[C]> };
+
+export type DefaultHandlers = { readonly [C in keyof Commands]: Handler<Commands[C]> };
+
 export type Change = {
   readonly put: readonly Block[];
   readonly ids?: readonly BlockId[];
@@ -155,7 +192,9 @@ export type Editor = {
   readonly store: Store;
   readonly ids: Atom<readonly BlockId[]>;
   readonly blocks: ReadonlyMap<BlockId, Atom<Block>>;
+  readonly selection: PrimitiveAtom<Selection>;
   dispatch(...ops: Op[]): void;
+  command<C extends keyof Commands>(name: C, args: Commands[C]): boolean;
   undo(): boolean;
   redo(): boolean;
   doc(): Doc;

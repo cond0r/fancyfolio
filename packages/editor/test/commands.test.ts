@@ -106,3 +106,112 @@ describe('the command chain', () => {
     expect(saved(editor)).toBe('a\n\nb\n');
   });
 });
+
+function blocks(...ids: string[]): Selection {
+  return { kind: 'blocks', ids };
+}
+
+const plain = 'one\n\ntwo\n';
+const raw = '::foo{x=1}\n\npara\n';
+
+describe('the default delete commands', () => {
+  it.each([
+    [
+      'merges a block into the one before at its start',
+      '# Title\n\nbody\n',
+      caret('b1', 0),
+      'deleteBackward',
+      '# Titlebody\n',
+      caret('b0', 5),
+    ],
+    [
+      'deletes the code point before the caret',
+      'a😀b\n',
+      caret('b0', 3),
+      'deleteBackward',
+      'ab\n',
+      caret('b0', 1),
+    ],
+    [
+      'deletes a selected range backward',
+      'abcd\n',
+      caret('b0', 1, 3),
+      'deleteBackward',
+      'ad\n',
+      caret('b0', 1),
+    ],
+    [
+      'merges the next block at the end',
+      'one\n\ntwo\n',
+      caret('b0', 3),
+      'deleteForward',
+      'onetwo\n',
+      caret('b0', 3),
+    ],
+    [
+      'deletes the code point after the caret',
+      'a😀b\n',
+      caret('b0', 1),
+      'deleteForward',
+      'ab\n',
+      caret('b0', 1),
+    ],
+    [
+      'deletes a selected range',
+      'abcd\n',
+      caret('b0', 1, 3),
+      'deleteSelection',
+      'ad\n',
+      caret('b0', 1),
+    ],
+    [
+      'removes whole selected blocks',
+      'one\n\ntwo\n\nthree\n',
+      blocks('b0', 'b1'),
+      'deleteBackward',
+      'three\n',
+      caret('b2', 0),
+    ],
+    [
+      'removes the last blocks and ends on the block before',
+      'one\n\ntwo\n\nthree\n',
+      blocks('b1', 'b2'),
+      'deleteForward',
+      'one\n',
+      caret('b0', 3),
+    ],
+    [
+      'leaves one empty paragraph when every block is removed',
+      'one\n\ntwo\n',
+      blocks('b0', 'b1'),
+      'deleteSelection',
+      '',
+      caret('b2', 0),
+    ],
+  ] as const)('%s in one undo step', (_name, markdown, selection, command, after, moved) => {
+    const editor = editorAt(markdown);
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(true);
+    expect(saved(editor)).toBe(after);
+    expect(editor.store.get(editor.selection)).toEqual(moved);
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(markdown);
+    expect(editor.undo()).toBe(false);
+  });
+
+  it.each([
+    ['deleting backward at the start of the first block', plain, caret('b0', 0), 'deleteBackward'],
+    ['deleting forward at the end of the last block', plain, caret('b1', 3), 'deleteForward'],
+    ['deleting a collapsed selection', plain, caret('b0', 1), 'deleteSelection'],
+    ['breaking inside raw source', raw, caret('b0', 3), 'insertBreak'],
+    ['deleting backward into raw source', raw, caret('b1', 0), 'deleteBackward'],
+    ['deleting forward from raw source', raw, caret('b0', 10), 'deleteForward'],
+  ] as const)('does nothing %s', (_name, markdown, selection, command) => {
+    const editor = editorAt(markdown);
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(false);
+    expect(saved(editor)).toBe(markdown);
+    expect(editor.store.get(editor.selection)).toEqual(selection);
+    expect(editor.undo()).toBe(false);
+  });
+});

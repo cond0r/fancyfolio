@@ -241,6 +241,38 @@ describe('typing and history commands', () => {
     expect(editor.command('redo', {})).toBe(false);
   });
 
+  it.each([
+    ['typing', 'ab\n', caret('b0', 2), 'insertText', { text: 'c' }],
+    ['a break', 'ab\n', caret('b0', 1), 'insertBreak', {}],
+    ['a block removal', 'one\n\ntwo\n\nthree\n', blocks('b0', 'b1'), 'deleteSelection', {}],
+  ] as const)(
+    'restores the selection around %s on undo and redo',
+    (_name, markdown, selection, command, args) => {
+      const editor = editorAt(markdown);
+      select(editor, selection);
+      expect(editor.command(command, args)).toBe(true);
+      const after = editor.store.get(editor.selection);
+      select(editor, caret(idAt(editor, 0), 0));
+      expect(editor.command('undo', {})).toBe(true);
+      expect(editor.store.get(editor.selection)).toEqual(selection);
+      select(editor, caret(idAt(editor, 0), 0));
+      expect(editor.redo()).toBe(true);
+      expect(editor.store.get(editor.selection)).toEqual(after);
+    },
+  );
+
+  it('restores the selection before the first keystroke of joined typing', () => {
+    const editor = editorAt('ab\n');
+    select(editor, caret('b0', 2));
+    editor.command('insertText', { text: 'c' });
+    editor.command('insertText', { text: 'd' });
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe('ab\n');
+    expect(editor.store.get(editor.selection)).toEqual(caret('b0', 2));
+    expect(editor.redo()).toBe(true);
+    expect(editor.store.get(editor.selection)).toEqual(caret('b0', 4));
+  });
+
   it('dispatches a component result for undo instead of moving the history', () => {
     const claiming = withCommands('claiming', {
       undo: (context) => ({

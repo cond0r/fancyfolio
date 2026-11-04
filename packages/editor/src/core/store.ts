@@ -74,12 +74,18 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     if (moved === undefined) return false;
     commit(moved.ops, moved.inverses);
     history = moved.history;
+    store.set(selection, moved.selection);
     return true;
   }
 
-  function dispatch(...inputs: Op[]) {
+  function step(inputs: readonly Op[], after: Selection) {
+    const before = store.get(selection);
     const { ops, inverses } = commit(inputs);
-    history = record(history, ops, inverses, options.now());
+    history = record(history, { ops, inverses, before, after }, options.now());
+  }
+
+  function dispatch(...inputs: Op[]) {
+    step(inputs, store.get(selection));
   }
 
   function doc(): Doc {
@@ -107,7 +113,7 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
         if (name === 'undo') return travel(undo);
         return name === 'redo' && travel(redo);
       }
-      if (result.ops.length > 0) dispatch(...result.ops);
+      if (result.ops.length > 0) step(result.ops, result.selection ?? store.get(selection));
       if (result.selection !== undefined) store.set(selection, result.selection);
       return true;
     },

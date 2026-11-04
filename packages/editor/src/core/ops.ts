@@ -153,16 +153,15 @@ function withField(op: Op, block: Block, field: string, text: string): Block {
   return { ...block, fields: { ...block.fields, [field]: text } };
 }
 
-function crossing(op: Op, from: string, to: string, text: string) {
-  if (text !== '' && isRaw(from) !== isRaw(to)) {
-    refuse(op, 'text cannot move between raw source and plain text');
-  }
+export function movable(from: string, to: string, kept: string, moved: string): boolean {
+  if (moved === '' || (!isRaw(from) && !isRaw(to))) return true;
+  return isRaw(from) && isRaw(to) && kept === '';
 }
 
-function joining(op: Op, head: string, headText: string, tail: string, tailText: string) {
-  if (isRaw(head) && isRaw(tail) && headText !== '' && tailText !== '') {
-    refuse(op, 'raw source is never joined or cut');
-  }
+function moving(op: Op, from: string, to: string, kept: string, moved: string) {
+  if (movable(from, to, kept, moved)) return;
+  if (isRaw(from) === isRaw(to)) refuse(op, 'raw source is never joined or cut');
+  refuse(op, 'text cannot move between raw source and plain text');
 }
 
 export function plan(view: DocView, input: unknown, registry: Registry = builtins): Planned {
@@ -232,8 +231,7 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
       const props = propsOf(op, target, op.props);
       const head = text.slice(0, offset);
       const tail = text.slice(offset);
-      crossing(op, block.type, op.type, tail);
-      joining(op, block.type, head, op.type, tail);
+      moving(op, block.type, op.type, head, tail);
       const added: Block = { id: op.newId, type: op.type, props, fields: { [targetField]: tail } };
       const ids = [...view.ids];
       ids.splice(ids.indexOf(blockId) + 1, 0, op.newId);
@@ -250,8 +248,7 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
       const before = componentOf(op, registry, previous.type);
       const field = soleField(op, before);
       const head = textIn(op, previous, before, field);
-      crossing(op, block.type, previous.type, text);
-      joining(op, previous.type, head, block.type, text);
+      moving(op, block.type, previous.type, head, text);
       return {
         change: {
           put: [withField(op, previous, field, head + text)],
@@ -279,7 +276,7 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
       if (texts.some(([name, text]) => text !== '' && !target.fields.includes(name))) {
         refuse(op, 'the new type has no field for its text');
       }
-      crossing(op, block.type, op.type, texts.map(([, text]) => text).join(''));
+      moving(op, block.type, op.type, '', texts.map(([, text]) => text).join(''));
       const fields = Object.fromEntries(
         target.fields.map((name) => [
           name,

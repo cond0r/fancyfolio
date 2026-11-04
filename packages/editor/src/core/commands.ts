@@ -1,4 +1,4 @@
-import { isRaw } from './model.ts';
+import { movable } from './ops.ts';
 import type {
   Block,
   BlockId,
@@ -38,11 +38,6 @@ function cleared({ blockId, field, from, to }: Extract<Selection, { kind: 'text'
 
 function textOf(block: Block): string {
   return Object.values(block.fields).join('');
-}
-
-function movable(from: string, to: string, kept: string, moved: string): boolean {
-  if (moved === '' || (!isRaw(from) && !isRaw(to))) return true;
-  return isRaw(from) && isRaw(to) && kept === '';
 }
 
 function caretAtEnd(block: Block): Selection {

@@ -169,12 +169,14 @@ export type Change = {
 
 export type Planned = { readonly op: Op; readonly change: Change; readonly inverse: Op };
 
-export type Step = {
+export type Entry = {
   readonly ops: readonly Op[];
   readonly inverses: readonly Op[];
-  readonly started: number;
-  readonly at: number;
+  readonly before: Selection;
+  readonly after: Selection;
 };
+
+export type Step = Entry & { readonly started: number; readonly at: number };
 
 export type History = {
   readonly done: readonly Step[];
@@ -186,6 +188,7 @@ export type Travel = {
   readonly history: History;
   readonly ops: readonly Op[];
   readonly inverses: readonly Op[];
+  readonly selection: Selection;
 };
 
 export type Editor = {

@@ -1,4 +1,4 @@
-import type { History, Op, Step, Travel } from './types.ts';
+import type { Entry, History, Step, Travel } from './types.ts';
 
 export const emptyHistory: History = { done: [], undone: [], sealed: true };
 
@@ -6,10 +6,10 @@ const typingPause = 1000;
 const stepSpan = 2000;
 const maxSteps = 500;
 
-function continued(step: Step | undefined, ops: readonly Op[], at: number): Step | undefined {
+function continued(step: Step | undefined, entry: Entry, at: number): Step | undefined {
   const [last] = step?.ops ?? [];
-  const [op] = ops;
-  if (step === undefined || step.ops.length !== 1 || ops.length !== 1) return undefined;
+  const [op] = entry.ops;
+  if (step === undefined || step.ops.length !== 1 || entry.ops.length !== 1) return undefined;
   if (last?.kind !== 'insertText' || op?.kind !== 'insertText') return undefined;
   if (last.blockId !== op.blockId || last.field !== op.field) return undefined;
   if (op.offset !== last.offset + last.text.length || last.text.includes('\n')) return undefined;
@@ -21,21 +21,18 @@ function continued(step: Step | undefined, ops: readonly Op[], at: number): Step
   return {
     ops: [{ kind: 'insertText', blockId, field, offset, text }],
     inverses: [{ kind: 'deleteText', blockId, field, from: offset, to: offset + text.length }],
+    before: step.before,
+    after: entry.after,
     started: step.started,
     at,
   };
 }
 
-export function record(
-  history: History,
-  ops: readonly Op[],
-  inverses: readonly Op[],
-  at: number,
-): History {
-  const typed = history.sealed ? undefined : continued(history.done.at(-1), ops, at);
+export function record(history: History, entry: Entry, at: number): History {
+  const typed = history.sealed ? undefined : continued(history.done.at(-1), entry, at);
   const done = typed
     ? [...history.done.slice(0, -1), typed]
-    : [...history.done.slice(1 - maxSteps), { ops, inverses, started: at, at }];
+    : [...history.done.slice(1 - maxSteps), { ...entry, started: at, at }];
   return { done, undone: [], sealed: false };
 }
 
@@ -46,6 +43,7 @@ export function undo(history: History): Travel | undefined {
     history: { done: history.done.slice(0, -1), undone: [...history.undone, step], sealed: true },
     ops: step.inverses.toReversed(),
     inverses: step.ops.toReversed(),
+    selection: step.before,
   };
 }
 
@@ -56,5 +54,6 @@ export function redo(history: History): Travel | undefined {
     history: { done: [...history.done, step], undone: history.undone.slice(0, -1), sealed: true },
     ops: step.ops,
     inverses: step.inverses,
+    selection: step.after,
   };
 }

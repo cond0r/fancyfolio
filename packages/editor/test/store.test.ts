@@ -5,7 +5,7 @@ import { hasKeys, noProps, schema, textNodes } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Block, Component, Editor, Op } from '../src/core/types.ts';
+import type { AnyComponent, Block, Component, Editor, Op, Selection } from '../src/core/types.ts';
 import {
   answeringLater,
   counter,
@@ -587,8 +587,23 @@ describe('undo steps over a session', () => {
       from,
       to,
     });
-    const once = record(emptyHistory, [first], [deleted(0, 1)], 0);
-    const joined = record(once, [insertAt('a', 1, 'y')], [deleted(1, 2)], 10);
+    const at = (offset: number): Selection => ({
+      kind: 'text',
+      blockId: 'a',
+      field: 'text',
+      from: offset,
+      to: offset,
+    });
+    const once = record(
+      emptyHistory,
+      { ops: [first], inverses: [deleted(0, 1)], before: at(0), after: at(1) },
+      0,
+    );
+    const joined = record(
+      once,
+      { ops: [insertAt('a', 1, 'y')], inverses: [deleted(1, 2)], before: at(1), after: at(2) },
+      10,
+    );
     const undone = undo(joined);
     expect(undone?.ops).toEqual([deleted(0, 2)]);
     expect(undone && redo(undone.history)?.ops).toEqual([insertAt('a', 0, 'xy')]);

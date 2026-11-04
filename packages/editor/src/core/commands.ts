@@ -1,3 +1,4 @@
+import { isRaw } from './model.ts';
 import { movable } from './ops.ts';
 import type {
   Block,
@@ -90,8 +91,11 @@ function merging(context: Context, offset: -1 | 1): Result {
   const neighbour = neighbourId === undefined ? undefined : doc.blocks.get(neighbourId);
   if (neighbour === undefined || soleField(neighbour) === undefined) return undefined;
   const [head, tail] = offset === -1 ? [neighbour, at.block] : [at.block, neighbour];
-  if (!movable(tail.type, head.type, textOf(head), textOf(tail))) return undefined;
-  return { ops: [{ kind: 'mergeBlocks', blockId: tail.id }], selection: caretAtEnd(head) };
+  if (movable(tail.type, head.type, textOf(head), textOf(tail))) {
+    return { ops: [{ kind: 'mergeBlocks', blockId: tail.id }], selection: caretAtEnd(head) };
+  }
+  if (!isRaw(head.type)) return undefined;
+  return { ops: [], selection: offset === -1 ? caretAtEnd(neighbour) : caretIn(neighbour) };
 }
 
 function selected(context: Context): Result {

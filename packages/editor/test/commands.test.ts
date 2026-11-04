@@ -113,6 +113,7 @@ function blocks(...ids: string[]): Selection {
 
 const plain = 'one\n\ntwo\n';
 const raw = '::foo{x=1}\n\npara\n';
+const rawLast = 'para\n\n::foo{x=1}\n';
 
 describe('the default delete commands', () => {
   it.each([
@@ -203,15 +204,63 @@ describe('the default delete commands', () => {
     ['deleting backward at the start of the first block', plain, caret('b0', 0), 'deleteBackward'],
     ['deleting forward at the end of the last block', plain, caret('b1', 3), 'deleteForward'],
     ['deleting a collapsed selection', plain, caret('b0', 1), 'deleteSelection'],
-    ['breaking inside raw source', raw, caret('b0', 3), 'insertBreak'],
-    ['deleting backward into raw source', raw, caret('b1', 0), 'deleteBackward'],
-    ['deleting forward from raw source', raw, caret('b0', 10), 'deleteForward'],
+    [
+      'deleting backward from raw source into plain text',
+      rawLast,
+      caret('b1', 0),
+      'deleteBackward',
+    ],
+    ['deleting forward from plain text into raw source', rawLast, caret('b0', 4), 'deleteForward'],
   ] as const)('does nothing %s', (_name, markdown, selection, command) => {
     const editor = editorAt(markdown);
     select(editor, selection);
     expect(editor.command(command, {})).toBe(false);
     expect(saved(editor)).toBe(markdown);
     expect(editor.store.get(editor.selection)).toEqual(selection);
+    expect(editor.undo()).toBe(false);
+  });
+});
+
+describe('raw source commands', () => {
+  it('inserts a line break inside raw source in place of the selection', () => {
+    const editor = editorAt(raw);
+    select(editor, caret('b0', 5, 6));
+    expect(editor.command('insertBreak', {})).toBe(true);
+    expect(editor.doc().blocks.get('b0')?.fields.text).toBe('::foo\nx=1}');
+    expect(editor.store.get(editor.ids)).toEqual(['b0', 'b1']);
+    expect(editor.store.get(editor.selection)).toEqual(caret('b0', 6));
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(raw);
+  });
+
+  it.each([
+    [
+      'backward from the block after raw source to its end',
+      raw,
+      caret('b1', 0),
+      'deleteBackward',
+      caret('b0', 10),
+    ],
+    [
+      'forward from the end of raw source to the next block',
+      raw,
+      caret('b0', 10),
+      'deleteForward',
+      caret('b1', 0),
+    ],
+    [
+      'backward from raw source to the end of the raw source before',
+      '::foo{x=1}\n\n::bar\n',
+      caret('b1', 0),
+      'deleteBackward',
+      caret('b0', 10),
+    ],
+  ] as const)('moves the caret %s with no op', (_name, markdown, selection, command, moved) => {
+    const editor = editorAt(markdown);
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(true);
+    expect(saved(editor)).toBe(markdown);
+    expect(editor.store.get(editor.selection)).toEqual(moved);
     expect(editor.undo()).toBe(false);
   });
 });

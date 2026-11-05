@@ -204,13 +204,6 @@ describe('the default delete commands', () => {
     ['deleting backward at the start of the first block', plain, caret('b0', 0), 'deleteBackward'],
     ['deleting forward at the end of the last block', plain, caret('b1', 3), 'deleteForward'],
     ['deleting a collapsed selection', plain, caret('b0', 1), 'deleteSelection'],
-    [
-      'deleting backward from raw source into plain text',
-      rawLast,
-      caret('b1', 0),
-      'deleteBackward',
-    ],
-    ['deleting forward from plain text into raw source', rawLast, caret('b0', 4), 'deleteForward'],
   ] as const)('does nothing %s', (_name, markdown, selection, command) => {
     const editor = editorAt(markdown);
     select(editor, selection);
@@ -255,6 +248,20 @@ describe('raw source commands', () => {
       'deleteBackward',
       caret('b0', 10),
     ],
+    [
+      'backward from raw source to the end of the plain text before',
+      rawLast,
+      caret('b1', 0),
+      'deleteBackward',
+      caret('b0', 4),
+    ],
+    [
+      'forward from plain text to the start of the raw source after',
+      rawLast,
+      caret('b0', 4),
+      'deleteForward',
+      caret('b1', 0),
+    ],
   ] as const)('moves the caret %s with no op', (_name, markdown, selection, command, moved) => {
     const editor = editorAt(markdown);
     select(editor, selection);
@@ -262,6 +269,28 @@ describe('raw source commands', () => {
     expect(saved(editor)).toBe(markdown);
     expect(editor.store.get(editor.selection)).toEqual(moved);
     expect(editor.undo()).toBe(false);
+  });
+});
+
+describe('a refused merge', () => {
+  it.each([
+    ['backward to the end of the last field before', caret('b1', 0), 'deleteBackward', 'b', 2],
+    ['forward to the start of the first field after', caret('b0', 3), 'deleteForward', 'a', 0],
+  ] as const)('moves the caret %s with no op', (_name, selection, command, field, offset) => {
+    const pair: AnyComponent = { ...withCommands('pair', {}), fields: ['a', 'b'] };
+    const editor = editorAt(plain, [pair]);
+    const block = { id: 'p', type: 'pair', props: {}, fields: { a: 'x', b: 'yz' } };
+    editor.dispatch({ kind: 'insertBlock', block, parent: null, index: 1 });
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(true);
+    expect(editor.store.get(editor.ids)).toEqual(['b0', 'p', 'b1']);
+    expect(editor.store.get(editor.selection)).toEqual({
+      kind: 'text',
+      blockId: 'p',
+      field,
+      from: offset,
+      to: offset,
+    });
   });
 });
 

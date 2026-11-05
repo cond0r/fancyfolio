@@ -143,7 +143,13 @@ export type Selection =
     }
   | { readonly kind: 'blocks'; readonly ids: readonly BlockId[] };
 
+export type TextSelection = Extract<Selection, { readonly kind: 'text' }>;
+
 export type NoArgs = { readonly [key: string]: never };
+
+export type Bare = {
+  readonly [C in keyof Commands]: Commands[C] extends NoArgs ? C : never;
+}[keyof Commands];
 
 export type Commands = {
   readonly insertText: { readonly text: string };

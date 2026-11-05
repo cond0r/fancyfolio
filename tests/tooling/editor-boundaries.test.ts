@@ -241,6 +241,8 @@ describe('packages/editor/src/core imports no React, DOM, Next or workspace pack
     'next/navigation',
     '@fancyfolio/contracts',
     '@fancyfolio/editor',
+    '../dom/field.ts',
+    '../react/editor.tsx',
   ])('refuses %s', (specifier) => {
     const result = lintAt(
       module,
@@ -299,6 +301,48 @@ describe('packages/editor/src/core imports no React, DOM, Next or workspace pack
   ])('refuses the expression %s', (expression) => {
     const result = lintAt(module, `export const value = ${expression};\n`);
     expect(result.output).toContain('lint/style/noRestrictedGlobals');
+    expect(result.status).not.toBe(0);
+  });
+});
+
+describe('packages/editor/src/dom imports no React', () => {
+  const module = 'packages/editor/src/dom/field.ts';
+  const message = 'The editor DOM layer imports no React, Next or React binding.';
+
+  it('passes the core and its own modules', () => {
+    const result = lintAt(
+      module,
+      "import { createEditor } from '../core/store.ts';\nimport { place } from './selection.ts';\n\nexport const used = [createEditor, place];\n",
+    );
+    expect(result.output).not.toContain('lint/');
+    expect(result.status).toBe(0);
+  });
+
+  it.each([
+    'react',
+    'react/jsx-runtime',
+    'react-dom',
+    'next',
+    'next/dynamic',
+    'jotai',
+    'jotai/react',
+    '../react/block.tsx',
+  ])('refuses %s', (specifier) => {
+    const result = lintAt(
+      module,
+      `import * as banned from '${specifier}';\n\nexport const value = banned;\n`,
+    );
+    expect(result.output).toContain('lint/style/noRestrictedImports');
+    expect(result.output).toContain(message);
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each(['@fancyfolio/db', 'node:fs', 'bun'])('still refuses %s', (specifier) => {
+    const result = lintAt(
+      module,
+      `import * as banned from '${specifier}';\n\nexport const value = banned;\n`,
+    );
+    expect(result.output).toContain('lint/style/noRestrictedImports');
     expect(result.status).not.toBe(0);
   });
 });

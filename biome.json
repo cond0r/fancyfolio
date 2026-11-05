@@ -440,9 +440,70 @@
                       "react-dom/**",
                       "next",
                       "next/**",
-                      "@fancyfolio/**"
+                      "@fancyfolio/**",
+                      "**/dom/**",
+                      "**/react/**"
                     ],
                     "message": "The editor core imports no React, DOM, Next or workspace package."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/editor/src/dom/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "bun": "Node is the runtime: use node: built-ins or an npm package."
+                },
+                "patterns": [
+                  {
+                    "group": ["bun:*"],
+                    "message": "Node is the runtime: Bun built-in modules are not available."
+                  },
+                  {
+                    "group": [
+                      "@fancyfolio/db",
+                      "@fancyfolio/db/**",
+                      "postgres",
+                      "postgres/**",
+                      "drizzle-orm",
+                      "drizzle-orm/**",
+                      "@vercel/blob",
+                      "@vercel/blob/**",
+                      "better-auth",
+                      "better-auth/**",
+                      "@fancyfolio/api",
+                      "@fancyfolio/api/**",
+                      "@fancyfolio/web",
+                      "@fancyfolio/web/**",
+                      "**/apps/**",
+                      "node:*"
+                    ],
+                    "message": "The editor never imports a server package, the database or an app."
+                  },
+                  {
+                    "group": [
+                      "react",
+                      "react/**",
+                      "react-dom",
+                      "react-dom/**",
+                      "next",
+                      "next/**",
+                      "jotai",
+                      "jotai/react",
+                      "jotai/react/**",
+                      "**/react/**"
+                    ],
+                    "message": "The editor DOM layer imports no React, Next or React binding."
                   }
                 ]
               }

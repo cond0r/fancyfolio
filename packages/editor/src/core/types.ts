@@ -50,6 +50,14 @@ export type Component<Name extends string, Props, Field extends string> = {
 
 export type AnyComponent = Component<string, unknown, string>;
 
+export type PropsOf<C extends AnyComponent> = StandardSchemaV1.InferOutput<C['props']>;
+
+export type FieldOf<C extends AnyComponent> = C['fields'][number];
+
+export type BlockOf<P extends readonly AnyComponent[]> = {
+  [I in keyof P]: TypedBlock<PropsOf<P[I]>, FieldOf<P[I]>> & { readonly type: P[I]['name'] };
+}[number];
+
 export type NoProps = { readonly [key: string]: never };
 
 export type HeadingProps = { readonly level: HeadingLevel };

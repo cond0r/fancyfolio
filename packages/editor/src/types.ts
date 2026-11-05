@@ -17,14 +17,20 @@ export type Construct = Exclude<
 export type State = ReturnType<Construct['tokenize']>;
 
 export type {
+  AnyComponent,
   Block,
   BlockId,
   BlockKind,
+  Codec,
+  Component,
   Doc,
   Editor,
   EditorOptions,
   HeadingLevel,
+  Json,
   Op,
   SaveResult,
   Source,
+  TypedBlock,
 } from './core/types.ts';
+export type { EditorProps, ReactEditorOptions, ViewProps, Views } from './react/types.ts';

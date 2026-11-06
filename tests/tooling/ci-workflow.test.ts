@@ -75,7 +75,7 @@ describe('the CI workflow', () => {
     expect(e2eJob).toContain('    env:\n      NEXT_TELEMETRY_DISABLED: 1\n    steps:\n');
     for (const step of [
       'pnpm install --frozen-lockfile',
-      'pnpm exec playwright install --with-deps --only-shell chromium',
+      'pnpm exec playwright install --with-deps --only-shell chromium firefox webkit',
       'pnpm build',
       'pnpm e2e',
     ]) {

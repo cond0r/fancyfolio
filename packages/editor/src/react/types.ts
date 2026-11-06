@@ -1,5 +1,5 @@
 import type { ComponentType, ProfilerOnRenderCallback, ReactNode } from 'react';
-import type { AnyComponent, Block, BlockOf, TypedBlock } from '../core/types.ts';
+import type { AnyComponent, Block, BlockId, BlockOf, Editor, TypedBlock } from '../core/types.ts';
 
 export type ViewProps<B extends TypedBlock<unknown, string>> = {
   readonly props: B['props'];
@@ -20,4 +20,19 @@ export type ReactEditorOptions<P extends readonly AnyComponent[]> = {
 export type EditorProps = {
   readonly markdown: string;
   readonly onRender?: ProfilerOnRenderCallback;
+};
+
+export type ViewMap = ReadonlyMap<string, ComponentType<ViewProps<Block>>>;
+
+export type BlockProps = {
+  readonly id: BlockId;
+  readonly editor: Editor;
+  readonly views: ViewMap;
+  readonly onRender: ProfilerOnRenderCallback | undefined;
+};
+
+export type FieldProps = {
+  readonly editor: Editor;
+  readonly blockId: BlockId;
+  readonly field: string;
 };

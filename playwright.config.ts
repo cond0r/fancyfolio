@@ -4,7 +4,21 @@ export default defineConfig({
   testDir: 'tests/e2e',
   forbidOnly: Boolean(process.env.CI),
   use: { baseURL: 'http://localhost:3200' },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'firefox',
+      testMatch: 'editor/**',
+      grepInvert: /@ime/,
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      testMatch: 'editor/**',
+      grepInvert: /@ime/,
+      use: { ...devices['Desktop Safari'] },
+    },
+  ],
   webServer: {
     command:
       'pnpm --filter ./apps/web build && npx -y vercel@64.5.0 dev --local --yes --listen 127.0.0.1:3200',

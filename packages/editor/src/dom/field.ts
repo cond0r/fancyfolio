@@ -216,5 +216,10 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   root.addEventListener('pointermove', onPointerMove, options);
   document.addEventListener('pointerup', onPointerUp, options);
   document.addEventListener('selectionchange', sync, options);
-  return () => controller.abort();
+  const mounted = new MutationObserver(() => mark(root, store.get(editor.selection)));
+  mounted.observe(root, { childList: true });
+  return () => {
+    controller.abort();
+    mounted.disconnect();
+  };
 }

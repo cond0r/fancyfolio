@@ -4,10 +4,12 @@ import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
 import { describe, expect, it } from 'vitest';
+import { containerDirective, leafDirective } from '../src/core/directive.ts';
 import { load, save } from '../src/core/markdown.ts';
-import { docOf } from '../src/core/model.ts';
+import { docOf, hasKeys, noProps, schema } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
-import type { Block, Doc, Op } from '../src/core/types.ts';
+import { registryOf } from '../src/core/registry.ts';
+import type { Block, Component, Doc, NoProps, Op } from '../src/core/types.ts';
 import { parseMarkdown, remarkDialect, remarkDirectiveAllowlist } from '../src/dialect.ts';
 import {
   counter,
@@ -678,4 +680,166 @@ describe('an edit changes only the block it touches', () => {
       }
     },
   );
+});
+
+describe('directive blocks', () => {
+  const toneProps = schema(
+    (value): value is { readonly tone: string } =>
+      hasKeys(value, ['tone']) && ['info', 'warning'].includes(Reflect.get(value, 'tone')),
+  );
+  const callout: Component<'callout', { readonly tone: string }, 'title', 'body'> = {
+    name: 'callout',
+    props: toneProps,
+    fields: ['title'],
+    slots: ['body'],
+    markdown: containerDirective({
+      name: 'callout',
+      props: toneProps,
+      keys: ['tone'],
+      attributes: [],
+      label: 'title',
+      slot: 'body',
+    }),
+  };
+  const metric: Component<'metric', NoProps, 'value' | 'label'> = {
+    name: 'metric',
+    props: noProps,
+    fields: ['value', 'label'],
+    markdown: leafDirective({
+      name: 'metric',
+      props: noProps,
+      keys: [],
+      attributes: ['value', 'label'],
+    }),
+  };
+  const stat: Component<'stat', NoProps, 'text'> = {
+    name: 'stat',
+    props: noProps,
+    fields: ['text'],
+    markdown: leafDirective({
+      name: 'stat',
+      props: noProps,
+      keys: [],
+      attributes: [],
+      label: 'text',
+    }),
+  };
+  const registry = registryOf([callout, metric, stat]);
+  const loadedWith = (markdown: string) => load(markdown, newId, registry);
+  function savedWith(doc: Doc): string {
+    const result = save(doc, registry);
+    if (!result.ok) throw new Error(`save refused: ${JSON.stringify(result)}`);
+    return result.markdown;
+  }
+  function tree(doc: Doc) {
+    const of = (id: string): object => {
+      const { id: _id, slots, ...rest } = doc.blocks.get(id) as Block;
+      return slots === undefined
+        ? rest
+        : {
+            ...rest,
+            slots: Object.fromEntries(Object.entries(slots).map(([n, ids]) => [n, ids.map(of)])),
+          };
+    };
+    return doc.ids.map(of);
+  }
+  const child = (doc: Doc, index: number) =>
+    doc.blocks.get(doc.ids[0] as string)?.slots?.body?.[index] as string;
+  const page =
+    ':::callout{tone="info"}\nInside the callout\n\n# A heading\n\n::metric{value="42%" label="Faster builds"}\n:::\n\nAfter.\n';
+
+  it('loads a container with its children in its slot, one level deep', () => {
+    const doc = loadedWith(page);
+    expect(tree(doc)).toEqual([
+      {
+        type: 'callout',
+        props: { tone: 'info' },
+        fields: { title: '' },
+        slots: {
+          body: [
+            para('Inside the callout'),
+            { type: 'heading', props: { level: 1 }, fields: { text: 'A heading' } },
+            { type: 'metric', props: {}, fields: { value: '42%', label: 'Faster builds' } },
+          ],
+        },
+      },
+      para('After.'),
+    ]);
+    expect(doc.blocks.size).toBe(5);
+  });
+
+  it.each([
+    page,
+    '\n:::callout[Read this]{tone="warning"}\n\n\nFirst\n:::\n',
+    ':::callout[Plain title]{tone="info"}\n:::',
+    ':::callout{tone="info"}\n  Indented   text\n:::\n\n::metric{value=\'single\'}\n',
+  ])('saves an untouched container byte for byte (%j)', (body) => {
+    expect(savedWith(loadedWith(body))).toBe(body);
+  });
+
+  it('saves an edited container so that it reloads to the same model', () => {
+    const doc = loadedWith(page);
+    const edits: Op[] = [
+      { kind: 'insertText', blockId: child(doc, 0), field: 'text', offset: 0, text: '- :::\n' },
+      { kind: 'deleteText', blockId: child(doc, 1), field: 'text', from: 0, to: 2 },
+      { kind: 'setProps', blockId: doc.ids[0] as string, props: { tone: 'warning' } },
+      {
+        kind: 'insertText',
+        blockId: doc.ids[0] as string,
+        field: 'title',
+        offset: 0,
+        text: 'Note',
+      },
+    ];
+    const edited = edits.reduce((each, op) => apply(each, op, registry).doc, doc);
+    const saved = savedWith(edited);
+    expect(saved).toBe(
+      ':::callout[Note]{tone="warning"}\n\\- ::\\:\nInside the callout\n\n# heading\n\n::metric{value="42%" label="Faster builds"}\n:::\n\nAfter.\n',
+    );
+    expect(tree(loadedWith(saved))).toEqual(tree(edited));
+  });
+
+  it.each([
+    '"double" \'single\' } ] javascript:alert(1)',
+    '<img src=x onerror=alert(1)>',
+    '\\" ::: \\',
+    '{#id .class key=value}',
+    '&quot; &amp;',
+    '&#x22;',
+    'R&D',
+    '*em*',
+    '**b**',
+    '_x_',
+    '`c`',
+    '~~s~~',
+    '<http://a.test>',
+    '\\*',
+  ])('round-trips the text %j in an attribute and in a leaf and a container label', (text) => {
+    for (const [body, field] of [
+      ['::metric{value="1"}\n', 'label'],
+      ['::stat[x]\n', 'text'],
+      [':::callout{tone="info"}\nText\n:::\n', 'title'],
+    ] as const) {
+      const doc = loadedWith(body);
+      const op: Op = { kind: 'insertText', blockId: doc.ids[0] as string, field, offset: 0, text };
+      const edited = apply(doc, op, registry).doc;
+      expect(tree(loadedWith(savedWith(edited)))).toEqual(tree(edited));
+    }
+  });
+
+  it.each([
+    ['a child no slot-less component reads', ':::callout{tone="info"}\nText\n\n- a list\n:::'],
+    [
+      'a container inside a container',
+      '::::callout{tone="info"}\n:::callout{tone="info"}\nx\n:::\n::::',
+    ],
+    ['an unknown attribute', ':::callout{tone="info" open="yes"}\nText\n:::'],
+    ['props failing the schema', ':::callout{tone="loud"}\nText\n:::'],
+    ['a label on a directive without a label field', '::metric[x]{value="1"}'],
+    ['a label that is not plain text', ':::callout[*x*]{tone="info"}\nText\n:::'],
+  ])('loads a container with %s as raw source', (_name, body) => {
+    const doc = loadedWith(`${body}\n`);
+    expect(tree(doc)).toEqual([raw(body)]);
+    expect(savedWith(doc)).toBe(`${body}\n`);
+  });
 });

@@ -1,4 +1,4 @@
-import type { Nodes, Root, RootContent } from 'mdast';
+import type { Html, Nodes, Root, RootContent } from 'mdast';
 import { parseMarkdown, stringifyMarkdown } from '../dialect.ts';
 import { docOf, isCanonicalText, isRaw, sameJson } from './model.ts';
 import { builtins, fieldsFor, propsFor } from './registry.ts';
@@ -9,6 +9,7 @@ import type {
   Doc,
   Part,
   Read,
+  Reading,
   Registry,
   SaveResult,
   Source,
@@ -28,21 +29,62 @@ function matchOf(node: RootContent): string {
 function modelled(
   node: RootContent | undefined,
   registry: Registry,
-): Exclude<Read, null> | undefined {
+  nested = false,
+): Reading | undefined {
   if (node === undefined) return undefined;
   const component = registry.matches.get(matchOf(node));
-  if (component === undefined) return undefined;
+  const names = component?.slots ?? [];
+  if (component === undefined || (nested && names.length > 0)) return undefined;
   try {
     const read = component.markdown.read(node);
     if (read === undefined) return undefined;
     const props = propsFor(component, read.props);
     const fields = fieldsFor(component, read.fields);
-    return props === undefined || fields === undefined
-      ? undefined
-      : { type: component.name, props, fields };
+    if (props === undefined || fields === undefined) return undefined;
+    if (names.length === 0) return { type: component.name, props, fields };
+    const slots: [string, Reading[]][] = [];
+    for (const name of names) {
+      const nodes =
+        read.slots !== undefined && Object.hasOwn(read.slots, name) ? read.slots[name] : undefined;
+      if (!Array.isArray(nodes)) return undefined;
+      const children: Reading[] = [];
+      for (const child of nodes) {
+        const each = modelled(child, registry, true);
+        if (each === undefined) return undefined;
+        children.push(each);
+      }
+      slots.push([name, children]);
+    }
+    return { type: component.name, props, fields, slots: Object.fromEntries(slots) };
   } catch {
     return undefined;
   }
+}
+
+function blocksOf({ type, props, fields, slots }: Reading, nextId: () => BlockId): Block[] {
+  const block: Block = { id: nextId(), type, props, fields };
+  if (slots === undefined) return [block];
+  const children: Block[] = [];
+  const listed = Object.entries(slots).map(([name, reads]) => {
+    const made = reads.map(
+      (read): Block => ({ id: nextId(), type: read.type, props: read.props, fields: read.fields }),
+    );
+    children.push(...made);
+    return [name, made.map((child) => child.id)];
+  });
+  return [{ ...block, slots: Object.fromEntries(listed) }, ...children];
+}
+
+function childrenOf(block: Block, slot: string, doc: Doc): Block[] {
+  return (block.slots?.[slot] ?? []).map((id) => {
+    const child = doc.blocks.get(id);
+    if (child === undefined) throw new Error(`block ${id} is missing`);
+    return child;
+  });
+}
+
+function isBlank(markdown: string): boolean {
+  return /^[\t\n ]*$/.test(markdown);
 }
 
 function rawBlock(id: BlockId, text: string): Block {
@@ -92,6 +134,7 @@ export function load(markdown: string, newId: () => BlockId, registry: Registry 
     return docOf([block], new Map([[block.id, source]]));
   }
   const blocks: Block[] = [];
+  const all: Block[] = [];
   const sources = new Map<BlockId, Source>();
   let end = 0;
   for (const [index, node] of tree.children.entries()) {
@@ -99,7 +142,9 @@ export function load(markdown: string, newId: () => BlockId, registry: Registry 
     const lineStart = Math.max(end, body.lastIndexOf('\n', at.start - 1) + 1);
     const slice = body.slice(lineStart, at.end);
     const read = modelled(node, registry);
-    const block: Block = read === undefined ? rawBlock(nextId(), slice) : { ...read, id: nextId() };
+    const [block, ...children] =
+      read === undefined ? [rawBlock(nextId(), slice)] : blocksOf(read, nextId);
+    if (block === undefined) throw new Error('a markdown node has no block');
     const source: Source = {
       markdown: slice,
       afterId: blocks.at(-1)?.id ?? null,
@@ -109,45 +154,87 @@ export function load(markdown: string, newId: () => BlockId, registry: Registry 
     reads.set(source, read ?? null);
     if (read === undefined) rawTypes.set(block, [node.type]);
     blocks.push(block);
+    all.push(block, ...children);
     sources.set(block.id, source);
     end = at.end;
   }
   if (blocks.length === 0) {
     return docOf([{ id: nextId(), type: 'paragraph', props: {}, fields: { text: '' } }]);
   }
-  return docOf(blocks, sources);
+  return {
+    ids: blocks.map((block) => block.id),
+    blocks: new Map(all.map((b) => [b.id, b])),
+    sources,
+  };
 }
 
-function written(block: Block, registry: Registry): string {
-  const node = codecOf(block, registry).write(block);
-  return stringifyMarkdown({ type: 'root', children: [node] })
-    .replace(/\n$/, '')
-    .replace(/(?<=::):/g, '\\:');
+function writtenChildren(block: Block, slot: string, doc: Doc, registry: Registry): Block[] {
+  return childrenOf(block, slot, doc).filter((child) => !isBlank(canonical(child, doc, registry)));
 }
 
-function matches(read: Read | undefined, block: Block): boolean {
-  return (
-    read != null &&
-    read.type === block.type &&
-    sameJson(read.props, block.props) &&
-    sameJson(read.fields, block.fields)
+function written(block: Block, doc: Doc, registry: Registry): string {
+  const slots = Object.fromEntries(
+    Object.keys(block.slots ?? {}).map((slot) => [
+      slot,
+      writtenChildren(block, slot, doc, registry).map(
+        (child): Html => ({ type: 'html', value: canonical(child, doc, registry) }),
+      ),
+    ]),
+  );
+  const node = codecOf(block, registry).write(block, slots);
+  const markdown = stringifyMarkdown({ type: 'root', children: [node] }).replace(/\n$/, '');
+  return node.type === 'leafDirective' || node.type === 'containerDirective'
+    ? markdown
+    : markdown.replace(/(?<=::):/g, '\\:');
+}
+
+function matches(read: Read | undefined, block: Block, doc: Doc, registry: Registry): boolean {
+  if (
+    read == null ||
+    read.type !== block.type ||
+    !sameJson(read.props, block.props) ||
+    !sameJson(read.fields, block.fields)
+  ) {
+    return false;
+  }
+  const slots = Object.keys(block.slots ?? {});
+  if (slots.length !== Object.keys(read.slots ?? {}).length) return false;
+  return slots.every((slot) => {
+    const reads =
+      read.slots !== undefined && Object.hasOwn(read.slots, slot) ? read.slots[slot] : [];
+    const children = writtenChildren(block, slot, doc, registry);
+    return (
+      reads.length === children.length &&
+      children.every((child, index) => matches(reads[index], child, doc, registry))
+    );
+  });
+}
+
+function readsBack(
+  block: Block,
+  nodes: readonly RootContent[],
+  doc: Doc,
+  registry: Registry,
+): boolean {
+  return matches(
+    nodes.length === 1 ? modelled(nodes[0], registry) : undefined,
+    block,
+    doc,
+    registry,
   );
 }
 
-function readsBack(block: Block, nodes: readonly RootContent[], registry: Registry): boolean {
-  return matches(nodes.length === 1 ? modelled(nodes[0], registry) : undefined, block);
-}
-
-function canonical(block: Block, registry: Registry): string {
+function canonical(block: Block, doc: Doc, registry: Registry): string {
   if (isRaw(block.type)) return block.fields.text;
-  const cached = canonicals.get(block);
+  const container = block.slots !== undefined;
+  const cached = container ? undefined : canonicals.get(block);
   if (cached !== undefined) return cached;
-  const markdown = written(block, registry);
+  const markdown = written(block, doc, registry);
   const chosen =
-    markdown === '' || readsBack(block, parseMarkdown(markdown).children, registry)
+    markdown === '' || readsBack(block, parseMarkdown(markdown).children, doc, registry)
       ? markdown
       : (codecOf(block, registry).escaped?.(block) ?? markdown);
-  canonicals.set(block, chosen);
+  if (!container) canonicals.set(block, chosen);
   return chosen;
 }
 
@@ -177,6 +264,7 @@ function writing(
   block: Block,
   source: Source | undefined,
   escaping: boolean,
+  doc: Doc,
   registry: Registry,
 ): { markdown: string; verbatim: boolean } {
   if (isRaw(block.type)) {
@@ -184,10 +272,10 @@ function writing(
   }
   const escaped = escaping ? codecOf(block, registry).escaped?.(block) : undefined;
   if (escaped !== undefined) return { markdown: escaped, verbatim: false };
-  if (source !== undefined && matches(sourceRead(source, registry), block)) {
+  if (source !== undefined && matches(sourceRead(source, registry), block, doc, registry)) {
     return { markdown: source.markdown, verbatim: true };
   }
-  return { markdown: canonical(block, registry), verbatim: false };
+  return { markdown: canonical(block, doc, registry), verbatim: false };
 }
 
 function gapBefore(
@@ -213,10 +301,10 @@ function layout(
     const block = doc.blocks.get(id);
     if (block === undefined) throw new Error(`block ${id} is missing`);
     const source = doc.sources.get(id);
-    const { markdown, verbatim } = writing(block, source, escaping.has(id), registry);
+    const { markdown, verbatim } = writing(block, source, escaping.has(id), doc, registry);
     exact &&= verbatim && source?.afterId === previous;
     previous = id;
-    if (/^[\t\n ]*$/.test(markdown)) continue;
+    if (isBlank(markdown)) continue;
     const gap = gapBefore(parts.at(-1), source, verbatim);
     const bom = gap === '' && markdown.startsWith('\uFEFF');
     parts.push({ block, gap: bom ? '\n' : gap, markdown, verbatim });
@@ -258,6 +346,7 @@ function placed(parts: readonly Part[], tree: Root): RootContent[][] | BlockId {
 function verdict(
   parts: readonly Part[],
   trailing: string | undefined,
+  doc: Doc,
   registry: Registry,
 ): Verdict {
   const markdown = joined(parts, trailing);
@@ -275,7 +364,7 @@ function verdict(
   for (const [index, { block }] of parts.entries()) {
     const nodes = found[index];
     if (!isRaw(block.type)) {
-      if (!readsBack(block, nodes, registry)) unread.add(block.id);
+      if (!readsBack(block, nodes, doc, registry)) unread.add(block.id);
       continue;
     }
     const types = typesAlone(block);
@@ -290,9 +379,9 @@ export function save(doc: Doc, registry: Registry = builtins): SaveResult {
   const trailing = doc.sources.get(doc.ids.at(-1) ?? '')?.trailing;
   const { parts, exact } = layout(doc, new Set(), registry);
   if (exact && trailing !== undefined) return { ok: true, markdown: joined(parts, trailing) };
-  const first = verdict(parts, trailing, registry);
+  const first = verdict(parts, trailing, doc, registry);
   if (first.ok || first.reason !== 'unread') return first;
-  const second = verdict(layout(doc, first.ids, registry).parts, trailing, registry);
+  const second = verdict(layout(doc, first.ids, registry).parts, trailing, doc, registry);
   if (second.ok || second.reason !== 'unread') return second;
   const [blockId] = second.ids;
   return { ok: false, reason: 'misread', blockId };

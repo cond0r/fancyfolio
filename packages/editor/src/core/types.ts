@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Atom, PrimitiveAtom, Store } from 'jotai/vanilla';
-import type { RootContent } from 'mdast';
+import type { BlockContent, DefinitionContent, RootContent } from 'mdast';
 
 export type BlockId = string;
 
@@ -18,45 +18,85 @@ export type Fields = { readonly [field: string]: string };
 
 export type BlockKind = { readonly type: string; readonly props: Json };
 
-export type Block = BlockKind & { readonly id: BlockId; readonly fields: Fields };
+export type Slots = { readonly [slot: string]: readonly BlockId[] };
 
-export type TypedBlock<Props, Field extends string> = {
+export type Block = BlockKind & {
+  readonly id: BlockId;
+  readonly fields: Fields;
+  readonly slots?: Slots;
+};
+
+export type TypedBlock<Props, Field extends string, Slot extends string = never> = {
   readonly id: BlockId;
   readonly type: string;
   readonly props: Props;
   readonly fields: { readonly [F in Field]: string };
+  readonly slots?: { readonly [S in Slot]: readonly BlockId[] };
 };
 
-export type Codec<Props, Field extends string> = {
+export type SlotNodes<Slot extends string> = {
+  readonly [S in Slot]: readonly (BlockContent | DefinitionContent)[];
+};
+
+export type Codec<Props, Field extends string, Slot extends string = never> = {
   readonly match:
     | 'paragraph'
     | 'heading'
     | `leafDirective:${string}`
     | `containerDirective:${string}`;
-  read(
-    node: RootContent,
-  ): { readonly props: Props; readonly fields: { readonly [F in Field]: string } } | undefined;
-  write(block: TypedBlock<Props, Field>): RootContent;
-  escaped?(block: TypedBlock<Props, Field>): string;
+  read(node: RootContent):
+    | {
+        readonly props: Props;
+        readonly fields: { readonly [F in Field]: string };
+        readonly slots?: SlotNodes<Slot>;
+      }
+    | undefined;
+  write(block: TypedBlock<Props, Field, Slot>, slots: SlotNodes<Slot>): RootContent;
+  escaped?(block: TypedBlock<Props, Field, Slot>): string;
 };
 
-export type Component<Name extends string, Props, Field extends string> = {
+export type Component<
+  Name extends string,
+  Props,
+  Field extends string,
+  Slot extends string = never,
+> = {
   readonly name: Name;
   readonly props: StandardSchemaV1<unknown, Props>;
   readonly fields: readonly Field[];
-  readonly markdown: Codec<Props, Field>;
+  readonly slots?: readonly Slot[];
+  readonly markdown: Codec<Props, Field, Slot>;
   readonly commands?: Handlers;
 };
 
-export type AnyComponent = Component<string, unknown, string>;
+export type AnyComponent = Component<string, unknown, string, string>;
 
 export type PropsOf<C extends AnyComponent> = StandardSchemaV1.InferOutput<C['props']>;
 
 export type FieldOf<C extends AnyComponent> = C['fields'][number];
 
+export type SlotOf<C extends AnyComponent> = NonNullable<C['slots']>[number];
+
 export type BlockOf<P extends readonly AnyComponent[]> = {
-  [I in keyof P]: TypedBlock<PropsOf<P[I]>, FieldOf<P[I]>> & { readonly type: P[I]['name'] };
+  [I in keyof P]: TypedBlock<PropsOf<P[I]>, FieldOf<P[I]>, SlotOf<P[I]>> & {
+    readonly type: P[I]['name'];
+  };
 }[number];
+
+export type Directive<Props, Field extends string> = {
+  readonly name: string;
+  readonly props: StandardSchemaV1<unknown, Props>;
+  readonly keys: readonly (keyof Props & string)[];
+  readonly attributes: readonly Field[];
+  readonly label?: Field;
+};
+
+export type Container<Props, Field extends string, Slot extends string> = Directive<
+  Props,
+  Field
+> & {
+  readonly slot: Slot;
+};
 
 export type NoProps = { readonly [key: string]: never };
 
@@ -229,7 +269,12 @@ export type SaveResult =
   | { readonly ok: false; readonly reason: 'misread'; readonly blockId: BlockId }
   | { readonly ok: false; readonly reason: 'guard' };
 
-export type Read = (BlockKind & { readonly fields: Fields }) | null;
+export type Reading = BlockKind & {
+  readonly fields: Fields;
+  readonly slots?: { readonly [slot: string]: readonly Reading[] };
+};
+
+export type Read = Reading | null;
 
 export type Part = {
   readonly block: Block;

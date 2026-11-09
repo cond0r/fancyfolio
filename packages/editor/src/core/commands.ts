@@ -1,10 +1,11 @@
-import { movable } from './ops.ts';
+import { movable, placeOf } from './ops.ts';
 import type {
   Block,
   BlockId,
   Commands,
   Context,
   DefaultHandlers,
+  DocView,
   Handler,
   Op,
   Registered,
@@ -16,7 +17,15 @@ function caret(blockId: BlockId, field: string, offset: number): Selection {
   return { kind: 'text', blockId, field, from: offset, to: offset };
 }
 
-export function caretIn(block: Block): Selection {
+function entered(doc: DocView, block: Block, end: boolean): Block {
+  if (Object.keys(block.fields).length > 0) return block;
+  const children = Object.values(block.slots ?? {}).flat();
+  const id = end ? children.at(-1) : children[0];
+  return (id === undefined ? undefined : doc.blocks.get(id)) ?? block;
+}
+
+export function caretIn(doc: DocView, outer: Block): Selection {
+  const block = entered(doc, outer, false);
   const [field] = Object.keys(block.fields);
   return field === undefined ? { kind: 'blocks', ids: [block.id] } : caret(block.id, field, 0);
 }
@@ -40,10 +49,11 @@ function textOf(block: Block): string {
   return Object.values(block.fields).join('');
 }
 
-function caretAtEnd(block: Block): Selection {
+function caretAtEnd(doc: DocView, outer: Block): Selection {
+  const block = entered(doc, outer, true);
   const field = Object.keys(block.fields).at(-1);
   return field === undefined
-    ? caretIn(block)
+    ? { kind: 'blocks', ids: [block.id] }
     : caret(block.id, field, (block.fields[field] ?? '').length);
 }
 
@@ -64,16 +74,21 @@ function deleting(blockId: BlockId, field: string, from: number, to: number): Re
 
 function removing({ doc, newId }: Context, ids: readonly BlockId[]): Result {
   const removed = new Set(ids);
-  const ops: Op[] = [...removed].map((blockId) => ({ kind: 'removeBlock', blockId }));
+  const ops: Op[] = [...removed].flatMap((blockId) => [
+    ...Object.values(doc.blocks.get(blockId)?.slots ?? {})
+      .flat()
+      .map((child): Op => ({ kind: 'removeBlock', blockId: child })),
+    { kind: 'removeBlock', blockId },
+  ]);
   const first = doc.ids.findIndex((id) => removed.has(id));
   if (first === -1) return undefined;
   const kept = doc.ids.filter((id) => !removed.has(id));
   const afterId = doc.ids.slice(first).find((id) => !removed.has(id));
   const after = afterId === undefined ? undefined : doc.blocks.get(afterId);
-  if (after !== undefined) return { ops, selection: caretIn(after) };
+  if (after !== undefined) return { ops, selection: caretIn(doc, after) };
   const beforeId = kept.at(-1);
   const before = beforeId === undefined ? undefined : doc.blocks.get(beforeId);
-  if (before !== undefined) return { ops, selection: caretAtEnd(before) };
+  if (before !== undefined) return { ops, selection: caretAtEnd(doc, before) };
   const id = newId();
   const block: Block = { id, type: 'paragraph', props: {}, fields: { text: '' } };
   return {
@@ -84,19 +99,36 @@ function removing({ doc, newId }: Context, ids: readonly BlockId[]): Result {
 
 function merging(context: Context, offset: -1 | 1): Result {
   const at = textAt(context);
-  if (at === undefined || at.from !== at.to || soleField(at.block) !== at.field) return undefined;
+  if (at === undefined || at.from !== at.to) return undefined;
+  const names = Object.keys(at.block.fields);
+  const index = names.indexOf(at.field);
+  const before = names[index - 1];
+  const after = names[index + 1];
+  if (offset === -1 && before !== undefined) {
+    return {
+      ops: [],
+      selection: caret(at.blockId, before, (at.block.fields[before] ?? '').length),
+    };
+  }
+  if (offset === 1 && after !== undefined)
+    return { ops: [], selection: caret(at.blockId, after, 0) };
   const { doc } = context;
-  const neighbourId = doc.ids[doc.ids.indexOf(at.blockId) + offset];
+  const list = placeOf(doc, at.blockId)?.list ?? [];
+  const neighbourId = list[list.indexOf(at.blockId) + offset];
   const neighbour = neighbourId === undefined ? undefined : doc.blocks.get(neighbourId);
   if (neighbour === undefined) return undefined;
   const [head, tail] = offset === -1 ? [neighbour, at.block] : [at.block, neighbour];
   if (
+    soleField(at.block) === at.field &&
     soleField(neighbour) !== undefined &&
     movable(tail.type, head.type, textOf(head), textOf(tail))
   ) {
-    return { ops: [{ kind: 'mergeBlocks', blockId: tail.id }], selection: caretAtEnd(head) };
+    return { ops: [{ kind: 'mergeBlocks', blockId: tail.id }], selection: caretAtEnd(doc, head) };
   }
-  return { ops: [], selection: offset === -1 ? caretAtEnd(neighbour) : caretIn(neighbour) };
+  return {
+    ops: [],
+    selection: offset === -1 ? caretAtEnd(doc, neighbour) : caretIn(doc, neighbour),
+  };
 }
 
 function selected(context: Context): Result {

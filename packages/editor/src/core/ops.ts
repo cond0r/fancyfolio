@@ -178,14 +178,18 @@ function slotsFor(op: Op, component: Registered, slots: Slots | undefined): Slot
   return Object.fromEntries(names.map((name) => [name, []]));
 }
 
-function placed(op: Op, view: DocView, blockId: BlockId): Place {
+export function placeOf(view: DocView, blockId: BlockId): Place | undefined {
   if (view.ids.includes(blockId)) return { parent: null, list: view.ids };
   for (const id of view.ids) {
     for (const [slot, list] of Object.entries(view.blocks.get(id)?.slots ?? {})) {
       if (list.includes(blockId)) return { parent: { blockId: id, slot }, list };
     }
   }
-  refuse(op, 'the block is in no list');
+  return undefined;
+}
+
+function placed(op: Op, view: DocView, blockId: BlockId): Place {
+  return placeOf(view, blockId) ?? refuse(op, 'the block is in no list');
 }
 
 function relisted(

@@ -408,7 +408,12 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
   }
 }
 
-export function planAll(view: DocView, inputs: readonly unknown[], registry: Registry): Planned[] {
+export function planAll(
+  view: DocView,
+  inputs: readonly unknown[],
+  registry: Registry,
+  transformed = false,
+): Planned[] {
   if (inputs.length === 0) throw new RangeError('dispatch refused: no ops');
   const blocks = new Map<BlockId, Block | undefined>();
   let ids = view.ids;
@@ -418,13 +423,20 @@ export function planAll(view: DocView, inputs: readonly unknown[], registry: Reg
     },
     blocks: { get: (id) => (blocks.has(id) ? blocks.get(id) : view.blocks.get(id)) },
   };
-  const steps = inputs.map((input) => {
+  const planOne = (input: unknown) => {
     const step = plan(working, input, registry);
     for (const id of step.change.drop) blocks.set(id, undefined);
     for (const block of step.change.put) blocks.set(block.id, block);
     ids = step.change.ids ?? ids;
     return step;
-  });
+  };
+  const steps = inputs.map(planOne);
+  const originals = transformed ? [...steps] : [];
+  for (const { op } of originals) {
+    for (const { transform } of registry.components.values()) {
+      if (transform !== undefined) steps.push(...transform(op, working).map(planOne));
+    }
+  }
   for (const [id, after] of blocks) {
     const before = view.blocks.get(id);
     if (before === undefined || after === undefined || isRaw(before.type) === isRaw(after.type)) {

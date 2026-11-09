@@ -67,6 +67,7 @@ export type Component<
   readonly slots?: readonly Slot[];
   readonly markdown: Codec<Props, Field, Slot>;
   readonly commands?: Handlers;
+  readonly transform?: (op: Op, after: DocView) => readonly Op[];
 };
 
 export type AnyComponent = Component<string, unknown, string, string>;

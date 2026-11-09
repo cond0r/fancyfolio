@@ -60,10 +60,10 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
   }
 
   function commit(inputs: readonly Op[], recorded?: readonly Op[]) {
-    const planned = planAll(view, inputs, registry);
+    const planned = planAll(view, inputs, registry, recorded === undefined);
     const inverses = recorded ?? planned.map((each) => each.inverse);
-    planned.forEach(({ change }, index) => {
-      write(change, inputs[index], inverses[index]);
+    planned.forEach(({ change, op }, index) => {
+      write(change, inputs[index] ?? op, inverses[index]);
     });
     return { ops: planned.map((each) => each.op), inverses };
   }

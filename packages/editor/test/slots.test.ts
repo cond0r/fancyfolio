@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { containerDirective, leafDirective } from '../src/core/directive.ts';
 import { hasKeys, noProps, schema } from '../src/core/model.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { Block, Component, Editor, NoProps, Op } from '../src/core/types.ts';
+import type { AnyComponent, Block, Component, Editor, NoProps, Op } from '../src/core/types.ts';
 import { counter } from './generate.ts';
 
 const toneProps = schema(
@@ -269,5 +269,99 @@ describe('blocks in a slot', () => {
     editor.undo();
     expect(tree(editor)).toEqual(loadedTree);
     expect(saved(editor)).toBe(page);
+  });
+});
+
+describe('transforms', () => {
+  function withTransform(transform: AnyComponent['transform']): Editor {
+    const host: AnyComponent = {
+      ...metric,
+      name: 'host',
+      markdown: { ...metric.markdown, match: 'leafDirective:host' },
+      transform,
+    };
+    return createEditor(page, {
+      now: () => 0,
+      newId: counter(),
+      components: [callout, metric, host],
+    });
+  }
+
+  const refill: AnyComponent['transform'] = (op, after) => {
+    const body = after.blocks.get('b1')?.slots?.body;
+    if (op.kind !== 'removeBlock' || body === undefined || body.length > 0) return [];
+    return [
+      {
+        kind: 'insertBlock',
+        block: paragraph('filled'),
+        parent: { blockId: 'b1', slot: 'body' },
+        index: 0,
+      },
+    ];
+  };
+
+  it('lands a follow-up in the same undo step as the op that caused it', () => {
+    const editor = withTransform(refill);
+    editor.dispatch({ kind: 'removeBlock', blockId: 'b2' }, { kind: 'removeBlock', blockId: 'b3' });
+    expect(tree(editor)).toEqual([
+      loadedTree[0],
+      ['b1', 'callout', [[['filled', '']]]],
+      loadedTree[2],
+    ]);
+    expect(editor.undo()).toBe(true);
+    expect(tree(editor)).toEqual(loadedTree);
+    expect(editor.undo()).toBe(false);
+    expect(editor.redo()).toBe(true);
+    expect(tree(editor)).toEqual([
+      loadedTree[0],
+      ['b1', 'callout', [[['filled', '']]]],
+      loadedTree[2],
+    ]);
+  });
+
+  it.each<[string, NonNullable<AnyComponent['transform']>]>([
+    ['a follow-up that refuses', () => [{ kind: 'removeBlock', blockId: 'missing' }]],
+    [
+      'a transform that throws',
+      () => {
+        throw new Error('transform bug');
+      },
+    ],
+  ])('refuses the whole dispatch on %s', (_name, transform) => {
+    const editor = withTransform((op, after) =>
+      'blockId' in op && op.blockId === 'b4' ? transform(op, after) : [],
+    );
+    editor.dispatch({
+      kind: 'insertText',
+      blockId: 'b0',
+      field: 'text',
+      offset: 0,
+      text: 'kept ',
+    });
+    expect(() =>
+      editor.dispatch({ kind: 'insertText', blockId: 'b4', field: 'text', offset: 0, text: 'x' }),
+    ).toThrow();
+    expect(tree(editor)).toEqual([['b0', 'kept Before.'], loadedTree[1], loadedTree[2]]);
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(page);
+  });
+
+  it('runs once per op and component, on the doc after the op, never on follow-ups or undo', () => {
+    const seen: string[] = [];
+    const editor = withTransform((op, after) => {
+      if (op.kind !== 'insertText') return [];
+      seen.push(after.blocks.get(op.blockId)?.fields.text ?? '');
+      return [{ ...op, offset: op.offset + op.text.length, text: '!' }];
+    });
+    editor.dispatch(
+      { kind: 'insertText', blockId: 'b0', field: 'text', offset: 0, text: 'a' },
+      { kind: 'insertText', blockId: 'b2', field: 'text', offset: 5, text: 'b' },
+    );
+    expect(seen).toEqual(['aBefore.', 'Firstb']);
+    expect(tree(editor)[0]).toEqual(['b0', 'a!Before.']);
+    expect(editor.doc().blocks.get('b2')?.fields.text).toBe('Firstb!');
+    editor.undo();
+    editor.redo();
+    expect(seen).toHaveLength(2);
   });
 });

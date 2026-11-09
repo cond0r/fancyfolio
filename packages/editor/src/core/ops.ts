@@ -9,9 +9,11 @@ import type {
   Json,
   Op,
   Parent,
+  Place,
   Planned,
   Registered,
   Registry,
+  Slots,
 } from './types.ts';
 
 function refuse(op: Op, reason: string): never {
@@ -35,20 +37,34 @@ function field(input: unknown, key: string): unknown {
     : undefined;
 }
 
+function slotsFrom(input: unknown): Slots | undefined {
+  if (!isRecord(input)) return undefined;
+  const entries: [string, readonly BlockId[]][] = [];
+  for (const [name, ids] of Object.entries(input)) {
+    if (!Array.isArray(ids) || !ids.every(isId)) return undefined;
+    entries.push([name, Object.freeze([...ids])]);
+  }
+  return Object.freeze(Object.fromEntries(entries));
+}
+
 function blockFrom(input: unknown): Block | undefined {
   const id = field(input, 'id');
   const type = field(input, 'type');
   const props = jsonOf(field(input, 'props'));
   const fields = field(input, 'fields');
+  const listed = field(input, 'slots');
+  const slots = listed === undefined ? undefined : slotsFrom(listed);
   if (!isId(id) || typeof type !== 'string' || props === undefined || !isRecord(fields)) {
     return undefined;
   }
+  if (listed !== undefined && slots === undefined) return undefined;
   const entries: [string, string][] = [];
   for (const [name, text] of Object.entries(fields)) {
     if (typeof text !== 'string') return undefined;
     entries.push([name, text]);
   }
-  return Object.freeze({ id, type, props, fields: Object.freeze(Object.fromEntries(entries)) });
+  const block = { id, type, props, fields: Object.freeze(Object.fromEntries(entries)) };
+  return Object.freeze(slots === undefined ? block : { ...block, slots });
 }
 
 function parentFrom(input: unknown): Parent | undefined {
@@ -136,9 +152,51 @@ function propsOf(op: Op, component: Registered, props: unknown): Json {
 }
 
 function soleField(op: Op, component: Registered): string {
+  if (hasSlots(component)) refuse(op, 'the block has slots');
   const [only, ...rest] = component.fields;
   if (only === undefined || rest.length > 0) refuse(op, 'the block has more than one field');
   return only;
+}
+
+function hasSlots(component: Registered): boolean {
+  return (component.slots ?? []).length > 0;
+}
+
+function fitsSlot(op: Op, component: Registered) {
+  if (hasSlots(component)) refuse(op, 'a slot child has no slots');
+  if (component.markdown === undefined) refuse(op, 'raw source stays at the top level');
+}
+
+function slotsFor(op: Op, component: Registered, slots: Slots | undefined): Slots | undefined {
+  const names = component.slots ?? [];
+  if (names.length === 0 && slots === undefined) return undefined;
+  const fresh =
+    slots !== undefined &&
+    Object.keys(slots).length === names.length &&
+    names.every((name) => Object.hasOwn(slots, name) && slots[name]?.length === 0);
+  if (names.length === 0 || !fresh) refuse(op, 'slots start empty');
+  return Object.fromEntries(names.map((name) => [name, []]));
+}
+
+function placed(op: Op, view: DocView, blockId: BlockId): Place {
+  if (view.ids.includes(blockId)) return { parent: null, list: view.ids };
+  for (const id of view.ids) {
+    for (const [slot, list] of Object.entries(view.blocks.get(id)?.slots ?? {})) {
+      if (list.includes(blockId)) return { parent: { blockId: id, slot }, list };
+    }
+  }
+  refuse(op, 'the block is in no list');
+}
+
+function relisted(
+  view: DocView,
+  { parent }: Place,
+  list: readonly BlockId[],
+): { put: Block[]; ids?: readonly BlockId[] } {
+  if (parent === null) return { put: [], ids: list };
+  const owner = view.blocks.get(parent.blockId);
+  if (owner === undefined) throw new Error(`block ${parent.blockId} is missing`);
+  return { put: [{ ...owner, slots: { ...owner.slots, [parent.slot]: list } }] };
 }
 
 function textIn(op: Op, block: Block, component: Registered, field: string): string {
@@ -174,19 +232,30 @@ function inserting(
   op: Extract<Op, { kind: 'insertBlock' }>,
   registry: Registry,
 ): { change: Change; inverse: Op } {
-  if (op.parent !== null) refuse(op, 'unknown slot');
-  const { block } = op;
+  const { block, parent } = op;
   if (view.blocks.get(block.id) !== undefined) refuse(op, 'id taken');
   const component = componentOf(op, registry, block.type);
   const props = propsOf(op, component, block.props);
   const fields = fieldsFor(component, block.fields) ?? refuse(op, 'fields do not fit the type');
-  if (!Number.isInteger(op.index) || op.index < 0 || op.index > view.ids.length) {
+  const slots = slotsFor(op, component, block.slots);
+  const owner = parent === null ? undefined : view.blocks.get(parent.blockId);
+  const list =
+    parent === null
+      ? view.ids
+      : owner?.slots !== undefined && Object.hasOwn(owner.slots, parent.slot)
+        ? owner.slots[parent.slot]
+        : undefined;
+  if (list === undefined) refuse(op, 'unknown slot');
+  if (parent !== null) fitsSlot(op, component);
+  if (!Number.isInteger(op.index) || op.index < 0 || op.index > list.length) {
     refuse(op, 'index outside the list');
   }
-  const ids = [...view.ids];
-  ids.splice(op.index, 0, block.id);
+  const next = [...list];
+  next.splice(op.index, 0, block.id);
+  const made: Block = { id: block.id, type: block.type, props, fields, ...(slots && { slots }) };
+  const { put, ids } = relisted(view, { parent, list }, next);
   return {
-    change: { put: [{ id: block.id, type: block.type, props, fields }], ids, drop: [] },
+    change: { put: [made, ...put], ids, drop: [] },
     inverse: { kind: 'removeBlock', blockId: block.id },
   };
 }
@@ -232,27 +301,36 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
       const head = text.slice(0, offset);
       const tail = text.slice(offset);
       moving(op, block.type, op.type, head, tail);
+      const place = placed(op, view, blockId);
+      if (place.parent !== null) fitsSlot(op, target);
       const added: Block = { id: op.newId, type: op.type, props, fields: { [targetField]: tail } };
-      const ids = [...view.ids];
-      ids.splice(ids.indexOf(blockId) + 1, 0, op.newId);
+      const list = [...place.list];
+      list.splice(list.indexOf(blockId) + 1, 0, op.newId);
+      const { put, ids } = relisted(view, place, list);
       return {
-        change: { put: [withField(op, block, field, head), added], ids, drop: [] },
+        change: { put: [withField(op, block, field, head), added, ...put], ids, drop: [] },
         inverse: { kind: 'mergeBlocks', blockId: op.newId },
       };
     }
     case 'mergeBlocks': {
-      const previousId = view.ids[view.ids.indexOf(blockId) - 1];
+      const text = textIn(op, block, component, soleField(op, component));
+      const place = placed(op, view, blockId);
+      const previousId = place.list[place.list.indexOf(blockId) - 1];
       const previous = previousId === undefined ? undefined : view.blocks.get(previousId);
       if (previous === undefined) refuse(op, 'no block before');
-      const text = textIn(op, block, component, soleField(op, component));
       const before = componentOf(op, registry, previous.type);
       const field = soleField(op, before);
       const head = textIn(op, previous, before, field);
       moving(op, block.type, previous.type, head, text);
+      const relist = relisted(
+        view,
+        place,
+        place.list.filter((id) => id !== blockId),
+      );
       return {
         change: {
-          put: [withField(op, previous, field, head + text)],
-          ids: view.ids.filter((id) => id !== blockId),
+          put: [withField(op, previous, field, head + text), ...relist.put],
+          ids: relist.ids,
           drop: [blockId],
         },
         inverse: {
@@ -268,6 +346,7 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
     }
     case 'setType': {
       const target = componentOf(op, registry, op.type);
+      if (!view.ids.includes(blockId)) fitsSlot(op, target);
       const props = propsOf(op, target, op.props);
       if (op.type === block.type && sameJson(props, block.props)) {
         refuse(op, 'block already has that type');
@@ -283,8 +362,17 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
           Object.hasOwn(block.fields, name) ? block.fields[name] : '',
         ]),
       );
+      const kept = block.slots ?? {};
+      const names = target.slots ?? [];
+      if (Object.entries(kept).some(([name, ids]) => ids.length > 0 && !names.includes(name))) {
+        refuse(op, 'the new type has no slot for its blocks');
+      }
+      const slots = Object.fromEntries(
+        names.map((name) => [name, Object.hasOwn(kept, name) ? kept[name] : []]),
+      );
+      const made: Block = { id: blockId, type: op.type, props, fields };
       return {
-        change: { put: [{ id: blockId, type: op.type, props, fields }], drop: [] },
+        change: { put: [names.length > 0 ? { ...made, slots } : made], drop: [] },
         inverse: { kind: 'setType', blockId, type: block.type, props: block.props },
       };
     }
@@ -296,12 +384,27 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
         inverse: { kind: 'setProps', blockId, props: block.props },
       };
     }
-    case 'removeBlock':
-      if (view.ids.length <= 1) refuse(op, 'the last block stays');
+    case 'removeBlock': {
+      if (Object.values(block.slots ?? {}).some((ids) => ids.length > 0)) {
+        refuse(op, 'a container with children stays');
+      }
+      const place = placed(op, view, blockId);
+      if (place.parent === null && place.list.length <= 1) refuse(op, 'the last block stays');
+      const { put, ids } = relisted(
+        view,
+        place,
+        place.list.filter((id) => id !== blockId),
+      );
       return {
-        change: { put: [], ids: view.ids.filter((id) => id !== blockId), drop: [blockId] },
-        inverse: { kind: 'insertBlock', block, parent: null, index: view.ids.indexOf(blockId) },
+        change: { put, ids, drop: [blockId] },
+        inverse: {
+          kind: 'insertBlock',
+          block,
+          parent: place.parent,
+          index: place.list.indexOf(blockId),
+        },
       };
+    }
   }
 }
 

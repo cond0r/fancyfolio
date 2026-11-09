@@ -133,6 +133,8 @@ export type DocView = {
 
 export type Parent = { readonly blockId: BlockId; readonly slot: string } | null;
 
+export type Place = { readonly parent: Parent; readonly list: readonly BlockId[] };
+
 export type Op =
   | {
       readonly kind: 'insertText';

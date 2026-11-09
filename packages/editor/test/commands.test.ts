@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { containerDirective } from '../src/core/directive.ts';
+import { hasKeys, schema } from '../src/core/model.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
 import type { AnyComponent, Editor, Handlers, Selection } from '../src/core/types.ts';
@@ -273,24 +275,146 @@ describe('raw source commands', () => {
 });
 
 describe('a refused merge', () => {
-  it.each([
-    ['backward to the end of the last field before', caret('b1', 0), 'deleteBackward', 'b', 2],
-    ['forward to the start of the first field after', caret('b0', 3), 'deleteForward', 'a', 0],
-  ] as const)('moves the caret %s with no op', (_name, selection, command, field, offset) => {
+  function withPair(): Editor {
     const pair: AnyComponent = { ...withCommands('pair', {}), fields: ['a', 'b'] };
     const editor = editorAt(plain, [pair]);
     const block = { id: 'p', type: 'pair', props: {}, fields: { a: 'x', b: 'yz' } };
     editor.dispatch({ kind: 'insertBlock', block, parent: null, index: 1 });
+    return editor;
+  }
+
+  const at = (field: string, offset: number): Selection => ({
+    kind: 'text',
+    blockId: 'p',
+    field,
+    from: offset,
+    to: offset,
+  });
+
+  it.each([
+    ['backward to the end of the last field before', caret('b1', 0), 'deleteBackward', at('b', 2)],
+    ['forward to the start of the first field after', caret('b0', 3), 'deleteForward', at('a', 0)],
+    [
+      'backward from a later field to the end of the field before',
+      at('b', 0),
+      'deleteBackward',
+      at('a', 1),
+    ],
+    [
+      'forward from an earlier field to the start of the field after',
+      at('a', 1),
+      'deleteForward',
+      at('b', 0),
+    ],
+    [
+      'backward from its first field to the end of the block before',
+      at('a', 0),
+      'deleteBackward',
+      caret('b0', 3),
+    ],
+    [
+      'forward from its last field to the start of the block after',
+      at('b', 2),
+      'deleteForward',
+      caret('b1', 0),
+    ],
+  ] as const)('moves the caret %s with no op', (_name, selection, command, moved) => {
+    const editor = withPair();
     select(editor, selection);
     expect(editor.command(command, {})).toBe(true);
     expect(editor.store.get(editor.ids)).toEqual(['b0', 'p', 'b1']);
-    expect(editor.store.get(editor.selection)).toEqual({
-      kind: 'text',
-      blockId: 'p',
-      field,
-      from: offset,
-      to: offset,
-    });
+    expect(editor.store.get(editor.selection)).toEqual(moved);
+  });
+});
+
+describe('commands inside a slot', () => {
+  const toneProps = schema(
+    (value): value is { readonly tone: string } =>
+      hasKeys(value, ['tone']) && typeof Reflect.get(value, 'tone') === 'string',
+  );
+  const callout: AnyComponent = {
+    name: 'callout',
+    props: toneProps,
+    fields: [],
+    slots: ['body'],
+    markdown: containerDirective({
+      name: 'callout',
+      props: toneProps,
+      keys: ['tone'],
+      attributes: [],
+      slot: 'body',
+    }),
+  };
+  const page = 'Before.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n\nAfter.\n';
+  const merged = 'Before.\n\n:::callout{tone="info"}\nFirstSecond\n:::\n\nAfter.\n';
+
+  it.each([
+    ['merges a child into the child before at its start', caret('b3', 0), 'deleteBackward'],
+    ['merges the next child at the end of a child', caret('b2', 5), 'deleteForward'],
+  ] as const)('%s', (_name, selection, command) => {
+    const editor = editorAt(page, [callout]);
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(true);
+    expect(saved(editor)).toBe(merged);
+    expect(editor.store.get(editor.selection)).toEqual(caret('b2', 5));
+  });
+
+  it.each([
+    ['backward at the start of the first child', caret('b2', 0), 'deleteBackward'],
+    ['forward at the end of the last child', caret('b3', 6), 'deleteForward'],
+  ] as const)('stays in the slot %s', (_name, selection, command) => {
+    const editor = editorAt(page, [callout]);
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(false);
+    expect(saved(editor)).toBe(page);
+    expect(editor.store.get(editor.selection)).toEqual(selection);
+  });
+
+  it.each([
+    [
+      'backward from the block after it to the end of its last child',
+      caret('b4', 0),
+      'deleteBackward',
+      caret('b3', 6),
+    ],
+    [
+      'forward from the block before it to the start of its first child',
+      caret('b0', 7),
+      'deleteForward',
+      caret('b2', 0),
+    ],
+    [
+      'to its first child when the block before it is removed',
+      blocks('b0'),
+      'deleteSelection',
+      caret('b2', 0),
+    ],
+    [
+      'to the end of its last child when the block after it is removed',
+      blocks('b4'),
+      'deleteSelection',
+      caret('b3', 6),
+    ],
+  ] as const)('moves the caret into a container %s', (_name, selection, command, moved) => {
+    const editor = editorAt(page, [callout]);
+    select(editor, selection);
+    expect(editor.command(command, {})).toBe(true);
+    expect(editor.store.get(editor.selection)).toEqual(moved);
+  });
+
+  it('starts with the caret in the first child of a container that opens the document', () => {
+    const editor = editorAt(':::callout{tone="info"}\nFirst\n:::\n', [callout]);
+    expect(editor.store.get(editor.selection)).toEqual(caret('b1', 0));
+  });
+
+  it('removes a selected container with its children in one undo step', () => {
+    const editor = editorAt(page, [callout]);
+    select(editor, blocks('b0', 'b1'));
+    expect(editor.command('deleteBackward', {})).toBe(true);
+    expect(saved(editor)).toBe('After.\n');
+    expect(editor.store.get(editor.selection)).toEqual(caret('b4', 0));
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(page);
   });
 });
 

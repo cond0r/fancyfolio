@@ -27,7 +27,7 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
   const [first] = initial.ids;
   const firstBlock = first === undefined ? undefined : initial.blocks.get(first);
   if (firstBlock === undefined) throw new Error('the document has no first block');
-  const selection = atom<Selection>(caretIn(firstBlock));
+  const selection = atom<Selection>(caretIn(initial, firstBlock));
   let history = emptyHistory;
 
   const view: DocView = {

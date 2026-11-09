@@ -2,7 +2,6 @@ import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
 import { caretIn, run } from './commands.ts';
 import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
-import { docOf } from './model.ts';
 import { planAll } from './ops.ts';
 import { registryOf } from './registry.ts';
 import type {
@@ -90,14 +89,15 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
 
   function doc(): Doc {
     const order = store.get(ids);
-    return docOf(
-      order.map((id) => {
-        const block = view.blocks.get(id);
-        if (block === undefined) throw new Error(`block ${id} has no atom`);
-        return block;
-      }),
-      initial.sources,
-    );
+    const all = new Map<BlockId, Block>();
+    const visit = (id: BlockId) => {
+      const block = view.blocks.get(id);
+      if (block === undefined) throw new Error(`block ${id} has no atom`);
+      all.set(id, block);
+      for (const children of Object.values(block.slots ?? {})) children.forEach(visit);
+    };
+    order.forEach(visit);
+    return { ids: order, blocks: all, sources: initial.sources };
   }
 
   return {

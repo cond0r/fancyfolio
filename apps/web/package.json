@@ -12,6 +12,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@fancyfolio/contracts": "workspace:*",
     "@fancyfolio/editor": "workspace:*",
     "next": "^16.4.3",
     "react": "^19.3.0",

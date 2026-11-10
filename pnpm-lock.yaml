@@ -218,6 +218,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@fancyfolio/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@fancyfolio/editor':
         specifier: workspace:*
         version: link:../../packages/editor

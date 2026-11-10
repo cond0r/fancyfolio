@@ -2,11 +2,14 @@
 
 import dynamic from 'next/dynamic';
 import { useCallback, useRef } from 'react';
+import { Callout } from '../../../components/blocks/callout';
+import { Metric } from '../../../components/blocks/metric';
 
 const Editor = dynamic(
   () =>
-    import('@fancyfolio/editor/react').then(({ createReactEditor }) =>
-      createReactEditor({ components: [], views: {} }),
+    Promise.all([import('@fancyfolio/editor/react'), import('./components')]).then(
+      ([{ createReactEditor }, { components }]) =>
+        createReactEditor({ components, views: { callout: Callout, metric: Metric } }),
     ),
   { ssr: false },
 );

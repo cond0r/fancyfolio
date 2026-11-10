@@ -200,8 +200,12 @@ function matches(read: Read | undefined, block: Block, doc: Doc, registry: Regis
   const slots = Object.keys(block.slots ?? {});
   if (slots.length !== Object.keys(read.slots ?? {}).length) return false;
   return slots.every((slot) => {
-    const reads =
-      read.slots !== undefined && Object.hasOwn(read.slots, slot) ? read.slots[slot] : [];
+    const reads = (
+      read.slots !== undefined && Object.hasOwn(read.slots, slot) ? read.slots[slot] : []
+    ).filter(
+      ({ type, props, fields }) =>
+        !isBlank(written({ id: '', type, props, fields }, doc, registry)),
+    );
     const children = writtenChildren(block, slot, doc, registry);
     return (
       reads.length === children.length &&

@@ -194,7 +194,8 @@
     {
       "includes": [
         "apps/web/app/(app)/dashboard/case-studies/\\[id\\]/**",
-        "apps/web/app/(app)/playground/**"
+        "apps/web/app/(app)/playground/**",
+        "apps/web/test/**"
       ],
       "linter": {
         "rules": {

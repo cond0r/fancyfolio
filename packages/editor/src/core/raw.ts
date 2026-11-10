@@ -5,6 +5,7 @@ export const raw: Fallback = {
   name: 'raw',
   props: noProps,
   fields: ['text'],
+  labels: { text: 'Markdown source' },
   commands: {
     insertBreak({ doc, selection }) {
       if (selection.kind !== 'text') return undefined;

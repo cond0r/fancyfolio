@@ -586,6 +586,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/editor/src/react/block.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useSemanticElements": "off"
+          }
+        }
+      }
     }
   ]
 }

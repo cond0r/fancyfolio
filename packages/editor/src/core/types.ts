@@ -64,6 +64,7 @@ export type Component<
   readonly name: Name;
   readonly props: StandardSchemaV1<unknown, Props>;
   readonly fields: readonly Field[];
+  readonly labels: { readonly [F in Field]: string };
   readonly slots?: readonly Slot[];
   readonly markdown: Codec<Props, Field, Slot>;
   readonly commands?: Handlers;

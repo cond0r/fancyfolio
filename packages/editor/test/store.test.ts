@@ -166,6 +166,7 @@ describe('the editor store', () => {
           hasKeys(value, ['tone']) && tones.includes(Reflect.get(value, 'tone')),
       ),
       fields: ['text'],
+      labels: { text: 'Note' },
       markdown: {
         match: 'leafDirective:note',
         read(node) {

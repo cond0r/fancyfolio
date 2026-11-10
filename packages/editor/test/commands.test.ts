@@ -276,7 +276,11 @@ describe('raw source commands', () => {
 
 describe('a refused merge', () => {
   function withPair(): Editor {
-    const pair: AnyComponent = { ...withCommands('pair', {}), fields: ['a', 'b'] };
+    const pair: AnyComponent = {
+      ...withCommands('pair', {}),
+      fields: ['a', 'b'],
+      labels: { a: 'A', b: 'B' },
+    };
     const editor = editorAt(plain, [pair]);
     const block = { id: 'p', type: 'pair', props: {}, fields: { a: 'x', b: 'yz' } };
     editor.dispatch({ kind: 'insertBlock', block, parent: null, index: 1 });
@@ -336,6 +340,7 @@ describe('commands inside a slot', () => {
     name: 'callout',
     props: toneProps,
     fields: [],
+    labels: {},
     slots: ['body'],
     markdown: containerDirective({
       name: 'callout',

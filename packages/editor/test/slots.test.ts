@@ -14,6 +14,7 @@ const callout: Component<'callout', { readonly tone: string }, never, 'body'> = 
   name: 'callout',
   props: toneProps,
   fields: [],
+  labels: {},
   slots: ['body'],
   markdown: containerDirective({
     name: 'callout',
@@ -28,6 +29,7 @@ const metric: Component<'metric', NoProps, 'value'> = {
   name: 'metric',
   props: noProps,
   fields: ['value'],
+  labels: { value: 'Value' },
   markdown: leafDirective({ name: 'metric', props: noProps, keys: [], attributes: ['value'] }),
 };
 

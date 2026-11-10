@@ -23,6 +23,8 @@ export type {
   BlockKind,
   Codec,
   Component,
+  Container,
+  Directive,
   Doc,
   Editor,
   EditorOptions,

@@ -12,6 +12,7 @@ export const heading: Component<'heading', HeadingProps, 'text'> = {
       hasKeys(value, ['level']) && isLevel(Reflect.get(value, 'level')),
   ),
   fields: ['text'],
+  labels: { text: 'Heading' },
   markdown: {
     match: 'heading',
     read(node) {

@@ -3,6 +3,7 @@
 import { useAtomValue } from 'jotai/react';
 import { type ComponentType, useCallback, useState } from 'react';
 import type { heading } from '../core/heading.ts';
+import { registryOf } from '../core/registry.ts';
 import { createEditor } from '../core/store.ts';
 import type { AnyComponent } from '../core/types.ts';
 import { bindEditor } from '../dom/field.ts';
@@ -32,6 +33,7 @@ export function createReactEditor({
   readonly views: AnyViews;
 }): ComponentType<EditorProps> {
   const all: ViewMap = new Map(Object.entries({ ...views, ...builtins }));
+  const registered = registryOf(components).components;
   return function ReactEditor({ markdown, onRender }: EditorProps) {
     const [editor] = useState(() =>
       createEditor(markdown, { now: Date.now, newId: () => crypto.randomUUID(), components }),
@@ -41,7 +43,14 @@ export function createReactEditor({
     return (
       <div ref={bind} data-ff-editor="" tabIndex={-1}>
         {ids.map((id) => (
-          <Block key={id} id={id} editor={editor} views={all} onRender={onRender} />
+          <Block
+            key={id}
+            id={id}
+            editor={editor}
+            views={all}
+            components={registered}
+            onRender={onRender}
+          />
         ))}
       </div>
     );

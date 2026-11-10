@@ -691,6 +691,7 @@ describe('directive blocks', () => {
     name: 'callout',
     props: toneProps,
     fields: ['title'],
+    labels: { title: 'Title' },
     slots: ['body'],
     markdown: containerDirective({
       name: 'callout',
@@ -705,6 +706,7 @@ describe('directive blocks', () => {
     name: 'metric',
     props: noProps,
     fields: ['value', 'label'],
+    labels: { value: 'Value', label: 'Label' },
     markdown: leafDirective({
       name: 'metric',
       props: noProps,
@@ -716,6 +718,7 @@ describe('directive blocks', () => {
     name: 'stat',
     props: noProps,
     fields: ['text'],
+    labels: { text: 'Stat' },
     markdown: leafDirective({
       name: 'stat',
       props: noProps,

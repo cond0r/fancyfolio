@@ -6,6 +6,9 @@ const body = [
   'Its checkout took nine steps.',
   'Result',
   'Three steps remained.',
+  '3 steps',
+  'Checkout length',
+  'The shop and its numbers are invented.',
 ];
 
 const fields = (page: Page) => page.locator('[data-ff-editor] [data-field]');

@@ -26,6 +26,7 @@ export type {
   Container,
   Directive,
   Doc,
+  DocView,
   Editor,
   EditorOptions,
   HeadingLevel,

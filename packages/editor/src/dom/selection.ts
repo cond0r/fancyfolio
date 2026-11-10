@@ -74,7 +74,12 @@ export function place(root: HTMLElement, selection: Selection): void {
     return;
   }
   const field = fieldElement(root, selection.blockId, selection.field);
-  if (field === undefined || dom === null) return;
+  // A field not yet mounted gets the caret from bindField, which needs focus kept in root.
+  if (field === undefined) {
+    root.focus({ preventScroll: true });
+    return;
+  }
+  if (dom === null) return;
   if (root.ownerDocument.activeElement !== field) field.focus({ preventScroll: true });
   dom.setBaseAndExtent(...point(field, selection.from), ...point(field, selection.to));
 }

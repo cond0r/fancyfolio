@@ -11,6 +11,7 @@ import type {
   Parent,
   Place,
   Planned,
+  Position,
   Registered,
   Registry,
   Slots,
@@ -450,6 +451,34 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
         },
       };
     }
+  }
+}
+
+export function mapThrough(
+  op: Op,
+  position: Position,
+  bias: -1 | 1 = -1,
+  registry: Registry = builtins,
+): Position | undefined {
+  if (!('blockId' in op) || op.blockId !== position.blockId) return position;
+  const { field, offset } = position;
+  switch (op.kind) {
+    case 'removeBlock':
+      return undefined;
+    case 'setType':
+      return registry.components.get(op.type)?.fields.includes(field) ? position : undefined;
+    case 'insertText': {
+      const pushed = op.offset < offset || (op.offset === offset && bias > 0);
+      return op.field === field && pushed
+        ? { ...position, offset: offset + op.text.length }
+        : position;
+    }
+    case 'deleteText':
+      return op.field === field && op.from < offset
+        ? { ...position, offset: Math.max(op.from, offset - (op.to - op.from)) }
+        : position;
+    default:
+      return position;
   }
 }
 

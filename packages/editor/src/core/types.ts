@@ -135,6 +135,20 @@ export type DocView = {
 
 export type Parent = { readonly blockId: BlockId; readonly slot: string } | null;
 
+export type Position = {
+  readonly blockId: BlockId;
+  readonly field: string;
+  readonly offset: number;
+};
+
+export type Presence = {
+  readonly userId: string;
+  readonly blockId: BlockId;
+  readonly field: string;
+  readonly from: number;
+  readonly to: number;
+};
+
 export type Place = { readonly parent: Parent; readonly list: readonly BlockId[] };
 
 export type Op =

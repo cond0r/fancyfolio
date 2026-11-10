@@ -1,37 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { containerDirective, leafDirective } from '../src/core/directive.ts';
-import { hasKeys, noProps, schema } from '../src/core/model.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Block, Component, Editor, NoProps, Op } from '../src/core/types.ts';
-import { counter } from './generate.ts';
-
-const toneProps = schema(
-  (value): value is { readonly tone: string } =>
-    hasKeys(value, ['tone']) && typeof Reflect.get(value, 'tone') === 'string',
-);
-
-const callout: Component<'callout', { readonly tone: string }, never, 'body'> = {
-  name: 'callout',
-  props: toneProps,
-  fields: [],
-  labels: {},
-  slots: ['body'],
-  markdown: containerDirective({
-    name: 'callout',
-    props: toneProps,
-    keys: ['tone'],
-    attributes: [],
-    slot: 'body',
-  }),
-};
-
-const metric: Component<'metric', NoProps, 'value'> = {
-  name: 'metric',
-  props: noProps,
-  fields: ['value'],
-  labels: { value: 'Value' },
-  markdown: leafDirective({ name: 'metric', props: noProps, keys: [], attributes: ['value'] }),
-};
+import type { AnyComponent, Block, Editor, Op } from '../src/core/types.ts';
+import { callout, counter, metric } from './generate.ts';
 
 const page = 'Before.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n\nAfter.\n';
 

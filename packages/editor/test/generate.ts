@@ -1,6 +1,15 @@
 import { vi } from 'vitest';
-import { isRaw, sameJson } from '../src/core/model.ts';
-import type { AnyComponent, Block, BlockKind, Doc, Op } from '../src/core/types.ts';
+import { containerDirective, leafDirective } from '../src/core/directive.ts';
+import { hasKeys, isRaw, noProps, sameJson, schema } from '../src/core/model.ts';
+import type {
+  AnyComponent,
+  Block,
+  BlockKind,
+  Component,
+  Doc,
+  NoProps,
+  Op,
+} from '../src/core/types.ts';
 
 export type Random = { int(below: number): number; pick<T>(items: readonly T[]): T };
 
@@ -30,6 +39,34 @@ export function answeringLater(): { schema: AnyComponent['props']; handled: () =
     handled: () => then.mock.calls.some(([, onRejected]) => typeof onRejected === 'function'),
   };
 }
+
+const toneProps = schema(
+  (value): value is { readonly tone: string } =>
+    hasKeys(value, ['tone']) && typeof Reflect.get(value, 'tone') === 'string',
+);
+
+export const callout: Component<'callout', { readonly tone: string }, never, 'body'> = {
+  name: 'callout',
+  props: toneProps,
+  fields: [],
+  labels: {},
+  slots: ['body'],
+  markdown: containerDirective({
+    name: 'callout',
+    props: toneProps,
+    keys: ['tone'],
+    attributes: [],
+    slot: 'body',
+  }),
+};
+
+export const metric: Component<'metric', NoProps, 'value'> = {
+  name: 'metric',
+  props: noProps,
+  fields: ['value'],
+  labels: { value: 'Value' },
+  markdown: leafDirective({ name: 'metric', props: noProps, keys: [], attributes: ['value'] }),
+};
 
 export const seeds = process.env.EDITOR_SEED
   ? [Number(process.env.EDITOR_SEED)]

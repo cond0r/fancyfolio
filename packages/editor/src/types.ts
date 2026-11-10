@@ -32,6 +32,8 @@ export type {
   HeadingLevel,
   Json,
   Op,
+  Position,
+  Presence,
   SaveResult,
   Source,
   TypedBlock,

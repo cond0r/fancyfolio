@@ -5,6 +5,7 @@ export const paragraph: Component<'paragraph', NoProps, 'text'> = {
   name: 'paragraph',
   props: noProps,
   fields: ['text'],
+  labels: { text: 'Paragraph' },
   markdown: {
     match: 'paragraph',
     read(node) {

@@ -1,4 +1,5 @@
-import type { Bare, BlockId, Commands, Editor, Selection } from '../core/types.ts';
+import { placeOf } from '../core/ops.ts';
+import type { Bare, BlockId, Commands, DocView, Editor, Selection } from '../core/types.ts';
 import {
   blockOf,
   fieldElement,
@@ -43,6 +44,14 @@ export function renderText(field: HTMLElement, text: string): void {
   if (nodes.length === wanted && textOk && breakOk) return;
   const line = field.ownerDocument.createElement('br');
   field.replaceChildren(...(text === '' ? [] : [text]), ...(broken ? [line] : []));
+}
+
+export function spanOf(view: DocView, from: BlockId, to: BlockId): BlockId[] | undefined {
+  const { ids } = view;
+  const at = (id: BlockId) => ids.indexOf(placeOf(view, id)?.parent?.blockId ?? id);
+  const [start, end] = [at(from), at(to)].sort((a, b) => a - b);
+  if (start === undefined || end === undefined || start < 0) return undefined;
+  return ids.slice(start, end + 1);
 }
 
 export function bindField(field: HTMLElement, editor: Editor, blockId: BlockId, name: string) {
@@ -178,10 +187,8 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   };
 
   const span = (from: BlockId, to: BlockId) => {
-    const ids = store.get(editor.ids);
-    const [start, end] = [ids.indexOf(from), ids.indexOf(to)].sort((a, b) => a - b);
-    if (start === undefined || end === undefined || start < 0) return;
-    if (select({ kind: 'blocks', ids: ids.slice(start, end + 1) })) {
+    const ids = spanOf(editor.doc(), from, to);
+    if (ids !== undefined && select({ kind: 'blocks', ids })) {
       place(root, store.get(editor.selection));
     }
   };

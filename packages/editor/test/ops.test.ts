@@ -295,6 +295,7 @@ describe('refused ops leave nothing half applied', () => {
       name: 'failing',
       props,
       fields: ['text'],
+      labels: { text: 'Text' },
       markdown: {
         match: 'leafDirective:failing',
         read: () => undefined,

@@ -3,7 +3,9 @@ import type {
   Block,
   BlockId,
   BlockKind,
+  Container,
   DialectFallback,
+  Directive,
   Doc,
   Editor,
   EditorOptions,
@@ -17,7 +19,14 @@ import { counter } from './generate.ts';
 
 describe('the package root', () => {
   it('exports the editor core and nothing else at run time', () => {
-    expect(Object.keys(editor).sort()).toEqual(['apply', 'createEditor', 'load', 'save']);
+    expect(Object.keys(editor).sort()).toEqual([
+      'apply',
+      'containerDirective',
+      'createEditor',
+      'leafDirective',
+      'load',
+      'save',
+    ]);
     const { apply, createEditor, load, save } = editor;
     const body = '# Title\n\nMeet at 10:30, Status:done\n';
     expect(createEditor(body, { now: () => 0, newId: counter() }).markdown()).toEqual({
@@ -39,7 +48,9 @@ describe('the package root', () => {
       Block?,
       BlockId?,
       BlockKind?,
+      Container<unknown, never, 'body'>?,
       DialectFallback?,
+      Directive<unknown, never>?,
       Doc?,
       Editor?,
       EditorOptions?,

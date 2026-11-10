@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { docOf } from '../src/core/model.ts';
-import { apply } from '../src/core/ops.ts';
+import { apply, mapThrough } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
 import type { AnyComponent, Doc, Op } from '../src/core/types.ts';
 import {
   answeringLater,
   docProblems,
   kinds,
+  metric,
   randomOp,
   seeded,
   seeds,
@@ -491,5 +492,34 @@ describe('random op sequences', () => {
       }
       doc = after;
     }
+  });
+});
+
+describe('a position mapped through an op', () => {
+  const on = { blockId: 'b', field: 'text' };
+  const at = { ...on, offset: 5 };
+  const typed = (offset: number, place = on): Op => ({
+    kind: 'insertText',
+    ...place,
+    offset,
+    text: 'xy',
+  });
+  const cut = (from: number, to: number): Op => ({ kind: 'deleteText', ...on, from, to });
+  it.each<[string, Op, number | undefined, (-1 | 1)?]>([
+    ['an insert before it', typed(2), 7],
+    ['an insert at it', typed(5), 5],
+    ['an insert at it with bias 1', typed(5), 7, 1],
+    ['an insert after it', typed(6), 5],
+    ['a delete before it', cut(1, 3), 3],
+    ['a delete covering it', cut(3, 7), 3],
+    ['a delete from it', cut(5, 9), 5],
+    ['an insert in another block', typed(0, { ...on, blockId: 'a' }), 5],
+    ['an insert in another field', typed(0, { ...on, field: 'label' }), 5],
+    ['a type with the field', { kind: 'setType', blockId: 'b', ...kinds[2] }, 5],
+    ['a type without it', { kind: 'setType', blockId: 'b', type: 'metric', props: {} }, undefined],
+    ['the removal of its block', { kind: 'removeBlock', blockId: 'b' }, undefined],
+  ])('maps it through %s', (_name, op, offset, bias) => {
+    const mapped = mapThrough(op, at, bias, registryOf([metric]));
+    expect(mapped).toEqual(offset === undefined ? undefined : { ...at, offset });
   });
 });

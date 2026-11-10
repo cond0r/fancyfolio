@@ -122,7 +122,7 @@ export function randomOp(
   const text = block.fields.text as string;
   const field = 'text';
   for (;;) {
-    switch (random.int(structural ? 8 : 5)) {
+    switch (random.int(structural ? 9 : 5)) {
       case 0:
         return {
           kind: 'insertText',
@@ -181,6 +181,8 @@ export function randomOp(
           index: at,
         };
       }
+      case 7:
+        return { kind: 'moveBlock', blockId, parent: null, index: random.int(doc.ids.length) };
       default:
         if (doc.ids.length > 1) return { kind: 'removeBlock', blockId };
     }

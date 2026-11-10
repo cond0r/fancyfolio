@@ -404,6 +404,8 @@ describe('refused ops leave nothing half applied', () => {
       'a missing parent',
       '{"kind":"insertBlock","block":{"id":"n","type":"paragraph","props":{},"fields":{"text":""}},"index":0}',
     ],
+    ['a move without a parent', '{"kind":"moveBlock","blockId":"b","index":0}'],
+    ['a string index', '{"kind":"moveBlock","blockId":"b","parent":null,"index":"0"}'],
     ['a number id', '{"kind":"mergeBlocks","blockId":7}'],
     ['an unknown op', '{"kind":"evil","blockId":"b"}'],
     ['no op at all', 'null'],

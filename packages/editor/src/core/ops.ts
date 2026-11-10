@@ -132,6 +132,13 @@ function opFrom(input: unknown): Op | undefined {
       return { kind, blockId };
     case 'removeBlock':
       return { kind, blockId };
+    case 'moveBlock': {
+      const parent = parentFrom(field(input, 'parent'));
+      const index = field(input, 'index');
+      return parent !== undefined && typeof index === 'number'
+        ? { kind, blockId, parent, index }
+        : undefined;
+    }
     default:
       return undefined;
   }
@@ -203,6 +210,22 @@ function relisted(
   return { put: [{ ...owner, slots: { ...owner.slots, [parent.slot]: list } }] };
 }
 
+function listIn(op: Op, view: DocView, parent: Parent): readonly BlockId[] {
+  if (parent === null) return view.ids;
+  const owner = view.blocks.get(parent.blockId);
+  if (owner?.slots === undefined || !Object.hasOwn(owner.slots, parent.slot)) {
+    refuse(op, 'unknown slot');
+  }
+  return owner.slots[parent.slot];
+}
+
+function putAt(op: Op, list: readonly BlockId[], index: number, id: BlockId): BlockId[] {
+  if (!Number.isInteger(index) || index < 0 || index > list.length) {
+    refuse(op, 'index outside the list');
+  }
+  return list.toSpliced(index, 0, id);
+}
+
 function textIn(op: Op, block: Block, component: Registered, field: string): string {
   if (!component.fields.includes(field) || !Object.hasOwn(block.fields, field)) {
     refuse(op, 'unknown field');
@@ -242,20 +265,9 @@ function inserting(
   const props = propsOf(op, component, block.props);
   const fields = fieldsFor(component, block.fields) ?? refuse(op, 'fields do not fit the type');
   const slots = slotsFor(op, component, block.slots);
-  const owner = parent === null ? undefined : view.blocks.get(parent.blockId);
-  const list =
-    parent === null
-      ? view.ids
-      : owner?.slots !== undefined && Object.hasOwn(owner.slots, parent.slot)
-        ? owner.slots[parent.slot]
-        : undefined;
-  if (list === undefined) refuse(op, 'unknown slot');
+  const list = listIn(op, view, parent);
   if (parent !== null) fitsSlot(op, component);
-  if (!Number.isInteger(op.index) || op.index < 0 || op.index > list.length) {
-    refuse(op, 'index outside the list');
-  }
-  const next = [...list];
-  next.splice(op.index, 0, block.id);
+  const next = putAt(op, list, op.index, block.id);
   const made: Block = { id: block.id, type: block.type, props, fields, ...(slots && { slots }) };
   const { put, ids } = relisted(view, { parent, list }, next);
   return {
@@ -406,6 +418,35 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
           block,
           parent: place.parent,
           index: place.list.indexOf(blockId),
+        },
+      };
+    }
+    case 'moveBlock': {
+      const from = placed(op, view, blockId);
+      const left = relisted(
+        view,
+        from,
+        from.list.filter((id) => id !== blockId),
+      );
+      const out: DocView = {
+        ids: left.ids ?? view.ids,
+        blocks: { get: (id) => left.put.find((each) => each.id === id) ?? view.blocks.get(id) },
+      };
+      const list = listIn(op, out, op.parent);
+      if (op.parent !== null) fitsSlot(op, component);
+      const into = relisted(out, { parent: op.parent, list }, putAt(op, list, op.index, blockId));
+      const owners = new Set(into.put.map((each) => each.id));
+      return {
+        change: {
+          put: [...left.put.filter((each) => !owners.has(each.id)), ...into.put],
+          ids: into.ids ?? left.ids,
+          drop: [],
+        },
+        inverse: {
+          kind: 'moveBlock',
+          blockId,
+          parent: from.parent,
+          index: from.list.indexOf(blockId),
         },
       };
     }

@@ -131,6 +131,33 @@ describe('blocks in a slot', () => {
     },
   );
 
+  it.each([
+    [
+      'within the top level',
+      { kind: 'moveBlock', blockId: 'b4', parent: null, index: 0 },
+      'After.\n\nBefore.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n',
+    ],
+    [
+      'into a slot',
+      { kind: 'moveBlock', blockId: 'b0', parent: { blockId: 'b1', slot: 'body' }, index: 1 },
+      ':::callout{tone="info"}\nFirst\n\nBefore.\n\nSecond\n:::\n\nAfter.\n',
+    ],
+    [
+      'out of a slot to the end',
+      { kind: 'moveBlock', blockId: 'b3', parent: null, index: 3 },
+      'Before.\n\n:::callout{tone="info"}\nFirst\n:::\n\nAfter.\n\nSecond\n',
+    ],
+  ] satisfies [string, Op, string][])(
+    'moves a block %s, and one undo restores the page',
+    (_name, op, markdown) => {
+      const editor = editorAt();
+      editor.dispatch(op);
+      expect(saved(editor)).toBe(markdown);
+      expect(editor.undo()).toBe(true);
+      expect(saved(editor)).toBe(page);
+    },
+  );
+
   it('saves an edit inside a slot so that it reloads to the same blocks', () => {
     const editor = editorAt();
     editor.dispatch(split('b3', 3, 'n'), {
@@ -236,6 +263,26 @@ describe('blocks in a slot', () => {
       'a container turned into a block without its slot',
       { kind: 'setType', blockId: 'b1', type: 'paragraph', props: {} },
       'the new type has no slot for its blocks',
+    ],
+    [
+      'a container moved into a slot',
+      { kind: 'moveBlock', blockId: 'b1', parent: { blockId: 'b1', slot: 'body' }, index: 0 },
+      'a slot child has no slots',
+    ],
+    [
+      'a move to an unknown parent',
+      { kind: 'moveBlock', blockId: 'b0', parent: { blockId: 'zz', slot: 'body' }, index: 0 },
+      'unknown slot',
+    ],
+    [
+      'a move to an unknown slot',
+      { kind: 'moveBlock', blockId: 'b0', parent: { blockId: 'b1', slot: 'aside' }, index: 0 },
+      'unknown slot',
+    ],
+    [
+      'a move past the end of the list it leaves',
+      { kind: 'moveBlock', blockId: 'b0', parent: null, index: 3 },
+      'index outside the list',
     ],
   ] satisfies [string, Op, string][])('refuses %s', (_name, op, reason) => {
     const editor = editorAt();

@@ -175,7 +175,13 @@ export type Op =
       readonly parent: Parent;
       readonly index: number;
     }
-  | { readonly kind: 'removeBlock'; readonly blockId: BlockId };
+  | { readonly kind: 'removeBlock'; readonly blockId: BlockId }
+  | {
+      readonly kind: 'moveBlock';
+      readonly blockId: BlockId;
+      readonly parent: Parent;
+      readonly index: number;
+    };
 
 export type Selection =
   | {

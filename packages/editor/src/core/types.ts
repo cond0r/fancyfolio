@@ -197,6 +197,15 @@ export type Op =
       readonly index: number;
     };
 
+export type RemoteOp = Exclude<Op, { readonly kind: 'splitBlock' | 'mergeBlocks' }>;
+
+export type CollabAdapter = {
+  send(ops: readonly RemoteOp[]): void;
+  onRemote(apply: (ops: readonly RemoteOp[]) => void): () => void;
+  undo(): boolean;
+  redo(): boolean;
+};
+
 export type Selection =
   | {
       readonly kind: 'text';
@@ -286,6 +295,7 @@ export type EditorOptions = {
   readonly now: () => number;
   readonly newId: () => BlockId;
   readonly components?: readonly AnyComponent[];
+  readonly collab?: CollabAdapter;
 };
 
 export type SaveResult =

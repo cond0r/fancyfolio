@@ -1,4 +1,5 @@
 import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
+import { lowered, neighbours, remapped } from './collab.ts';
 import { caretIn, run } from './commands.ts';
 import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
@@ -13,6 +14,7 @@ import type {
   Editor,
   EditorOptions,
   Op,
+  RemoteOp,
   Selection,
 } from './types.ts';
 
@@ -29,6 +31,7 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
   if (firstBlock === undefined) throw new Error('the document has no first block');
   const selection = atom<Selection>(caretIn(initial, firstBlock));
   let history = emptyHistory;
+  const { collab } = options;
 
   const view: DocView = {
     get ids() {
@@ -59,19 +62,19 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     }
   }
 
-  function commit(inputs: readonly Op[], recorded?: readonly Op[]) {
-    const planned = planAll(view, inputs, registry, recorded === undefined);
+  function commit(inputs: readonly Op[], transformed: boolean, recorded?: readonly Op[]) {
+    const planned = planAll(view, inputs, registry, transformed);
     const inverses = recorded ?? planned.map((each) => each.inverse);
     planned.forEach(({ change, op }, index) => {
       write(change, inputs[index] ?? op, inverses[index]);
     });
-    return { ops: planned.map((each) => each.op), inverses };
+    return planned;
   }
 
   function travel(move: typeof undo): boolean {
     const moved = move(history);
     if (moved === undefined) return false;
-    commit(moved.ops, moved.inverses);
+    commit(moved.ops, false, moved.inverses);
     history = moved.history;
     store.set(selection, moved.selection);
     return true;
@@ -79,9 +82,33 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
 
   function step(inputs: readonly Op[], after: Selection) {
     const before = store.get(selection);
-    const { ops, inverses } = commit(inputs);
+    const planned = commit(inputs, true);
+    if (collab !== undefined) {
+      collab.send(lowered(planned));
+      return;
+    }
+    const ops = planned.map((each) => each.op);
+    const inverses = planned.map((each) => each.inverse);
     history = record(history, { ops, inverses, before, after }, options.now());
   }
+
+  function receive(ops: readonly RemoteOp[]) {
+    for (const op of ops) {
+      if ('blockId' in op && view.blocks.get(op.blockId) === undefined) continue;
+      const near = op.kind === 'removeBlock' ? neighbours(view, op.blockId) : [];
+      try {
+        commit([op], false);
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        console.error(error);
+        continue;
+      }
+      store.set(selection, remapped(view, store.get(selection), op, near, registry));
+    }
+  }
+
+  const undoing = () => (collab === undefined ? travel(undo) : collab.undo());
+  const redoing = () => (collab === undefined ? travel(redo) : collab.redo());
 
   function dispatch(...inputs: Op[]) {
     step(inputs, store.get(selection));
@@ -100,6 +127,8 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     return { ids: order, blocks: all, sources: initial.sources };
   }
 
+  collab?.onRemote(receive);
+
   return {
     store,
     ids,
@@ -110,15 +139,15 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
       const context = { doc: view, selection: store.get(selection), newId: options.newId };
       const result = run(registry.components.values(), name, context, args);
       if (result === undefined) {
-        if (name === 'undo') return travel(undo);
-        return name === 'redo' && travel(redo);
+        if (name === 'undo') return undoing();
+        return name === 'redo' && redoing();
       }
       if (result.ops.length > 0) step(result.ops, result.selection ?? store.get(selection));
       if (result.selection !== undefined) store.set(selection, result.selection);
       return true;
     },
-    undo: () => travel(undo),
-    redo: () => travel(redo),
+    undo: undoing,
+    redo: redoing,
     doc,
     markdown: () => save(doc(), registry),
   };

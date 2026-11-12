@@ -152,6 +152,7 @@ export function randomOp(
   newId: () => string,
   kindsAllowed = kinds,
   structural = false,
+  removable = doc.ids.length > 1,
 ): Op {
   const index = random.int(doc.ids.length);
   const blockId = doc.ids[index] as string;
@@ -185,7 +186,7 @@ export function randomOp(
         break;
       }
       case 3: {
-        const previous = doc.blocks.get(doc.ids[index - 1] ?? '');
+        const previous = doc.blocks.get(doc.ids[removable ? index - 1 : -1] ?? '');
         const kept = previous?.fields.text as string;
         if (previous !== undefined && movable(block.type, text, previous.type, kept)) {
           return { kind: 'mergeBlocks', blockId };
@@ -221,7 +222,7 @@ export function randomOp(
       case 7:
         return { kind: 'moveBlock', blockId, parent: null, index: random.int(doc.ids.length) };
       default:
-        if (doc.ids.length > 1) return { kind: 'removeBlock', blockId };
+        if (removable) return { kind: 'removeBlock', blockId };
     }
   }
 }

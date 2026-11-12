@@ -5,6 +5,8 @@ import type {
   BlockId,
   BlockOf,
   Editor,
+  HeadingProps,
+  NoProps,
   Registered,
   Saving,
   TypedBlock,
@@ -22,9 +24,15 @@ export type Views<P extends readonly AnyComponent[]> = {
 
 export type AnyViews = { readonly [type: string]: ComponentType<ViewProps<Block>> };
 
+export type BuiltinViews = {
+  readonly paragraph?: ComponentType<ViewProps<TypedBlock<NoProps, 'text'>>>;
+  readonly heading?: ComponentType<ViewProps<TypedBlock<HeadingProps, 'text'>>>;
+  readonly raw?: ComponentType<ViewProps<TypedBlock<NoProps, 'text'>>>;
+};
+
 export type ReactEditorOptions<P extends readonly AnyComponent[]> = {
   readonly components: P;
-  readonly views: Views<P>;
+  readonly views: Views<P> & BuiltinViews;
 };
 
 export type BlockChrome = {

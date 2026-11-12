@@ -117,6 +117,19 @@ describe('the playground editor', () => {
     ]);
     expect(fields.every((tag) => tag.includes('role="textbox"'))).toBe(true);
   });
+
+  it('renders a host paragraph view in place of the built-in one', () => {
+    const Editor = createReactEditor({
+      components,
+      views: {
+        callout: Callout,
+        metric: Metric,
+        paragraph: ({ fields }) => createElement('p', { className: 'lead' }, fields.text),
+      },
+    });
+    const markup = renderToStaticMarkup(createElement(Editor, { markdown: 'Text\n' }));
+    expect(markup).toMatch(/^<div[^>]*><div data-block-id="[^"]+"><p class="lead"><span /);
+  });
 });
 
 describe('the playground fixture', () => {

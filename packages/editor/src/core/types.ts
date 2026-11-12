@@ -289,14 +289,32 @@ export type Editor = {
   redo(): boolean;
   doc(): Doc;
   markdown(): SaveResult;
+  readonly saveState: Atom<SaveState>;
+  save(): Promise<SaveOutcome>;
 };
+
+export type Version = string;
+
+export type Stored =
+  | { readonly ok: true; readonly version: Version }
+  | { readonly ok: false; readonly reason: 'stale' };
+
+export type OnSave = (markdown: string, version: Version) => Promise<Stored>;
+
+export type Saving =
+  | { readonly version: Version; readonly onSave: OnSave }
+  | { readonly version?: undefined; readonly onSave?: undefined };
+
+export type SaveState = 'idle' | 'saving' | 'saved' | 'stale' | 'failed';
+
+export type SaveOutcome = Stored | Exclude<SaveResult, { readonly ok: true }>;
 
 export type EditorOptions = {
   readonly now: () => number;
   readonly newId: () => BlockId;
   readonly components?: readonly AnyComponent[];
   readonly collab?: CollabAdapter;
-};
+} & Saving;
 
 export type SaveResult =
   | { readonly ok: true; readonly markdown: string }

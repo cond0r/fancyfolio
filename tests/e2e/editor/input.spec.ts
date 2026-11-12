@@ -129,6 +129,8 @@ test('a keystroke commits exactly one block and the editor sends no request', as
   await page.keyboard.press('Enter');
   await page.keyboard.press('ControlOrMeta+z');
   await expect(fields(page)).toHaveCount(body.length);
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByRole('status')).toHaveText('Saved');
   await frame(page);
   expect(requests).toEqual([]);
 });

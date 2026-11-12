@@ -32,12 +32,17 @@ export type {
   EditorOptions,
   HeadingLevel,
   Json,
+  OnSave,
   Op,
   Position,
   Presence,
   RemoteOp,
+  SaveOutcome,
   SaveResult,
+  SaveState,
   Source,
+  Stored,
   TypedBlock,
+  Version,
 } from './core/types.ts';
 export type { EditorProps, ReactEditorOptions, ViewProps, Views } from './react/types.ts';

@@ -152,7 +152,13 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.isComposing || composing !== undefined) return;
     const key = event.key.toLowerCase();
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && (key === 'z' || key === 'y')) {
+    const mod = (event.metaKey || event.ctrlKey) && !event.altKey;
+    if (mod && key === 's') {
+      event.preventDefault();
+      editor.save().catch((error: unknown) => console.error(error));
+      return;
+    }
+    if (mod && (key === 'z' || key === 'y')) {
       event.preventDefault();
       return run(key === 'y' || event.shiftKey ? 'redo' : 'undo', {});
     }

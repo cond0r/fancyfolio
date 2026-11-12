@@ -6,6 +6,7 @@ import type {
   BlockOf,
   Editor,
   Registered,
+  Saving,
   TypedBlock,
 } from '../core/types.ts';
 
@@ -29,7 +30,7 @@ export type ReactEditorOptions<P extends readonly AnyComponent[]> = {
 export type EditorProps = {
   readonly markdown: string;
   readonly onRender?: ProfilerOnRenderCallback;
-};
+} & Saving;
 
 export type ViewMap = ReadonlyMap<string, ComponentType<ViewProps<Block>>>;
 

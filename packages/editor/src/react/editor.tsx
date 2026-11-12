@@ -5,7 +5,7 @@ import { type ComponentType, useCallback, useState } from 'react';
 import type { heading } from '../core/heading.ts';
 import { registryOf } from '../core/registry.ts';
 import { createEditor } from '../core/store.ts';
-import type { AnyComponent } from '../core/types.ts';
+import type { AnyComponent, Editor, SaveState } from '../core/types.ts';
 import { bindEditor } from '../dom/field.ts';
 import { Block } from './block.tsx';
 import type { AnyViews, EditorProps, ReactEditorOptions, ViewMap, Views } from './types.ts';
@@ -14,6 +14,19 @@ import { Heading, Paragraph, Raw } from './views.tsx';
 function viewsOf<P extends readonly AnyComponent[]>(views: Views<P>): AnyViews;
 function viewsOf(views: AnyViews): AnyViews {
   return views;
+}
+
+const messages: { readonly [S in SaveState]: string } = {
+  idle: '',
+  saving: 'Saving…',
+  saved: 'Saved',
+  stale: 'Not saved: a newer version exists',
+  failed: 'Not saved',
+};
+
+function Status({ editor }: { readonly editor: Editor }) {
+  const state = useAtomValue(editor.saveState, { store: editor.store });
+  return <output aria-live="polite">{messages[state]}</output>;
 }
 
 const builtins: AnyViews = {
@@ -34,9 +47,14 @@ export function createReactEditor({
 }): ComponentType<EditorProps> {
   const all: ViewMap = new Map(Object.entries({ ...views, ...builtins }));
   const registered = registryOf(components).components;
-  return function ReactEditor({ markdown, onRender }: EditorProps) {
+  return function ReactEditor({ markdown, onRender, ...saving }: EditorProps) {
     const [editor] = useState(() =>
-      createEditor(markdown, { now: Date.now, newId: () => crypto.randomUUID(), components }),
+      createEditor(markdown, {
+        now: Date.now,
+        newId: () => crypto.randomUUID(),
+        components,
+        ...saving,
+      }),
     );
     const ids = useAtomValue(editor.ids, { store: editor.store });
     const bind = useCallback((root: HTMLDivElement) => bindEditor(root, editor), [editor]);
@@ -52,6 +70,7 @@ export function createReactEditor({
             onRender={onRender}
           />
         ))}
+        <Status editor={editor} />
       </div>
     );
   };

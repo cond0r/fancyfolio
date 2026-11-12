@@ -145,6 +145,10 @@ test('the block chrome removes its block and undo brings it back', async ({ page
   await expect(page.getByRole('button', { name: 'Remove block' })).toHaveCount(topLevel);
   const block = fields(page).nth(1).locator('xpath=ancestor::*[@data-block-id][1]');
   const remove = block.getByRole('button', { name: 'Remove block' });
+  await caretAt(page, 1, 'End');
+  await remove.focus();
+  await page.keyboard.press('Backspace');
+  await expect(fields(page)).toHaveText(body);
   await remove.click();
   await expect(fields(page)).toHaveText(body.filter((_text, index) => index !== 1));
   await page.keyboard.press('ControlOrMeta+z');

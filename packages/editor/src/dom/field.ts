@@ -89,6 +89,9 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     return true;
   };
 
+  const inFieldOrBlockSelection = (node: EventTarget | null) =>
+    node === root || (node instanceof Node && fieldOf(node) !== undefined);
+
   const sync = () => {
     if (composing !== undefined || spanning) return;
     const read = readSelection(root);
@@ -108,12 +111,15 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   };
 
   const onBeforeInput = (event: InputEvent) => {
+    if (!inFieldOrBlockSelection(event.target)) return;
     const { inputType } = event;
     if (inputType.includes('Composition')) {
       if (composing === undefined && event.cancelable) event.preventDefault();
       return;
     }
     event.preventDefault();
+    // WebKit fires beforeinput at the selected field while focus sits on a chrome control.
+    if (!inFieldOrBlockSelection(document.activeElement)) return;
     sync();
     const command = bare.get(inputType);
     if (command !== undefined) return run(command, {});
@@ -168,6 +174,7 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
       event.preventDefault();
       return run(key === 'y' || event.shiftKey ? 'redo' : 'undo', {});
     }
+    if (!inFieldOrBlockSelection(event.target)) return;
     const modified = event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
     const deletion = event.key === 'Backspace' ? 'deleteBackward' : 'deleteForward';
     if ((event.key === 'Backspace' || event.key === 'Delete') && !modified) {
@@ -180,7 +187,8 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     if (direction !== undefined && !modified) step(event, direction);
   };
 
-  const onCompositionStart = () => {
+  const onCompositionStart = (event: CompositionEvent) => {
+    if (!inFieldOrBlockSelection(event.target)) return;
     sync();
     composing = store.get(editor.selection);
   };

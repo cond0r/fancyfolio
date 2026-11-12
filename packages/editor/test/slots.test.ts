@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { load, save } from '../src/core/markdown.ts';
+import { apply } from '../src/core/ops.ts';
+import { registryOf } from '../src/core/registry.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Block, Editor, Op } from '../src/core/types.ts';
-import { callout, counter, metric } from './generate.ts';
+import type { AnyComponent, Block, Doc, Editor, Op } from '../src/core/types.ts';
+import { callout, counter, metric, seeded, seeds, snapshot } from './generate.ts';
 
 const page = 'Before.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n\nAfter.\n';
 
@@ -288,6 +291,21 @@ describe('blocks in a slot', () => {
     editor.undo();
     expect(tree(editor)).toEqual(loadedTree);
     expect(saved(editor)).toBe(page);
+  });
+
+  it.each(seeds)('saves callouts emptied with no transform, and they reload (seed %i)', (seed) => {
+    const random = seeded(seed);
+    const registry = registryOf([callout, metric]);
+    const kinds = ['Text', ':::callout{tone="info"}\nOne\n\nTwo\n:::', '::metric{value="1"}'];
+    const body = Array.from({ length: 1 + random.int(6) }, () => random.pick(kinds)).join('\n\n');
+    let doc = load(body, counter(), registry);
+    for (const blockId of doc.ids.flatMap((id) => doc.blocks.get(id)?.slots?.body ?? [])) {
+      doc = apply(doc, { kind: 'removeBlock', blockId }, registry).doc;
+    }
+    const result = save(doc, registry);
+    if (!result.ok) throw new Error(`${body} save refused: ${JSON.stringify(result)}`);
+    const shape = (each: Doc) => snapshot(each).map(({ id, ...rest }) => rest);
+    expect(shape(load(result.markdown, counter(), registry)), body).toEqual(shape(doc));
   });
 });
 

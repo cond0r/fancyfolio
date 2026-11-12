@@ -8,9 +8,11 @@ import { createEditor } from '../src/core/store.ts';
 import type { AnyComponent, Block, Component, Editor, Op, Selection } from '../src/core/types.ts';
 import {
   answeringLater,
+  callout,
   counter,
   docProblems,
   kinds,
+  metric,
   randomOp,
   seeded,
   seeds,
@@ -78,20 +80,22 @@ describe('the editor store', () => {
     expect(one.store).not.toBe(two.store);
   });
 
-  it('writes only the atom of the block an op changes', () => {
-    const editor = editorAt(body);
-    const [first, second, third] = editor.store.get(editor.ids);
+  it.each([
+    ['a top-level paragraph', 'b0', 'text'],
+    ['a callout child', 'b2', 'text'],
+    ['a metric field', 'b3', 'value'],
+  ])('writes only the atom of %s when its text changes', (_name, id, field) => {
+    const page = 'Intro\n\n:::callout{tone="info"}\nInside\n:::\n\n::metric{value="42%"}\n';
+    const components = [callout, metric];
+    const editor = createEditor(page, { now: () => 0, newId: counter(), components });
     const seen: string[] = [];
-    for (const id of [first, second, third]) {
-      const atom = id === undefined ? undefined : editor.blocks.get(id);
-      if (atom !== undefined) editor.store.sub(atom, () => seen.push(id as string));
-    }
+    for (const [each, atom] of editor.blocks) editor.store.sub(atom, () => seen.push(each));
     let orders = 0;
     editor.store.sub(editor.ids, () => {
       orders += 1;
     });
-    editor.dispatch(insertAt(second as string, 0, 'x'));
-    expect(seen).toEqual([second]);
+    editor.dispatch({ kind: 'insertText', blockId: id, field, offset: 0, text: 'x' });
+    expect(seen).toEqual([id]);
     expect(orders).toBe(0);
   });
 

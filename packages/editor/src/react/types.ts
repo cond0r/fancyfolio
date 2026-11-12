@@ -1,4 +1,4 @@
-import type { ComponentType, ProfilerOnRenderCallback, ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type {
   AnyComponent,
   Block,
@@ -27,9 +27,18 @@ export type ReactEditorOptions<P extends readonly AnyComponent[]> = {
   readonly views: Views<P>;
 };
 
+export type BlockChrome = {
+  readonly blockId: BlockId;
+  readonly selected: boolean;
+  remove(): void;
+};
+
+export type RenderBlockChrome = (chrome: BlockChrome) => ReactNode;
+
 export type EditorProps = {
   readonly markdown: string;
-  readonly onRender?: ProfilerOnRenderCallback;
+  readonly onRender?: (blockId: BlockId) => void;
+  readonly renderBlockChrome?: RenderBlockChrome;
 } & Saving;
 
 export type ViewMap = ReadonlyMap<string, ComponentType<ViewProps<Block>>>;
@@ -39,7 +48,8 @@ export type BlockProps = {
   readonly editor: Editor;
   readonly views: ViewMap;
   readonly components: ReadonlyMap<string, Registered>;
-  readonly onRender: ProfilerOnRenderCallback | undefined;
+  readonly onRender: ((blockId: BlockId) => void) | undefined;
+  readonly renderBlockChrome: RenderBlockChrome | undefined;
 };
 
 export type FieldProps = {

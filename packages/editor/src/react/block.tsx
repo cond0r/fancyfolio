@@ -1,7 +1,8 @@
 import { useAtomValue } from 'jotai/react';
-import { memo, Profiler, useCallback } from 'react';
+import { atom } from 'jotai/vanilla';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { BlockId, Editor } from '../core/types.ts';
-import { bindField } from '../dom/field.ts';
+import { bindField, deleteBlock } from '../dom/field.ts';
 import type { BlockProps, FieldProps } from './types.ts';
 import { Raw } from './views.tsx';
 
@@ -29,8 +30,32 @@ const Field = memo(function Field({ editor, blockId, field, label }: FieldProps)
   );
 });
 
-export const Block = memo(function Block({ id, editor, views, components, onRender }: BlockProps) {
+export const Block = memo(function Block({
+  id,
+  editor,
+  views,
+  components,
+  onRender,
+  renderBlockChrome,
+}: BlockProps) {
   const block = useAtomValue(atomOf(editor, id), { store: editor.store });
+  const flag = useMemo(
+    () =>
+      atom((get) => {
+        const selection = get(editor.selection);
+        return selection.kind === 'blocks' && selection.ids.includes(id);
+      }),
+    [editor, id],
+  );
+  const selected = useAtomValue(flag, { store: editor.store });
+  const element = useRef<HTMLDivElement>(null);
+  const remove = useCallback(() => {
+    const root = element.current?.closest<HTMLElement>('[data-ff-editor]');
+    if (root !== null && root !== undefined) deleteBlock(root, editor, id);
+  }, [editor, id]);
+  useEffect(() => {
+    onRender?.(id);
+  });
   const View = views.get(block.type) ?? Raw;
   const labels = components.get(block.type)?.labels;
   const fields = Object.fromEntries(
@@ -50,20 +75,15 @@ export const Block = memo(function Block({ id, editor, views, components, onRend
           views={views}
           components={components}
           onRender={onRender}
+          renderBlockChrome={undefined}
         />
       )),
     ]),
   );
-  const view = (
-    <div data-block-id={id}>
+  return (
+    <div ref={element} data-block-id={id} data-selected={selected ? '' : undefined}>
+      {renderBlockChrome?.({ blockId: id, selected, remove })}
       <View props={block.props} fields={fields} slots={slots} />
     </div>
-  );
-  return onRender === undefined ? (
-    view
-  ) : (
-    <Profiler id={id} onRender={onRender}>
-      {view}
-    </Profiler>
   );
 });

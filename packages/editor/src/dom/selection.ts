@@ -53,20 +53,12 @@ export function fieldElement(root: HTMLElement, blockId: BlockId, name: string) 
   return undefined;
 }
 
-export function mark(root: HTMLElement, selection: Selection): void {
-  const selected = new Set(selection.kind === 'blocks' ? selection.ids : []);
-  for (const block of root.querySelectorAll<HTMLElement>('[data-block-id]')) {
-    block.toggleAttribute('data-selected', selected.has(block.dataset.blockId ?? ''));
-  }
-}
-
 function point(field: HTMLElement, offset: number): [Node, number] {
   const text = field.firstChild;
   return text instanceof Text ? [text, Math.min(offset, text.length)] : [field, 0];
 }
 
 export function place(root: HTMLElement, selection: Selection): void {
-  mark(root, selection);
   const dom = root.ownerDocument.getSelection();
   if (selection.kind === 'blocks') {
     dom?.removeAllRanges();

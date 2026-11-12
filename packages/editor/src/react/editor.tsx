@@ -45,7 +45,7 @@ export function createReactEditor({
   readonly components: readonly AnyComponent[];
   readonly views: AnyViews;
 }): ComponentType<EditorProps> {
-  const all: ViewMap = new Map(Object.entries({ ...views, ...builtins }));
+  const all: ViewMap = new Map(Object.entries({ ...builtins, ...views }));
   const registered = registryOf(components).components;
   return function ReactEditor({ markdown, onRender, renderBlockChrome, ...saving }: EditorProps) {
     const [editor] = useState(() =>

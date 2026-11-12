@@ -15,6 +15,8 @@ import type {
   EditorOptions,
   Op,
   RemoteOp,
+  SaveOutcome,
+  SaveState,
   Selection,
 } from './types.ts';
 
@@ -32,6 +34,11 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
   const selection = atom<Selection>(caretIn(initial, firstBlock));
   let history = emptyHistory;
   const { collab } = options;
+  const saveState = atom<SaveState>('idle');
+  let saving =
+    options.onSave === undefined ? undefined : { onSave: options.onSave, version: options.version };
+  let pending: Promise<SaveOutcome> | undefined;
+  let revision = 0;
 
   const view: DocView = {
     get ids() {
@@ -68,6 +75,10 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     planned.forEach(({ change, op }, index) => {
       write(change, inputs[index] ?? op, inverses[index]);
     });
+    if (planned.length > 0) {
+      revision += 1;
+      if (store.get(saveState) === 'saved') store.set(saveState, 'idle');
+    }
     return planned;
   }
 
@@ -127,6 +138,41 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     return { ids: order, blocks: all, sources: initial.sources };
   }
 
+  const check = () => save(doc(), registry);
+
+  function persist(): Promise<SaveOutcome> {
+    if (pending !== undefined) return pending;
+    if (saving === undefined) return Promise.reject(new Error('the editor has no onSave'));
+    const checked = check();
+    if (!checked.ok) {
+      store.set(saveState, 'failed');
+      return Promise.resolve(checked);
+    }
+    store.set(saveState, 'saving');
+    const { onSave, version } = saving;
+    const saved = revision;
+    pending = Promise.resolve()
+      .then(() => onSave(checked.markdown, version))
+      .then(
+        (stored) => {
+          if (!stored.ok) store.set(saveState, 'stale');
+          else {
+            saving = { onSave, version: stored.version };
+            store.set(saveState, revision === saved ? 'saved' : 'idle');
+          }
+          return stored;
+        },
+        (error: unknown) => {
+          store.set(saveState, 'failed');
+          throw error;
+        },
+      )
+      .finally(() => {
+        pending = undefined;
+      });
+    return pending;
+  }
+
   collab?.onRemote(receive);
 
   return {
@@ -149,6 +195,8 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     undo: undoing,
     redo: redoing,
     doc,
-    markdown: () => save(doc(), registry),
+    markdown: check,
+    saveState,
+    save: persist,
   };
 }

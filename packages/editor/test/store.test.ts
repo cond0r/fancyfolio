@@ -5,7 +5,15 @@ import { hasKeys, noProps, schema, textNodes } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Block, Component, Editor, Op, Selection } from '../src/core/types.ts';
+import type {
+  AnyComponent,
+  Block,
+  Component,
+  Editor,
+  Op,
+  Selection,
+  Stored,
+} from '../src/core/types.ts';
 import {
   answeringLater,
   callout,
@@ -277,6 +285,118 @@ describe('the editor store', () => {
     expect([...editor.blocks.keys()]).toEqual([id]);
     expect(editor.store.get(editor.ids)).toEqual([id]);
     expect(saved(editor)).toBe('ab\n');
+  });
+});
+
+describe('a versioned save', () => {
+  const stale: Stored = { ok: false, reason: 'stale' };
+  const once = (editor: Editor) =>
+    editor.save().then(
+      (outcome) => [outcome, editor.store.get(editor.saveState)],
+      (error: Error) => [error.message, editor.store.get(editor.saveState)],
+    );
+  const inTurn = async (editor: Editor) => [await once(editor), await once(editor)];
+  const fenced = 'Intro\n\n```\ncode\n';
+  const typed: Block = { id: 'typed', type: 'paragraph', props: {}, fields: { text: 'x' } };
+
+  it.each([
+    [
+      'hands a fresh version to the next save',
+      [],
+      [],
+      inTurn,
+      [
+        [{ ok: true, version: 'v2' }, 'saved'],
+        [{ ok: true, version: 'v3' }, 'saved'],
+      ],
+      ['v1', 'v2'],
+    ],
+    [
+      'keeps the body and the old version once the server calls it stale',
+      [],
+      [stale, stale],
+      inTurn,
+      [
+        [stale, 'stale'],
+        [stale, 'stale'],
+      ],
+      ['v1', 'v1'],
+    ],
+    [
+      'never calls onSave when the save check fails',
+      [{ kind: 'insertBlock', block: typed, parent: null, index: 2 }],
+      [],
+      (editor: Editor) => Promise.all([once(editor)]),
+      [[{ ok: false, reason: 'misread', blockId: 'typed' }, 'failed']],
+      [],
+    ],
+    [
+      'returns the pending save to a save made meanwhile',
+      [],
+      [],
+      (editor: Editor) => Promise.all([once(editor), once(editor)]),
+      [
+        [{ ok: true, version: 'v2' }, 'saved'],
+        [{ ok: true, version: 'v2' }, 'saved'],
+      ],
+      ['v1'],
+    ],
+    [
+      'leaves saved once the doc changes, a pending save included',
+      [],
+      [],
+      async (editor: Editor) => {
+        const edit = () => editor.command('insertText', { text: 'x' }) && editor.undo();
+        const first = await once(editor);
+        edit();
+        const edited = editor.store.get(editor.saveState);
+        const second = once(editor);
+        edit();
+        return [first, edited, await second];
+      },
+      [[{ ok: true, version: 'v2' }, 'saved'], 'idle', [{ ok: true, version: 'v3' }, 'idle']],
+      ['v1', 'v2'],
+    ],
+    [
+      'fails visibly when onSave throws and lets the next save try again',
+      [],
+      [new Error('offline')],
+      inTurn,
+      [
+        ['offline', 'failed'],
+        [{ ok: true, version: 'v3' }, 'saved'],
+      ],
+      ['v1', 'v1'],
+    ],
+  ] satisfies [
+    string,
+    Op[],
+    (Stored | Error)[],
+    (editor: Editor) => Promise<unknown[]>,
+    unknown[],
+    string[],
+  ][])('%s', async (_name, edits, replies, run, outcomes, versions) => {
+    const sent: string[][] = [];
+    const editor = createEditor(fenced, {
+      now: () => 0,
+      newId: counter(),
+      version: 'v1',
+      onSave(text, version) {
+        sent.push([text, version]);
+        const reply = replies.shift() ?? { ok: true, version: `v${sent.length + 1}` };
+        if (reply instanceof Error) throw reply;
+        return Promise.resolve(reply);
+      },
+    });
+    if (edits.length > 0) editor.dispatch(...edits);
+    const before = editor.markdown();
+    expect(await run(editor)).toEqual(outcomes);
+    expect(sent).toEqual(versions.map((version) => [fenced, version]));
+    expect(editor.markdown()).toEqual(before);
+  });
+
+  it('refuses a save without onSave', async () => {
+    await expect(editorAt('Meet\n').save()).rejects.toThrow('the editor has no onSave');
   });
 });
 

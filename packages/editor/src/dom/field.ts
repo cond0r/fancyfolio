@@ -4,7 +4,6 @@ import {
   blockOf,
   fieldElement,
   fieldOf,
-  mark,
   offsetAtPoint,
   onEdgeLine,
   place,
@@ -68,6 +67,14 @@ export function bindField(field: HTMLElement, editor: Editor, blockId: BlockId, 
   return editor.store.sub(block, show);
 }
 
+export function deleteBlock(root: HTMLElement, editor: Editor, blockId: BlockId): void {
+  const { store } = editor;
+  const before = store.get(editor.selection);
+  store.set(editor.selection, { kind: 'blocks', ids: [blockId] });
+  if (editor.command('deleteSelection', {})) place(root, store.get(editor.selection));
+  else store.set(editor.selection, before);
+}
+
 export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   const { store } = editor;
   const document = root.ownerDocument;
@@ -79,7 +86,6 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     const before = store.get(editor.selection);
     if (sameSelection(before, selection)) return false;
     store.set(editor.selection, selection);
-    if (before.kind === 'blocks') mark(root, selection);
     return true;
   };
 
@@ -229,10 +235,5 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   root.addEventListener('pointermove', onPointerMove, options);
   document.addEventListener('pointerup', onPointerUp, options);
   document.addEventListener('selectionchange', sync, options);
-  const mounted = new MutationObserver(() => mark(root, store.get(editor.selection)));
-  mounted.observe(root, { childList: true });
-  return () => {
-    controller.abort();
-    mounted.disconnect();
-  };
+  return () => controller.abort();
 }

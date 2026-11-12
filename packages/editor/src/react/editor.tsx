@@ -47,7 +47,7 @@ export function createReactEditor({
 }): ComponentType<EditorProps> {
   const all: ViewMap = new Map(Object.entries({ ...views, ...builtins }));
   const registered = registryOf(components).components;
-  return function ReactEditor({ markdown, onRender, ...saving }: EditorProps) {
+  return function ReactEditor({ markdown, onRender, renderBlockChrome, ...saving }: EditorProps) {
     const [editor] = useState(() =>
       createEditor(markdown, {
         now: Date.now,
@@ -68,6 +68,7 @@ export function createReactEditor({
             views={all}
             components={registered}
             onRender={onRender}
+            renderBlockChrome={renderBlockChrome}
           />
         ))}
         <Status editor={editor} />

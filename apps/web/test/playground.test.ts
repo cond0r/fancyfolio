@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { callout, components, metric } from '../app/(app)/playground/components.ts';
 import { body } from '../app/(app)/playground/fixture.ts';
+import { renderBlockChrome } from '../app/(app)/playground/playground.tsx';
 import { Callout } from '../components/blocks/callout.tsx';
 import { Metric } from '../components/blocks/metric.tsx';
 
@@ -93,6 +94,13 @@ describe('the callout component', () => {
 });
 
 describe('the playground editor', () => {
+  it('names a selected block in its chrome as text, not by colour alone', () => {
+    const chrome = (selected: boolean) =>
+      renderToStaticMarkup(renderBlockChrome({ blockId: 'p', selected, remove: () => {} }));
+    expect(chrome(true)).toContain('>Selected</span>');
+    expect(chrome(false)).not.toContain('Selected');
+  });
+
   it('exposes every field as a textbox named by its component label', () => {
     const Editor = createReactEditor({ components, views: { callout: Callout, metric: Metric } });
     const markup = renderToStaticMarkup(createElement(Editor, { markdown: body }));

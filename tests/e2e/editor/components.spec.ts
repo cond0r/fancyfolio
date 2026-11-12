@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { frame } from '../frame.ts';
 
 const fields = (page: Page) => page.locator('[data-ff-editor] [data-field]');
 const metric = (page: Page) => page.locator('[data-ff-editor] figure [data-field]');
@@ -85,4 +86,19 @@ test('a drag from the metric onto callout text selects both; Backspace removes t
   await page.keyboard.press('Backspace');
   await expect(metric(page)).toHaveCount(0);
   await expect(callout(page)).toHaveCount(0);
+});
+
+test('a keystroke in a callout child commits exactly that child', async ({ page }) => {
+  await open(page);
+  const commits = page.getByTestId('commits');
+  await caretAtEnd(page, callout(page).first());
+  await commits.evaluate((output) => output.replaceChildren());
+  await page.keyboard.type('x');
+  await expect(callout(page)).toHaveText([`${note}x`]);
+  await expect.poll(() => commits.textContent()).not.toBe('');
+  await frame(page);
+  const child = await callout(page)
+    .first()
+    .evaluate((field) => field.closest<HTMLElement>('[data-block-id]')?.dataset.blockId);
+  expect((await commits.textContent())?.trim().split(' ')).toEqual([child]);
 });

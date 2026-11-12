@@ -45,4 +45,10 @@ export type {
   TypedBlock,
   Version,
 } from './core/types.ts';
-export type { EditorProps, ReactEditorOptions, ViewProps, Views } from './react/types.ts';
+export type {
+  BlockChrome,
+  EditorProps,
+  ReactEditorOptions,
+  ViewProps,
+  Views,
+} from './react/types.ts';

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Op, RemoteOp } from '../src/core/types.ts';
+import type { AnyComponent, Doc, Op, RemoteOp } from '../src/core/types.ts';
 import { join, room } from './collab.ts';
 import { callout, counter, kinds, randomOp, seeded, seeds } from './generate.ts';
 
@@ -12,12 +12,13 @@ const exclaimed: AnyComponent = {
 const components = [exclaimed];
 const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-function peers(count: number, markdown = page) {
+function peers(count: number, source: string | Doc = page) {
   errors.mockClear();
-  const shared = room(markdown, components);
-  const all = Array.from({ length: count }, () => {
+  const shared = room(source, components);
+  const all = Array.from({ length: count }, (_, client) => {
     const { adapter: collab, deliver, sent } = join(shared);
-    const editor = createEditor(markdown, { now: () => 0, newId: counter(), components, collab });
+    const newId = counter(`p${client}-`);
+    const editor = createEditor(shared.replica().doc, { now: () => 0, newId, components, collab });
     return { editor, deliver, sent };
   });
   const converged = () => {
@@ -27,9 +28,7 @@ function peers(count: number, markdown = page) {
     expect(errors).not.toHaveBeenCalled();
     return expected;
   };
-  const held = (id: string) => all.every(({ editor }) => editor.doc().ids.includes(id));
-  const spare = () => all[0].editor.doc().ids.filter(held).length > count;
-  return { all, converged, spare };
+  return { all, converged };
 }
 
 const typing = { kind: 'insertText', field: 'text' } as const;
@@ -43,6 +42,7 @@ const remove = (blockId: string) => ({ kind: 'removeBlock', blockId }) as const;
 const at = (blockId: string, offset: number) =>
   ({ ...typing, kind: 'text', blockId, from: offset, to: offset }) as const;
 const replaced = (text: string) => page.replace('Before.', text);
+const blank = { type: 'callout', props: { tone: 'info' } };
 
 describe('peers editing at once', () => {
   const plain = kinds.filter((kind) => kind.type !== 'raw');
@@ -52,13 +52,16 @@ describe('peers editing at once', () => {
     (seed, count) => {
       const random = seeded(seed);
       const body = Array.from({ length: 2 + random.int(4) }, (_, i) => `Line ${i}`).join('\n\n');
-      const { all, converged, spare } = peers(count, body);
+      const { all, converged } = peers(count, body);
       const ids = all.map((_, client) => counter(`c${client}-`));
       for (let step = 0; step < 60; step += 1) {
         const client = random.int(count);
         const { editor, deliver } = all[client];
         if (random.int(3) === 0) deliver(random.int(3));
-        else editor.dispatch(randomOp(editor.doc(), random, ids[client], plain, true, spare()));
+        else
+          editor.dispatch(
+            randomOp(editor.doc(), random, ids[client], plain, true, undefined, blank),
+          );
       }
       expect(converged().ok).toBe(true);
     },
@@ -117,6 +120,22 @@ describe('peers editing at once', () => {
   });
 });
 
+describe('a room', () => {
+  const empty: Doc = { ids: [], blocks: new Map(), sources: new Map() };
+
+  it('takes the first character typed into an empty room as one paragraph', () => {
+    const { all, converged } = peers(2, empty);
+    const [{ editor }] = all;
+    expect(editor.store.get(editor.selection)).toEqual({ kind: 'blocks', ids: [] });
+    expect(converged()).toEqual({ ok: true, markdown: '' });
+    expect(editor.command('insertText', { text: 'a' })).toBe(true);
+    expect(converged()).toEqual({ ok: true, markdown: 'a\n' });
+    expect(all.map((peer) => peer.editor.doc().ids.length)).toEqual([1, 1]);
+    expect(editor.undo()).toBe(true);
+    expect(converged()).toEqual({ ok: true, markdown: '' });
+  });
+});
+
 describe('collaborative undo', () => {
   it("undoes only the undoing peer's text on every peer, and redoes it", () => {
     const { all, converged } = peers(2);
@@ -140,15 +159,20 @@ describe('collaborative undo', () => {
     expect(converged()).toEqual({ ok: true, markdown: page });
   });
 
-  it('sends nothing for a dispatch the editor refuses', () => {
+  const heading = { type: 'heading', props: { level: 2 } };
+  it.each<[string, readonly Op[]]>([
+    ['an op on a missing block', [type('b0', 0, 'x'), remove('missing')]],
+    ['a type without a field for its text', [{ kind: 'setType', blockId: 'b0', ...blank }]],
+    ['a type without a slot for its blocks', [{ kind: 'setType', blockId: 'b1', ...heading }]],
+  ])('sends nothing for a dispatch the editor refuses (%s)', (_name, ops) => {
     const [{ editor, sent }] = peers(1).all;
-    expect(() => editor.dispatch(type('b0', 0, 'x'), remove('missing'))).toThrow(RangeError);
+    expect(() => editor.dispatch(...ops)).toThrow(RangeError);
     expect(sent).toEqual([]);
   });
 });
 
 describe('remote ops', () => {
-  it('drops an op on a missing block silently, logs any other refusal and applies the rest', () => {
+  it('drops an op on a missing block silently, logs any other refusal and applies the rest raw', () => {
     errors.mockClear();
     let deliver: (ops: readonly RemoteOp[]) => void = () => undefined;
     const collab = {
@@ -165,8 +189,10 @@ describe('remote ops', () => {
       type('gone', 0, 'x'),
       { ...type('b0', 0, 'x'), field: 'nope' },
       type('b0', 0, 'kept '),
+      { kind: 'setType', blockId: 'b1', type: 'heading', props: { level: 2 } },
     ]);
     expect(errors).toHaveBeenCalledOnce();
-    expect(editor.markdown()).toEqual({ ok: true, markdown: `kept ${page}` });
+    const markdown = 'kept Before.\n\n##\n\nFirst\n\nSecond\n\nAfter.\n';
+    expect(editor.markdown()).toEqual({ ok: true, markdown });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { docOf } from '../src/core/model.ts';
-import { apply, mapThrough } from '../src/core/ops.ts';
+import { apply, mapIn } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
 import type { AnyComponent, Doc, Op } from '../src/core/types.ts';
 import {
@@ -519,7 +519,7 @@ describe('a position mapped through an op', () => {
     ['a type without it', { kind: 'setType', blockId: 'b', type: 'metric', props: {} }, undefined],
     ['the removal of its block', { kind: 'removeBlock', blockId: 'b' }, undefined],
   ])('maps it through %s', (_name, op, offset, bias) => {
-    const mapped = mapThrough(op, at, bias, registryOf([metric]));
+    const mapped = mapIn(registryOf([metric]), op, at, bias);
     expect(mapped).toEqual(offset === undefined ? undefined : { ...at, offset });
   });
 });

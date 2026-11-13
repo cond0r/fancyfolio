@@ -250,9 +250,14 @@ function moving(op: Op, from: string, to: string, kept: string, moved: string) {
   refuse(op, 'text cannot move between raw source and plain text');
 }
 
-export function plan(view: DocView, input: unknown, registry: Registry = builtins): Planned {
+export function plan(
+  view: DocView,
+  input: unknown,
+  registry: Registry = builtins,
+  raw = false,
+): Planned {
   const op = toOp(input);
-  return { op, ...planned(view, op, registry) };
+  return { op, ...planned(view, op, registry, raw) };
 }
 
 function inserting(
@@ -277,7 +282,12 @@ function inserting(
   };
 }
 
-function planned(view: DocView, op: Op, registry: Registry): { change: Change; inverse: Op } {
+function planned(
+  view: DocView,
+  op: Op,
+  registry: Registry,
+  raw: boolean,
+): { change: Change; inverse: Op } {
   if (op.kind === 'insertBlock') return inserting(view, op, registry);
   const { blockId } = op;
   const block = view.blocks.get(blockId) ?? refuse(op, 'unknown block');
@@ -369,27 +379,33 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
         refuse(op, 'block already has that type');
       }
       const texts = Object.entries(block.fields);
-      if (texts.some(([name, text]) => text !== '' && !target.fields.includes(name))) {
+      if (!raw && texts.some(([name, text]) => text !== '' && !target.fields.includes(name))) {
         refuse(op, 'the new type has no field for its text');
       }
-      moving(op, block.type, op.type, '', texts.map(([, text]) => text).join(''));
       const fields = Object.fromEntries(
         target.fields.map((name) => [
           name,
           Object.hasOwn(block.fields, name) ? block.fields[name] : '',
         ]),
       );
+      moving(op, block.type, op.type, '', Object.values(fields).join(''));
       const kept = block.slots ?? {};
       const names = target.slots ?? [];
-      if (Object.entries(kept).some(([name, ids]) => ids.length > 0 && !names.includes(name))) {
-        refuse(op, 'the new type has no slot for its blocks');
-      }
+      const orphans = Object.entries(kept).flatMap(([name, ids]) =>
+        names.includes(name) ? [] : ids,
+      );
+      if (!raw && orphans.length > 0) refuse(op, 'the new type has no slot for its blocks');
       const slots = Object.fromEntries(
         names.map((name) => [name, Object.hasOwn(kept, name) ? kept[name] : []]),
       );
       const made: Block = { id: blockId, type: op.type, props, fields };
+      const at = view.ids.indexOf(blockId) + 1;
       return {
-        change: { put: [names.length > 0 ? { ...made, slots } : made], drop: [] },
+        change: {
+          put: [names.length > 0 ? { ...made, slots } : made],
+          ...(orphans.length > 0 && { ids: view.ids.toSpliced(at, 0, ...orphans) }),
+          drop: [],
+        },
         inverse: { kind: 'setType', blockId, type: block.type, props: block.props },
       };
     }
@@ -406,7 +422,9 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
         refuse(op, 'a container with children stays');
       }
       const place = placed(op, view, blockId);
-      if (place.parent === null && place.list.length <= 1) refuse(op, 'the last block stays');
+      if (!raw && place.parent === null && place.list.length <= 1) {
+        refuse(op, 'the last block stays');
+      }
       const { put, ids } = relisted(
         view,
         place,
@@ -454,11 +472,15 @@ function planned(view: DocView, op: Op, registry: Registry): { change: Change; i
   }
 }
 
-export function mapThrough(
+export function mapThrough(op: Op, position: Position, bias: -1 | 1 = -1): Position | undefined {
+  return mapIn(builtins, op, position, bias);
+}
+
+export function mapIn(
+  registry: Registry,
   op: Op,
   position: Position,
   bias: -1 | 1 = -1,
-  registry: Registry = builtins,
 ): Position | undefined {
   if (!('blockId' in op) || op.blockId !== position.blockId) return position;
   const { field, offset } = position;
@@ -498,7 +520,7 @@ export function planAll(
     blocks: { get: (id) => (blocks.has(id) ? blocks.get(id) : view.blocks.get(id)) },
   };
   const planOne = (input: unknown) => {
-    const step = plan(working, input, registry);
+    const step = plan(working, input, registry, !transformed);
     for (const id of step.change.drop) blocks.set(id, undefined);
     for (const block of step.change.put) blocks.set(block.id, block);
     ids = step.change.ids ?? ids;

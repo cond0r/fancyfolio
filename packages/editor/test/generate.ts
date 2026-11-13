@@ -153,15 +153,29 @@ export function randomOp(
   kindsAllowed = kinds,
   structural = false,
   removable = doc.ids.length > 1,
+  blank?: BlockKind,
 ): Op {
+  const inserted = (): Op => {
+    const { type, props } = random.pick(kindsAllowed);
+    const fields = { text: random.int(3) === 0 ? '' : randomText(random) };
+    const at = random.int(doc.ids.length + 1);
+    return {
+      kind: 'insertBlock',
+      block: { id: newId(), type, props, fields },
+      parent: null,
+      index: at,
+    };
+  };
+  if (doc.ids.length === 0) return inserted();
   const index = random.int(doc.ids.length);
   const blockId = doc.ids[index] as string;
   const block = doc.blocks.get(blockId) as Block;
-  const text = block.fields.text as string;
+  const text: string | undefined = block.fields.text;
   const field = 'text';
   for (;;) {
     switch (random.int(structural ? 9 : 5)) {
       case 0:
+        if (text === undefined) break;
         return {
           kind: 'insertText',
           blockId,
@@ -170,11 +184,13 @@ export function randomOp(
           text: randomText(random),
         };
       case 1: {
+        if (text === undefined) break;
         const [from, to] = pair(random, text);
         if (from < to) return { kind: 'deleteText', blockId, field, from, to };
         break;
       }
       case 2: {
+        if (text === undefined) break;
         const offset = random.pick(boundaries(text));
         const tail = text.slice(offset);
         const head = text.slice(0, offset);
@@ -187,15 +203,20 @@ export function randomOp(
       }
       case 3: {
         const previous = doc.blocks.get(doc.ids[removable ? index - 1 : -1] ?? '');
-        const kept = previous?.fields.text as string;
-        if (previous !== undefined && movable(block.type, text, previous.type, kept)) {
+        const kept: string | undefined = previous?.fields.text;
+        if (
+          previous !== undefined &&
+          text !== undefined &&
+          kept !== undefined &&
+          movable(block.type, text, previous.type, kept)
+        ) {
           return { kind: 'mergeBlocks', blockId };
         }
         break;
       }
       case 4: {
-        const allowed = kindsAllowed.filter(
-          (kind) => !isSameKind(kind, block) && movable(block.type, text, kind.type),
+        const allowed = [...kindsAllowed, ...(blank && text === '' ? [blank] : [])].filter(
+          (kind) => !isSameKind(kind, block) && movable(block.type, text ?? '', kind.type),
         );
         if (allowed.length > 0) return { kind: 'setType', blockId, ...random.pick(allowed) };
         break;
@@ -208,17 +229,8 @@ export function randomOp(
           return { kind: 'setProps', blockId, props: random.pick(levels).props };
         break;
       }
-      case 6: {
-        const { type, props } = random.pick(kindsAllowed);
-        const fields = { text: random.int(3) === 0 ? '' : randomText(random) };
-        const at = random.int(doc.ids.length + 1);
-        return {
-          kind: 'insertBlock',
-          block: { id: newId(), type, props, fields },
-          parent: null,
-          index: at,
-        };
-      }
+      case 6:
+        return inserted();
       case 7:
         return { kind: 'moveBlock', blockId, parent: null, index: random.int(doc.ids.length) };
       default:

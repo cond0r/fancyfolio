@@ -1,5 +1,5 @@
 import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
-import { lowered, neighbours, remapped } from './collab.ts';
+import { inserts, lowered, neighbours, remapped } from './collab.ts';
 import { caretIn, run } from './commands.ts';
 import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
@@ -20,18 +20,17 @@ import type {
   Selection,
 } from './types.ts';
 
-export function createEditor(markdown: string, options: EditorOptions): Editor {
+const empty: Doc = { ids: [], blocks: new Map(), sources: new Map() };
+
+export function createEditor(source: string | Doc, options: EditorOptions): Editor {
   const registry = registryOf(options.components ?? []);
   const store = createStore();
-  const initial = load(markdown, options.newId, registry);
+  const initial = typeof source === 'string' ? load(source, options.newId, registry) : empty;
   const ids = atom(initial.ids);
   const blocks = new Map<BlockId, PrimitiveAtom<Block>>();
   for (const [id, block] of initial.blocks) blocks.set(id, atom(block));
   const retired = new WeakMap<Op, PrimitiveAtom<Block>>();
-  const [first] = initial.ids;
-  const firstBlock = first === undefined ? undefined : initial.blocks.get(first);
-  if (firstBlock === undefined) throw new Error('the document has no first block');
-  const selection = atom<Selection>(caretIn(initial, firstBlock));
+  const selection = atom<Selection>({ kind: 'blocks', ids: [] });
   let history = emptyHistory;
   const { collab } = options;
   const saveState = atom<SaveState>('idle');
@@ -125,6 +124,17 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     step(inputs, store.get(selection));
   }
 
+  function started(text: string): boolean {
+    const blockId = options.newId();
+    const block: Block = { id: blockId, type: 'paragraph', props: {}, fields: { text: '' } };
+    const typed = { kind: 'insertText', blockId, field: 'text', offset: 0, text } as const;
+    const end = text.length;
+    const after: Selection = { kind: 'text', blockId, field: 'text', from: end, to: end };
+    step([{ kind: 'insertBlock', block, parent: null, index: 0 }, typed], after);
+    store.set(selection, after);
+    return true;
+  }
+
   function doc(): Doc {
     const order = store.get(ids);
     const all = new Map<BlockId, Block>();
@@ -173,6 +183,10 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     return pending;
   }
 
+  const seed = typeof source === 'string' ? [] : inserts(source);
+  if (seed.length > 0) commit(seed, false);
+  const first = view.blocks.get(view.ids[0] ?? '');
+  if (first !== undefined) store.set(selection, caretIn(view, first));
   collab?.onRemote(receive);
 
   return {
@@ -182,6 +196,9 @@ export function createEditor(markdown: string, options: EditorOptions): Editor {
     selection,
     dispatch,
     command(name, args) {
+      if (name === 'insertText' && view.ids.length === 0 && 'text' in args) {
+        return typeof args.text === 'string' && args.text !== '' && started(args.text);
+      }
       const context = { doc: view, selection: store.get(selection), newId: options.newId };
       const result = run(registry.components.values(), name, context, args);
       if (result === undefined) {

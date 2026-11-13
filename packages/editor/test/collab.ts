@@ -1,8 +1,8 @@
 import { load, save } from '../src/core/markdown.ts';
 import { sameJson } from '../src/core/model.ts';
-import { apply, mapThrough } from '../src/core/ops.ts';
+import { mapIn, plan } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
-import type { AnyComponent, CollabAdapter, Doc, Parent, RemoteOp } from '../src/core/types.ts';
+import type { AnyComponent, CollabAdapter, Doc, Op, Parent, RemoteOp } from '../src/core/types.ts';
 import { counter } from './generate.ts';
 
 type Entry = { readonly client: number; readonly op: RemoteOp; readonly at: string };
@@ -11,13 +11,24 @@ type Registry = ReturnType<typeof registryOf>;
 type Replica = { doc: Doc; readonly positions: Map<string, string>; readonly registry: Registry };
 export type Room = ReturnType<typeof room>;
 
-function through(a: Entry, b: Entry): Entry[] {
+function applied(doc: Doc, op: Op, registry: Registry): { doc: Doc; inverse: Op } {
+  const { change, inverse } = plan(doc, op, registry, true);
+  const blocks = new Map(doc.blocks);
+  for (const id of change.drop) blocks.delete(id);
+  for (const block of change.put) blocks.set(block.id, block);
+  return { doc: { ids: change.ids ?? doc.ids, blocks, sources: doc.sources }, inverse };
+}
+
+function through(a: Entry, b: Entry, registry: Registry): Entry[] {
   const { op } = a;
   if (op.kind !== 'insertText' && op.kind !== 'deleteText') return [a];
-  if (b.op.kind !== 'insertText' && b.op.kind !== 'deleteText') return [a];
   const { blockId, field } = op;
+  if (b.op.kind === 'setType' && a.client !== b.client) {
+    return mapIn(registry, b.op, { blockId, field, offset: 0 }) === undefined ? [] : [a];
+  }
+  if (b.op.kind !== 'insertText' && b.op.kind !== 'deleteText') return [a];
   const map = (offset: number, bias: -1 | 1) =>
-    mapThrough(b.op, { blockId, field, offset }, bias)?.offset ?? offset;
+    mapIn(registry, b.op, { blockId, field, offset }, bias)?.offset ?? offset;
   if (op.kind === 'insertText') {
     return [{ ...a, op: { ...op, offset: map(op.offset, a.client > b.client ? 1 : -1) } }];
   }
@@ -29,21 +40,21 @@ function through(a: Entry, b: Entry): Entry[] {
   return from < to ? [cut(from, to)] : [];
 }
 
-function cross(as: readonly Entry[], bs: readonly Entry[]): [Entry[], Entry[]] {
+function cross(as: readonly Entry[], bs: readonly Entry[], registry: Registry): [Entry[], Entry[]] {
   const [a, ...moreA] = as;
   const [b, ...moreB] = bs;
   if (a === undefined || b === undefined) return [[...as], [...bs]];
   if (moreA.length > 0) {
-    const [a1, b1] = cross([a], bs);
-    const [a2, b2] = cross(moreA, b1);
+    const [a1, b1] = cross([a], bs, registry);
+    const [a2, b2] = cross(moreA, b1, registry);
     return [[...a1, ...a2], b2];
   }
   if (moreB.length > 0) {
-    const [a1, b1] = cross(as, [b]);
-    const [a2, b2] = cross(a1, moreB);
+    const [a1, b1] = cross(as, [b], registry);
+    const [a2, b2] = cross(a1, moreB, registry);
     return [a2, [...b1, ...b2]];
   }
-  return [through(a, b), through(b, a)];
+  return [through(a, b, registry), through(b, a, registry)];
 }
 
 function positionOf({ positions }: Replica, id: string): string {
@@ -79,7 +90,7 @@ function key(before = '', after: string | undefined, client: number): string {
 function absorb(replica: Replica, { op, at }: Entry): RemoteOp[] {
   const out: RemoteOp[] = [];
   const put = (each: RemoteOp) => {
-    replica.doc = apply(replica.doc, each, replica.registry).doc;
+    replica.doc = applied(replica.doc, each, replica.registry).doc;
     out.push(each);
   };
   const block = 'blockId' in op ? replica.doc.blocks.get(op.blockId) : undefined;
@@ -108,8 +119,9 @@ function absorb(replica: Replica, { op, at }: Entry): RemoteOp[] {
   return out;
 }
 
-function replicaOf(markdown: string, registry: Registry): Replica {
-  const doc = load(markdown, counter(), registry);
+function replicaOf(source: string | Doc, registry: Registry): Replica {
+  const loaded = typeof source === 'string' ? load(source, counter(), registry) : source;
+  const doc = { ...loaded, sources: new Map() };
   const slots = [...doc.blocks.values()].flatMap((block) => Object.values(block.slots ?? {}));
   const ranked = [doc.ids, ...slots].flatMap((ids) =>
     ids.map((id, i) => [id, `${1e4 + i}1`] as const),
@@ -117,16 +129,16 @@ function replicaOf(markdown: string, registry: Registry): Replica {
   return { doc, positions: new Map(ranked), registry };
 }
 
-export function room(markdown: string, components: readonly AnyComponent[]) {
+export function room(source: string | Doc, components: readonly AnyComponent[]) {
   const registry = registryOf(components);
-  const replica = replicaOf(markdown, registry);
+  const replica = replicaOf(source, registry);
   const log: Entry[] = [];
   const inboxes: Message[][] = [];
   return {
     inboxes,
-    replica: () => replicaOf(markdown, registry),
+    replica: () => replicaOf(source, registry),
     receive(client: number, seen: number, entries: readonly Entry[]) {
-      const [mapped] = cross(entries, log.slice(seen));
+      const [mapped] = cross(entries, log.slice(seen), registry);
       log.push(...mapped);
       for (const entry of mapped) absorb(replica, entry);
       for (const inbox of inboxes) inbox.push({ client, entries: mapped });
@@ -154,7 +166,7 @@ export function join(shared: Room) {
 
   const remap = (entries: readonly Entry[]) => {
     for (const stack of [done, undone]) {
-      stack.splice(0, stack.length, ...stack.map((step) => cross(step, entries)[0]));
+      stack.splice(0, stack.length, ...stack.map((step) => cross(step, entries, registry)[0]));
     }
   };
 
@@ -182,7 +194,7 @@ export function join(shared: Room) {
         op.kind === 'setProps' && block !== undefined
           ? { ...op, kind: 'setType', type: block.type }
           : op;
-      const { doc, inverse } = apply(replica.doc, op, registry);
+      const { doc, inverse } = applied(replica.doc, op, registry);
       if (inverse.kind === 'splitBlock' || inverse.kind === 'mergeBlocks')
         throw new Error('not remote');
       replica.doc = doc;
@@ -231,8 +243,8 @@ export function join(shared: Room) {
         continue;
       }
       let incoming: Entry[];
-      [incoming, inflight] = cross(entries, inflight);
-      [incoming, buffer] = cross(incoming, buffer);
+      [incoming, inflight] = cross(entries, inflight, registry);
+      [incoming, buffer] = cross(incoming, buffer, registry);
       const mine = new Set([...inflight, ...buffer].map(written));
       incoming = incoming.filter((entry) => written(entry) === '' || !mine.has(written(entry)));
       remap(incoming);

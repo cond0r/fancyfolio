@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { heading } from '../src/core/heading.ts';
 import { emptyHistory, record, redo, undo } from '../src/core/history.ts';
+import { load } from '../src/core/markdown.ts';
 import { hasKeys, noProps, schema, textNodes } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
 import { paragraph } from '../src/core/paragraph.ts';
+import { registryOf } from '../src/core/registry.ts';
 import { createEditor } from '../src/core/store.ts';
 import type {
   AnyComponent,
@@ -105,6 +107,25 @@ describe('the editor store', () => {
     editor.dispatch({ kind: 'insertText', blockId: id, field, offset: 0, text: 'x' });
     expect(seen).toEqual([id]);
     expect(orders).toBe(0);
+  });
+
+  it('starts from a Doc with its block ids', () => {
+    const page = 'Intro\n\n:::callout{tone="info"}\nInside\n:::\n';
+    const doc = load(page, counter('r'), registryOf([callout]));
+    const editor = createEditor(doc, { now: () => 0, newId: counter(), components: [callout] });
+    expect(editor.doc().ids).toEqual(['r0', 'r1']);
+    expect(editor.doc().blocks).toEqual(doc.blocks);
+    expect(saved(editor)).toBe(page);
+    expect(editor.undo()).toBe(false);
+  });
+
+  it.each([
+    ['an unknown type', { type: 'chart', props: {} }],
+    ['props that fail its schema', { type: 'heading', props: { level: 9 } }],
+  ])('refuses a Doc holding a block with %s', (_name, kind) => {
+    const block = { id: 'x', ...kind, fields: { text: 'x' } };
+    const doc = { ids: ['x'], blocks: new Map([['x', block]]), sources: new Map() };
+    expect(() => createEditor(doc, { now: () => 0, newId: counter() })).toThrow(RangeError);
   });
 
   it('adds the new block atom before the order lists it and drops it after', () => {

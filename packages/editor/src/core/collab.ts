@@ -1,9 +1,10 @@
 import { caretIn } from './commands.ts';
-import { mapThrough, placeOf } from './ops.ts';
+import { mapIn, placeOf } from './ops.ts';
 import type {
   Block,
   BlockId,
   Change,
+  Doc,
   DocView,
   Parent,
   Planned,
@@ -28,6 +29,31 @@ function listedIn(change: Change, id: BlockId): { parent: Parent; index: number 
     }
   }
   throw new Error(`block ${id} is in no list of its change`);
+}
+
+export function inserts(doc: Doc): RemoteOp[] {
+  const blockOf = (id: BlockId): Block => {
+    const block = doc.blocks.get(id);
+    if (block === undefined) throw new RangeError(`the doc lists a missing block ${id}`);
+    return block;
+  };
+  return doc.ids.flatMap((id, index): RemoteOp[] => {
+    const block = blockOf(id);
+    const lists = Object.entries(block.slots ?? {});
+    const slots = Object.fromEntries(lists.map(([slot]) => [slot, []]));
+    const children = lists.flatMap(([slot, list]) =>
+      list.map(
+        (child, at): RemoteOp => ({
+          kind: 'insertBlock',
+          block: blockOf(child),
+          parent: { blockId: id, slot },
+          index: at,
+        }),
+      ),
+    );
+    const emptied = block.slots === undefined ? block : { ...block, slots };
+    return [{ kind: 'insertBlock', block: emptied, parent: null, index }, ...children];
+  });
 }
 
 export function lowered(steps: readonly Planned[]): RemoteOp[] {
@@ -63,7 +89,7 @@ function nearest(view: DocView, near: readonly BlockId[]): Selection {
     const block = view.blocks.get(id);
     if (block !== undefined) return caretIn(view, block);
   }
-  throw new Error('the document has no block');
+  return { kind: 'blocks', ids: [] };
 }
 
 export function remapped(
@@ -79,8 +105,8 @@ export function remapped(
     return ids.length > 0 ? { kind: 'blocks', ids } : nearest(view, near);
   }
   const { blockId, field } = selection;
-  const from = mapThrough(op, { blockId, field, offset: selection.from }, -1, registry);
-  const to = mapThrough(op, { blockId, field, offset: selection.to }, -1, registry);
+  const from = mapIn(registry, op, { blockId, field, offset: selection.from });
+  const to = mapIn(registry, op, { blockId, field, offset: selection.to });
   if (from === undefined || to === undefined) {
     const block = view.blocks.get(blockId);
     return block === undefined ? nearest(view, near) : caretIn(view, block);

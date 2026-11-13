@@ -291,6 +291,9 @@ export type Editor = {
   markdown(): SaveResult;
   readonly saveState: Atom<SaveState>;
   save(): Promise<SaveOutcome>;
+  setPresence(others: readonly Presence[]): void;
+  presence(blockId: BlockId): Atom<readonly Presence[]>;
+  disconnect(): void;
 };
 
 export type Version = string;

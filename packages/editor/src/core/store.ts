@@ -1,5 +1,6 @@
 import { atom, createStore, type PrimitiveAtom } from 'jotai/vanilla';
-import { inserts, lowered, neighbours, remapped } from './collab.ts';
+import { selectAtom } from 'jotai/vanilla/utils';
+import { inserts, lowered, neighbours, presenceAfter, remapped } from './collab.ts';
 import { caretIn, run } from './commands.ts';
 import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
@@ -14,6 +15,8 @@ import type {
   Editor,
   EditorOptions,
   Op,
+  Planned,
+  Presence,
   RemoteOp,
   SaveOutcome,
   SaveState,
@@ -38,6 +41,8 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     options.onSave === undefined ? undefined : { onSave: options.onSave, version: options.version };
   let pending: Promise<SaveOutcome> | undefined;
   let revision = 0;
+  const others = atom<readonly Presence[]>([]);
+  let connected = true;
 
   const view: DocView = {
     get ids() {
@@ -78,7 +83,18 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
       revision += 1;
       if (store.get(saveState) === 'saved') store.set(saveState, 'idle');
     }
+    follow(planned);
     return planned;
+  }
+
+  function follow(planned: readonly Planned[]) {
+    const before = store.get(others);
+    if (before.length === 0) return;
+    const ops = lowered(planned);
+    const after = before.flatMap((each) => presenceAfter(ops, each, registry) ?? []);
+    if (after.length !== before.length || after.some((each, i) => each !== before[i])) {
+      store.set(others, after);
+    }
   }
 
   function travel(move: typeof undo): boolean {
@@ -117,11 +133,11 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     }
   }
 
-  const undoing = () => (collab === undefined ? travel(undo) : collab.undo());
-  const redoing = () => (collab === undefined ? travel(redo) : collab.redo());
+  const undoing = () => connected && (collab === undefined ? travel(undo) : collab.undo());
+  const redoing = () => connected && (collab === undefined ? travel(redo) : collab.redo());
 
   function dispatch(...inputs: Op[]) {
-    step(inputs, store.get(selection));
+    if (connected) step(inputs, store.get(selection));
   }
 
   function started(text: string): boolean {
@@ -187,7 +203,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   if (seed.length > 0) commit(seed, false);
   const first = view.blocks.get(view.ids[0] ?? '');
   if (first !== undefined) store.set(selection, caretIn(view, first));
-  collab?.onRemote(receive);
+  const unsubscribe = collab?.onRemote(receive);
 
   return {
     store,
@@ -196,6 +212,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     selection,
     dispatch,
     command(name, args) {
+      if (!connected) return false;
       if (name === 'insertText' && view.ids.length === 0 && 'text' in args) {
         return typeof args.text === 'string' && args.text !== '' && started(args.text);
       }
@@ -215,5 +232,18 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     markdown: check,
     saveState,
     save: persist,
+    setPresence(next) {
+      store.set(others, next);
+    },
+    presence: (blockId) =>
+      selectAtom(
+        others,
+        (all) => all.filter((each) => each.blockId === blockId),
+        (a, b) => a.length === b.length && a.every((each, i) => each === b[i]),
+      ),
+    disconnect() {
+      unsubscribe?.();
+      connected = false;
+    },
   };
 }

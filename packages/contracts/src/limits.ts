@@ -23,4 +23,5 @@ export const LIMITS = {
   caseStudies: 200,
   experiences: 50,
   projects: 100,
+  roomSeed: 200_000,
 } as const;

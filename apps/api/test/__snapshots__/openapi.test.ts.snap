@@ -419,6 +419,247 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         },
       },
     },
+    "/api/v1/rooms/auth": {
+      "post": {
+        "operationId": "postApiV1RoomsAuth",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "room": {
+                    "description": "A playground room: playground: and a lower-case UUID",
+                    "pattern": "^playground:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "room",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "token",
+                  ],
+                  "type": "object",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Bad request",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+    "/api/v1/rooms/seed": {
+      "post": {
+        "operationId": "postApiV1RoomsSeed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "room": {
+                    "description": "A playground room: playground: and a lower-case UUID",
+                    "pattern": "^playground:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string",
+                  },
+                  "seed": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "blocks": {
+                        "additionalProperties": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "fields": {
+                              "additionalProperties": {
+                                "type": "string",
+                              },
+                              "propertyNames": {
+                                "minLength": 1,
+                                "type": "string",
+                              },
+                              "type": "object",
+                            },
+                            "parent": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "type": "string",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
+                            },
+                            "position": {
+                              "minLength": 1,
+                              "type": "string",
+                            },
+                            "props": {},
+                            "slot": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "type": "string",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
+                            },
+                            "type": {
+                              "minLength": 1,
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "type",
+                            "props",
+                            "parent",
+                            "slot",
+                            "position",
+                            "fields",
+                          ],
+                          "type": "object",
+                        },
+                        "propertyNames": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "type": "object",
+                      },
+                      "version": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "version",
+                      "blocks",
+                    ],
+                    "type": "object",
+                  },
+                },
+                "required": [
+                  "room",
+                  "seed",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "room": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "room",
+                  ],
+                  "type": "object",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Bad request",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Conflict",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
     "/api/v1/sites/{key}": {
       "get": {
         "operationId": "getApiV1SitesByKey",

@@ -59,7 +59,8 @@ describe('GET /api/openapi.json', () => {
           'Lower-case letters and digits in hyphen-separated groups, at most 64 characters',
       },
     ]);
-    expect(JSON.stringify(document.paths)).not.toContain('"400"');
+    const sites = Object.keys(document.paths).filter((path) => !path.startsWith('/api/v1/rooms/'));
+    expect(JSON.stringify(sites.map((path) => document.paths[path]))).not.toContain('"400"');
   });
 
   it('describes the fields as strictly as the response contracts enforce them', async () => {

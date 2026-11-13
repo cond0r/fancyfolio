@@ -151,8 +151,12 @@ describe('every route the API serves', () => {
     );
     expect(new Set(documented.map(({ route }) => route))).toEqual(served);
     for (const { route, responses } of documented) {
+      const rooms: Record<string, string[]> = {
+        'POST /api/v1/rooms/auth': ['200', '400', '404', '500'],
+        'POST /api/v1/rooms/seed': ['200', '400', '404', '409', '500'],
+      };
       expect(Object.keys(responses)).toEqual(
-        route.includes('{') ? ['200', '404', '500'] : ['200', '500'],
+        rooms[route] ?? (route.includes('{') ? ['200', '404', '500'] : ['200', '500']),
       );
       for (const response of Object.values(responses)) {
         expect(response.content['application/json'].schema).toBeTypeOf('object');

@@ -11,3 +11,9 @@ export const localEnv = v.object({
 });
 
 export const databaseEnv = v.object({ DATABASE_URL: v.string() });
+
+export const liveblocksEnv = v.object({
+  LIVEBLOCKS_SECRET_KEY: v.optional(v.pipe(v.string(), v.startsWith('sk_'))),
+  LIVEBLOCKS_BASE_URL: v.optional(v.pipe(v.string(), v.url())),
+  VERCEL_ENV: v.optional(v.picklist(['development', 'preview', 'production'])),
+});

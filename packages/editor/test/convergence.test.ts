@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Doc, Op, RemoteOp } from '../src/core/types.ts';
+import type { AnyComponent, Doc, Op, Presence, RemoteOp } from '../src/core/types.ts';
 import { join, room } from './collab.ts';
 import { callout, counter, kinds, randomOp, seeded, seeds } from './generate.ts';
 
@@ -133,6 +133,51 @@ describe('a room', () => {
     expect(all.map((peer) => peer.editor.doc().ids.length)).toEqual([1, 1]);
     expect(editor.undo()).toBe(true);
     expect(converged()).toEqual({ ok: true, markdown: '' });
+  });
+
+  const near = (from: number, to = from): Presence => ({
+    userId: 'u1',
+    blockId: 'b4',
+    field: 'text',
+    from,
+    to,
+  });
+  const emptied = { kind: 'deleteText', blockId: 'b4', field: 'text', from: 0, to: 6 } as const;
+
+  it.each<[string, 0 | 1, readonly Op[], readonly Presence[]]>([
+    ['a peer inserts before it', 1, [type('b4', 0, 'xy')], [near(4, 6)]],
+    ['a peer inserts at it', 1, [type('b4', 2, 'xy')], [near(2, 6)]],
+    ['the editor inserts before it', 0, [type('b4', 1, 'xy')], [near(4, 6)]],
+    ['a peer removes its block', 1, [remove('b4')], []],
+    [
+      'a peer sets its block to a type without its field',
+      1,
+      [emptied, { kind: 'setType', blockId: 'b4', ...blank }],
+      [],
+    ],
+  ])('maps a presence when %s', (_name, by, ops, expected) => {
+    const { all, converged } = peers(2);
+    const [{ editor }] = all;
+    editor.setPresence([{ ...near(0), blockId: 'b0' }]);
+    editor.setPresence([near(2, 4)]);
+    all[by].editor.dispatch(...ops);
+    converged();
+    expect(editor.store.get(editor.presence('b4'))).toEqual(expected);
+    expect(editor.store.get(editor.presence('b0'))).toEqual([]);
+  });
+
+  it('neither takes nor sends ops after disconnect', () => {
+    const { all } = peers(2);
+    const [{ editor, deliver, sent }, other] = all;
+    editor.disconnect();
+    other.editor.dispatch(type('b0', 0, 'x'));
+    other.deliver();
+    deliver();
+    editor.dispatch(type('b0', 0, 'y'));
+    expect(editor.command('insertText', { text: 'z' })).toBe(false);
+    expect(editor.undo()).toBe(false);
+    expect(sent).toEqual([]);
+    expect(editor.markdown()).toEqual({ ok: true, markdown: page });
   });
 });
 

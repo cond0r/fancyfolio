@@ -8,6 +8,7 @@ import type {
   DocView,
   Parent,
   Planned,
+  Presence,
   Registry,
   RemoteOp,
   Selection,
@@ -76,6 +77,22 @@ export function lowered(steps: readonly Planned[]): RemoteOp[] {
       text === '' ? [] : [{ kind: 'insertText', blockId, field, offset, text }];
     return [...joined, { kind: 'removeBlock', blockId: op.blockId }];
   });
+}
+
+export function presenceAfter(
+  ops: readonly RemoteOp[],
+  presence: Presence,
+  registry: Registry,
+): Presence | undefined {
+  const { blockId, field } = presence;
+  let { from, to } = presence;
+  for (const op of ops) {
+    const start = mapIn(registry, op, { blockId, field, offset: from });
+    const end = mapIn(registry, op, { blockId, field, offset: to });
+    if (start === undefined || end === undefined) return undefined;
+    [from, to] = [start.offset, end.offset];
+  }
+  return from === presence.from && to === presence.to ? presence : { ...presence, from, to };
 }
 
 export function neighbours(view: DocView, blockId: BlockId): BlockId[] {

@@ -421,6 +421,24 @@ describe('commands inside a slot', () => {
     expect(editor.undo()).toBe(true);
     expect(saved(editor)).toBe(page);
   });
+
+  it.each([
+    ['the next child when the first is removed', page, 'b2', 'b3', 0],
+    ['the end of the child before when the last is removed', page, 'b3', 'b2', 5],
+    [
+      'a new paragraph in the slot when the only child is removed',
+      'Before.\n\n:::callout{tone="info"}\nOnly\n:::\n',
+      'b2',
+      'b3',
+      0,
+    ],
+  ])('puts the caret in %s', (_name, source, removed, blockId, offset) => {
+    const editor = editorAt(source, [callout]);
+    select(editor, blocks(removed));
+    expect(editor.command('deleteSelection', {})).toBe(true);
+    expect(editor.store.get(editor.selection)).toEqual(caret(blockId, offset));
+    expect(editor.doc().blocks.get('b1')?.slots?.body).toContain(blockId);
+  });
 });
 
 describe('typing and history commands', () => {

@@ -494,11 +494,15 @@ export function mapIn(
   }
 }
 
+export function emptyParagraph(id: BlockId): Block {
+  return { id, type: 'paragraph', props: {}, fields: { text: '' } };
+}
+
 export function planAll(
   view: DocView,
   inputs: readonly unknown[],
   registry: Registry,
-  transformed = false,
+  newId?: () => BlockId,
 ): Planned[] {
   if (inputs.length === 0) throw new RangeError('dispatch refused: no ops');
   const blocks = new Map<BlockId, Block | undefined>();
@@ -512,7 +516,7 @@ export function planAll(
     parentOf: (id) => (parents.has(id) ? parents.get(id) : view.parentOf(id)),
   };
   const planOne = (input: unknown) => {
-    const step = plan(working, input, registry, !transformed);
+    const step = plan(working, input, registry, newId === undefined);
     for (const [id, parent] of relinked(working, step.change)) parents.set(id, parent);
     for (const id of step.change.drop) blocks.set(id, undefined);
     for (const block of step.change.put) blocks.set(block.id, block);
@@ -520,10 +524,17 @@ export function planAll(
     return step;
   };
   const steps = inputs.map(planOne);
-  const originals = transformed ? [...steps] : [];
+  const originals = newId === undefined ? [] : [...steps];
   for (const { op } of originals) {
     for (const { transform } of registry.components.values()) {
       if (transform !== undefined) steps.push(...transform(op, working).map(planOne));
+    }
+  }
+  if (newId !== undefined) {
+    for (const parent of emptied(view, blocks)) {
+      steps.push(
+        planOne({ kind: 'insertBlock', block: emptyParagraph(newId()), parent, index: 0 }),
+      );
     }
   }
   for (const [id, after] of blocks) {
@@ -536,6 +547,17 @@ export function planAll(
     }
   }
   return steps;
+}
+
+function emptied(view: DocView, changed: ReadonlyMap<BlockId, Block | undefined>): Parent[] {
+  return [...changed].flatMap(([blockId, after]) => {
+    const before = view.blocks.get(blockId);
+    return Object.entries(after?.slots ?? {}).flatMap(([slot, list]) =>
+      before !== undefined && list.length === 0 && (before.slots?.[slot]?.length ?? 1) > 0
+        ? [{ blockId, slot }]
+        : [],
+    );
+  });
 }
 
 function textOf(block: Block): string {

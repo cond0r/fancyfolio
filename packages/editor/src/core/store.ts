@@ -82,8 +82,8 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     }
   }
 
-  function commit(inputs: readonly Op[], transformed: boolean, recorded?: readonly Op[]) {
-    return written(inputs, planAll(view, inputs, registry, transformed), recorded);
+  function commit(inputs: readonly Op[], recorded?: readonly Op[]) {
+    return written(inputs, planAll(view, inputs, registry), recorded);
   }
 
   function written(inputs: readonly Op[], planned: readonly Planned[], recorded?: readonly Op[]) {
@@ -112,7 +112,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   function travel(move: typeof undo): boolean {
     const moved = move(history);
     if (moved === undefined) return false;
-    commit(moved.ops, false, moved.inverses);
+    commit(moved.ops, moved.inverses);
     history = moved.history;
     store.set(selection, moved.selection);
     return true;
@@ -121,7 +121,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   function step(
     inputs: readonly Op[],
     after: Selection,
-    planned = planAll(view, inputs, registry, true),
+    planned = planAll(view, inputs, registry, options.newId),
   ) {
     const before = store.get(selection);
     written(inputs, planned);
@@ -139,7 +139,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
       if ('blockId' in op && view.blocks.get(op.blockId) === undefined) continue;
       const near = op.kind === 'removeBlock' ? neighbours(view, op.blockId) : [];
       try {
-        commit([op], false);
+        commit([op]);
       } catch (error) {
         if (!(error instanceof RangeError)) throw error;
         console.error(error);
@@ -175,9 +175,9 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     return run(registry.components.values(), name, context, args);
   }
 
-  function accepted(ops: readonly Op[]): Planned[] | undefined {
+  function accepted(ops: readonly Op[], newId: () => BlockId): Planned[] | undefined {
     try {
-      return planAll(view, ops, registry, true);
+      return planAll(view, ops, registry, newId);
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;
       return undefined;
@@ -245,7 +245,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   }
 
   const seed = typeof source === 'string' ? [] : inserts(source);
-  if (seed.length > 0) commit(seed, false);
+  if (seed.length > 0) commit(seed);
   const first = view.blocks.get(view.ids[0] ?? '');
   if (first !== undefined) store.set(selection, caretIn(view, first));
   const unsubscribe = collab?.onRemote(receive);
@@ -265,7 +265,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
         return name === 'redo' && redoing();
       }
       if (result.ops.length > 0) {
-        const planned = accepted(result.ops);
+        const planned = accepted(result.ops, options.newId);
         if (planned === undefined) return false;
         step(result.ops, result.selection ?? store.get(selection), planned);
       }
@@ -274,9 +274,11 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     },
     can(name, args) {
       if (!connected) return false;
-      const result = resolved(name, args, throwaway());
+      const newId = throwaway();
+      const result = resolved(name, args, newId);
       return (
-        result !== undefined && (result.ops.length === 0 || accepted(result.ops) !== undefined)
+        result !== undefined &&
+        (result.ops.length === 0 || accepted(result.ops, newId) !== undefined)
       );
     },
     undo: undoing,

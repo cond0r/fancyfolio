@@ -1,5 +1,5 @@
-import { movable } from './ops.ts';
-import { placeOf } from './tree.ts';
+import { emptyParagraph, movable } from './ops.ts';
+import { childrenOf, pathOf, placeOf } from './tree.ts';
 import type {
   Block,
   BlockId,
@@ -73,27 +73,35 @@ function deleting(blockId: BlockId, field: string, from: number, to: number): Re
   };
 }
 
+function removals(doc: DocView, blockId: BlockId): Op[] {
+  return [
+    ...(childrenOf(doc, blockId) ?? []).flatMap((child) => removals(doc, child)),
+    { kind: 'removeBlock', blockId },
+  ];
+}
+
 function removing({ doc, newId }: Context, ids: readonly BlockId[]): Result {
   const removed = new Set(ids);
-  const ops: Op[] = [...removed].flatMap((blockId) => [
-    ...Object.values(doc.blocks.get(blockId)?.slots ?? {})
-      .flat()
-      .map((child): Op => ({ kind: 'removeBlock', blockId: child })),
-    { kind: 'removeBlock', blockId },
-  ]);
-  const first = doc.ids.findIndex((id) => removed.has(id));
-  if (first === -1) return undefined;
-  const kept = doc.ids.filter((id) => !removed.has(id));
-  const afterId = doc.ids.slice(first).find((id) => !removed.has(id));
+  const roots = [...removed].filter(
+    (id) =>
+      !pathOf(doc, id)
+        ?.slice(0, -1)
+        .some((above) => removed.has(above)),
+  );
+  const ops = roots.flatMap((blockId) => removals(doc, blockId));
+  const place = roots.map((id) => placeOf(doc, id)).find((each) => each !== undefined);
+  if (place === undefined) return undefined;
+  const { list, parent } = place;
+  const first = list.findIndex((id) => removed.has(id));
+  const afterId = list.slice(first).find((id) => !removed.has(id));
   const after = afterId === undefined ? undefined : doc.blocks.get(afterId);
   if (after !== undefined) return { ops, selection: caretIn(doc, after) };
-  const beforeId = kept.at(-1);
+  const beforeId = list[first - 1];
   const before = beforeId === undefined ? undefined : doc.blocks.get(beforeId);
   if (before !== undefined) return { ops, selection: caretAtEnd(doc, before) };
   const id = newId();
-  const block: Block = { id, type: 'paragraph', props: {}, fields: { text: '' } };
   return {
-    ops: [{ kind: 'insertBlock', block, parent: null, index: 0 }, ...ops],
+    ops: [{ kind: 'insertBlock', block: emptyParagraph(id), parent, index: 0 }, ...ops],
     selection: caret(id, 'text', 0),
   };
 }

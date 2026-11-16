@@ -263,10 +263,10 @@ describe('blocks in a slot', () => {
     expect(tree(editor)).toEqual(loadedTree);
   });
 
-  it('turns a top-level block into an empty container and back', () => {
+  it('turns a top-level block into a container holding one empty paragraph, and back', () => {
     const editor = editorAt('');
     editor.dispatch({ kind: 'setType', blockId: 'b0', type: 'callout', props: { tone: 'info' } });
-    expect(editor.doc().blocks.get('b0')).toEqual(callBlock('b0'));
+    expect(editor.doc().blocks.get('b0')).toEqual({ ...callBlock('b0'), slots: { body: ['b1'] } });
     editor.dispatch({
       kind: 'insertBlock',
       block: paragraph('n', 'Inside'),
@@ -400,5 +400,45 @@ describe('transforms', () => {
     editor.undo();
     editor.redo();
     expect(seen).toHaveLength(2);
+  });
+});
+
+describe('a slot a local step empties', () => {
+  const only = 'Before.\n\n:::callout{tone="info"}\nOnly\n:::\n';
+  const host: AnyComponent = {
+    ...metric,
+    name: 'host',
+    markdown: { ...metric.markdown, match: 'leafDirective:host' },
+    commands: { deleteForward: () => ({ ops: [{ kind: 'removeBlock', blockId: 'b2' }] }) },
+  };
+
+  it.each<[string, (editor: Editor) => unknown]>([
+    [
+      'a removal command',
+      (editor) => {
+        editor.store.set(editor.selection, { kind: 'blocks', ids: ['b2'] });
+        return editor.command('deleteSelection', {});
+      },
+    ],
+    [
+      'a dispatched removeBlock',
+      (editor) => editor.dispatch({ kind: 'removeBlock', blockId: 'b2' }),
+    ],
+    ['a host command removing it', (editor) => editor.command('deleteForward', {})],
+  ])('gets one empty paragraph after %s takes its last child', (_name, emptying) => {
+    const editor = createEditor(only, {
+      now: () => 0,
+      newId: counter(),
+      components: [callout, metric, host],
+    });
+    expect(emptying(editor)).not.toBe(false);
+    expect(editor.doc().blocks.get('b1')?.slots).toEqual({ body: ['b3'] });
+    expect(editor.doc().blocks.get('b3')).toEqual(paragraph('b3'));
+    expect(editor.undo()).toBe(true);
+    expect(tree(editor)).toEqual([
+      ['b0', 'Before.'],
+      ['b1', 'callout', [[['b2', 'Only']]]],
+    ]);
+    expect(editor.doc().blocks.has('b3')).toBe(false);
   });
 });

@@ -171,6 +171,7 @@ export function randomOp(
   const blockId = doc.ids[index] as string;
   const block = doc.blocks.get(blockId) as Block;
   const text: string | undefined = block.fields.text;
+  const holds = Object.values(block.slots ?? {}).some((ids) => ids.length > 0);
   const field = 'text';
   for (;;) {
     switch (random.int(structural ? 9 : 5)) {
@@ -218,7 +219,9 @@ export function randomOp(
         const allowed = [...kindsAllowed, ...(blank && text === '' ? [blank] : [])].filter(
           (kind) => !isSameKind(kind, block) && movable(block.type, text ?? '', kind.type),
         );
-        if (allowed.length > 0) return { kind: 'setType', blockId, ...random.pick(allowed) };
+        if (allowed.length > 0 && !holds) {
+          return { kind: 'setType', blockId, ...random.pick(allowed) };
+        }
         break;
       }
       case 5: {
@@ -234,7 +237,7 @@ export function randomOp(
       case 7:
         return { kind: 'moveBlock', blockId, parent: null, index: random.int(doc.ids.length) };
       default:
-        if (removable) return { kind: 'removeBlock', blockId };
+        if (removable && !holds) return { kind: 'removeBlock', blockId };
     }
   }
 }

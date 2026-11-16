@@ -36,7 +36,11 @@ describe('the metric component', () => {
   const blocks = new Map([block, paragraph('p')].map((b) => [b.id, b]));
   const doc = { ids: ['m', 'p'], blocks, parentOf: () => null };
   const breakIn = (selection: ReturnType<typeof caret>) =>
-    metric.commands?.insertBreak?.({ doc, selection, newId: () => 'n' }, {}, lower);
+    metric.commands?.insertBreak?.(
+      { doc, selection, newId: () => 'n', shapeOf: () => undefined },
+      {},
+      lower,
+    );
 
   it('claims Enter in either field and adds nothing', () => {
     expect(breakIn(caret('m', 'value', 1))).toEqual({ ops: [] });
@@ -51,7 +55,7 @@ describe('the metric component', () => {
 describe('the callout component', () => {
   const breakAt = (doc: ReturnType<typeof docOf>, blockId: string) =>
     callout.commands?.insertBreak?.(
-      { doc, selection: caret(blockId), newId: () => 'n' },
+      { doc, selection: caret(blockId), newId: () => 'n', shapeOf: () => undefined },
       {},
       lower,
     );

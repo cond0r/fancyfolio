@@ -9,6 +9,7 @@ import type {
   DocView,
   Handler,
   Op,
+  Parent,
   Registered,
   Result,
   Selection,
@@ -106,6 +107,34 @@ function removing({ doc, newId }: Context, ids: readonly BlockId[]): Result {
   };
 }
 
+function missing(blockId: BlockId): never {
+  throw new Error(`block ${blockId} is missing`);
+}
+
+function copies(
+  doc: DocView,
+  block: Block,
+  newId: () => BlockId,
+  parent: Parent,
+  index: number,
+): Op[] {
+  const id = newId();
+  const slots = Object.entries(block.slots ?? {});
+  const copy: Block = {
+    ...block,
+    id,
+    ...(block.slots && { slots: Object.fromEntries(slots.map(([slot]) => [slot, []])) }),
+  };
+  return [
+    { kind: 'insertBlock', block: copy, parent, index },
+    ...slots.flatMap(([slot, children]) =>
+      children.flatMap((child, at) =>
+        copies(doc, doc.blocks.get(child) ?? missing(child), newId, { blockId: id, slot }, at),
+      ),
+    ),
+  ];
+}
+
 function merging(context: Context, offset: -1 | 1): Result {
   const at = textAt(context);
   if (at === undefined || at.from !== at.to) return undefined;
@@ -201,6 +230,85 @@ const defaults: DefaultHandlers = {
     return deleting(at.blockId, at.field, at.from, codePointAfter(text, at.from));
   },
   deleteSelection: selected,
+  moveBlockTo({ doc }, { blockId, target, side }) {
+    const block = doc.blocks.get(blockId);
+    const place = placeOf(doc, target);
+    if (block === undefined || place === undefined || pathOf(doc, target)?.includes(blockId)) {
+      return undefined;
+    }
+    const list = place.list.filter((id) => id !== blockId);
+    const index = list.indexOf(target) + (side === 'after' ? 1 : 0);
+    if (place.list.indexOf(blockId) === index) return undefined;
+    return {
+      ops: [{ kind: 'moveBlock', blockId, parent: place.parent, index }],
+      selection: caretIn(doc, block),
+    };
+  },
+  duplicateBlock({ doc, newId }, { blockId }) {
+    const block = doc.blocks.get(blockId);
+    const place = placeOf(doc, blockId);
+    if (block === undefined || place === undefined) return undefined;
+    return { ops: copies(doc, block, newId, place.parent, place.index + 1) };
+  },
+  insertBlockAfter({ doc, newId, shapeOf }, { blockId, type, props }) {
+    const place = placeOf(doc, blockId);
+    const shape = shapeOf(type);
+    if (place === undefined || shape === undefined) return undefined;
+    const id = newId();
+    const fills = shape.slots.map((slot) => ({ slot, fill: newId() }));
+    const block: Block = {
+      id,
+      type,
+      props,
+      fields: Object.fromEntries(shape.fields.map((field) => [field, ''])),
+      ...(fills.length > 0 && { slots: Object.fromEntries(fills.map(({ slot }) => [slot, []])) }),
+    };
+    const [field] = shape.fields;
+    const [first] = fills;
+    return {
+      ops: [
+        { kind: 'insertBlock', block, parent: place.parent, index: place.index + 1 },
+        ...fills.map(
+          ({ slot, fill }): Op => ({
+            kind: 'insertBlock',
+            block: emptyParagraph(fill),
+            parent: { blockId: id, slot },
+            index: 0,
+          }),
+        ),
+      ],
+      selection:
+        field !== undefined
+          ? caret(id, field, 0)
+          : first !== undefined
+            ? caret(first.fill, 'text', 0)
+            : { kind: 'blocks', ids: [id] },
+    };
+  },
+  turnInto({ doc, selection, shapeOf }, { blockId, type, props, replace }) {
+    const block = doc.blocks.get(blockId);
+    const shape = shapeOf(type);
+    if (block === undefined || shape === undefined) return undefined;
+    const cut = Object.entries(block.fields).flatMap(([field, text]): Op[] =>
+      replace && text !== ''
+        ? [{ kind: 'deleteText', blockId, field, from: 0, to: text.length }]
+        : [],
+    );
+    const kept =
+      !replace &&
+      selection.kind === 'text' &&
+      selection.blockId === blockId &&
+      shape.fields.includes(selection.field);
+    const [field] = shape.fields;
+    return {
+      ops: [...cut, { kind: 'setType', blockId, type, props }],
+      selection: kept
+        ? selection
+        : field === undefined
+          ? { kind: 'blocks', ids: [blockId] }
+          : caret(blockId, field, 0),
+    };
+  },
   undo: none,
   redo: none,
 };

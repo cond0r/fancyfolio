@@ -421,6 +421,10 @@ describe('a slot a local step empties', () => {
       },
     ],
     [
+      'a move out of the callout',
+      (editor) => editor.command('moveBlockTo', { blockId: 'b2', target: 'b1', side: 'after' }),
+    ],
+    [
       'a dispatched removeBlock',
       (editor) => editor.dispatch({ kind: 'removeBlock', blockId: 'b2' }),
     ],

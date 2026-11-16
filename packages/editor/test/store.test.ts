@@ -11,11 +11,13 @@ import type {
   AnyComponent,
   Block,
   Component,
+  Doc,
   Editor,
   Op,
   Selection,
   Stored,
 } from '../src/core/types.ts';
+import { join, room } from './collab.ts';
 import {
   answeringLater,
   callout,
@@ -583,6 +585,69 @@ describe('a dispatch of several ops', () => {
     expect(saved(editor)).toBe(body);
     expect(editor.undo()).toBe(false);
   });
+});
+
+describe('a command the plan refuses', () => {
+  const page = 'Before.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n\nAfter.\n';
+  const host: AnyComponent = {
+    ...metric,
+    name: 'host',
+    markdown: { ...metric.markdown, match: 'leafDirective:host' },
+    commands: {
+      insertBreak: () => ({ ops: [] }),
+      deleteForward: () => ({
+        ops: [{ kind: 'removeBlock', blockId: 'missing' }],
+        selection: { kind: 'blocks', ids: ['b0'] },
+      }),
+    },
+  };
+  const components = [callout, metric, host];
+  function joined(source: string | Doc, shared = true) {
+    const { adapter, sent } = join(room(source, components));
+    const collab = shared ? adapter : undefined;
+    const editor = createEditor(source, { now: () => 0, newId: counter(), components, collab });
+    return { editor, state: () => [editor.doc(), editor.store.get(editor.selection), sent.length] };
+  }
+
+  it.each([false, true])('writes, records and sends nothing (collab %s)', (shared) => {
+    const { editor, state } = joined(page, shared);
+    const before = state();
+    expect(editor.command('deleteForward', {})).toBe(false);
+    expect([...state(), editor.undo()]).toEqual([...before, false]);
+  });
+
+  const empty: Doc = { ids: [], blocks: new Map(), sources: new Map() };
+
+  it.each<[string, string | Doc, string, ...Parameters<Editor['can']>, boolean]>([
+    ['typing', page, 'b0', 'insertText', { text: 'x' }, true],
+    ['a caret-only merge', page, 'b4', 'deleteBackward', {}, true],
+    ['a handler with no ops', page, 'b0', 'insertBreak', {}, true],
+    ['a refused op', page, 'b0', 'deleteForward', {}, false],
+    ['an unhandled command', page, 'b0', 'deleteSelection', {}, false],
+    ['typing into an empty doc', empty, 'b0', 'insertText', { text: 'x' }, true],
+  ])(
+    'answers can as command does for %s, changing nothing',
+    (_, source, blockId, name, args, can) => {
+      const [probed, plain] = [joined(source), joined(source)];
+      for (const { editor } of [probed, plain]) {
+        editor.store.set(editor.selection, {
+          kind: 'text',
+          blockId,
+          field: 'text',
+          from: 0,
+          to: 0,
+        });
+      }
+      const before = probed.state();
+      expect(probed.editor.can(name, args)).toBe(can);
+      expect(probed.state()).toEqual(before);
+      expect([probed.editor.command(name, args), plain.editor.command(name, args)]).toEqual([
+        can,
+        can,
+      ]);
+      expect(probed.state()).toEqual(plain.state());
+    },
+  );
 });
 
 describe('undo steps over a session', () => {

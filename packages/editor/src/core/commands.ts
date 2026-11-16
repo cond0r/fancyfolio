@@ -1,4 +1,5 @@
-import { movable, placeOf } from './ops.ts';
+import { movable } from './ops.ts';
+import { placeOf } from './tree.ts';
 import type {
   Block,
   BlockId,
@@ -113,8 +114,8 @@ function merging(context: Context, offset: -1 | 1): Result {
   if (offset === 1 && after !== undefined)
     return { ops: [], selection: caret(at.blockId, after, 0) };
   const { doc } = context;
-  const list = placeOf(doc, at.blockId)?.list ?? [];
-  const neighbourId = list[list.indexOf(at.blockId) + offset];
+  const place = placeOf(doc, at.blockId);
+  const neighbourId = place?.list[place.index + offset];
   const neighbour = neighbourId === undefined ? undefined : doc.blocks.get(neighbourId);
   if (neighbour === undefined) return undefined;
   const [head, tail] = offset === -1 ? [neighbour, at.block] : [at.block, neighbour];

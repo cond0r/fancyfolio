@@ -4,7 +4,7 @@ import {
   type MetricProps,
   metricProps,
 } from '@fancyfolio/contracts/blocks';
-import { containerDirective, leafDirective } from '@fancyfolio/editor';
+import { containerDirective, leafDirective, placeOf } from '@fancyfolio/editor';
 import type { Block, BlockId, Component, DocView, Op } from '@fancyfolio/editor/types';
 
 function emptyParagraph(id: BlockId): Block {
@@ -12,12 +12,11 @@ function emptyParagraph(id: BlockId): Block {
 }
 
 function holding(doc: DocView, blockId: BlockId) {
-  for (const [index, id] of doc.ids.entries()) {
-    const block = doc.blocks.get(id);
-    const body = block?.type === 'callout' ? block.slots?.body : undefined;
-    if (body?.includes(blockId)) return { index, body };
-  }
-  return undefined;
+  const child = placeOf(doc, blockId);
+  const owner = child?.parent ? doc.blocks.get(child.parent.blockId) : undefined;
+  if (child === undefined || owner?.type !== 'callout') return undefined;
+  const place = placeOf(doc, owner.id);
+  return place === undefined ? undefined : { index: place.index, body: child.list };
 }
 
 export const metric: Component<'metric', MetricProps, 'value' | 'label'> = {

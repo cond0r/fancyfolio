@@ -26,6 +26,7 @@ describe('the package root', () => {
       'leafDirective',
       'load',
       'mapThrough',
+      'placeOf',
       'save',
     ]);
     const { apply, createEditor, load, save } = editor;

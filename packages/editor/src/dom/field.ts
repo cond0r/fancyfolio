@@ -1,4 +1,4 @@
-import { placeOf } from '../core/ops.ts';
+import { placeOf } from '../core/tree.ts';
 import type { Bare, BlockId, Commands, DocView, Editor, Selection } from '../core/types.ts';
 import {
   blockOf,
@@ -207,7 +207,7 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   };
 
   const span = (from: BlockId, to: BlockId) => {
-    const ids = spanOf(editor.doc(), from, to);
+    const ids = spanOf(editor.view, from, to);
     if (ids !== undefined && select({ kind: 'blocks', ids })) {
       place(root, store.get(editor.selection));
     }

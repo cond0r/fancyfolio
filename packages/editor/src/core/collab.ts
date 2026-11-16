@@ -1,5 +1,6 @@
 import { caretIn } from './commands.ts';
-import { mapIn, placeOf } from './ops.ts';
+import { mapIn } from './ops.ts';
+import { placeOf } from './tree.ts';
 import type {
   Block,
   BlockId,
@@ -96,8 +97,9 @@ export function presenceAfter(
 }
 
 export function neighbours(view: DocView, blockId: BlockId): BlockId[] {
-  const list = placeOf(view, blockId)?.list ?? [];
-  const index = list.indexOf(blockId);
+  const place = placeOf(view, blockId);
+  if (place === undefined) return [];
+  const { list, index } = place;
   return [list[index + 1], list[index - 1]].filter((id) => id !== undefined);
 }
 

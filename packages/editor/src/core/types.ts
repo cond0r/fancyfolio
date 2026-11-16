@@ -291,6 +291,7 @@ export type Editor = {
   readonly view: DocView;
   dispatch(...ops: Op[]): void;
   command<C extends keyof Commands>(name: C, args: Commands[C]): boolean;
+  can<C extends Exclude<keyof Commands, 'undo' | 'redo'>>(name: C, args: Commands[C]): boolean;
   undo(): boolean;
   redo(): boolean;
   doc(): Doc;

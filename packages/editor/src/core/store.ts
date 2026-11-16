@@ -11,6 +11,7 @@ import type {
   Block,
   BlockId,
   Change,
+  Commands,
   Doc,
   DocView,
   Editor,
@@ -19,6 +20,7 @@ import type {
   Planned,
   Presence,
   RemoteOp,
+  Result,
   SaveOutcome,
   SaveState,
   Selection,
@@ -81,7 +83,10 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   }
 
   function commit(inputs: readonly Op[], transformed: boolean, recorded?: readonly Op[]) {
-    const planned = planAll(view, inputs, registry, transformed);
+    return written(inputs, planAll(view, inputs, registry, transformed), recorded);
+  }
+
+  function written(inputs: readonly Op[], planned: readonly Planned[], recorded?: readonly Op[]) {
     const inverses = recorded ?? planned.map((each) => each.inverse);
     planned.forEach(({ change, op }, index) => {
       write(change, inputs[index] ?? op, inverses[index]);
@@ -113,9 +118,13 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     return true;
   }
 
-  function step(inputs: readonly Op[], after: Selection) {
+  function step(
+    inputs: readonly Op[],
+    after: Selection,
+    planned = planAll(view, inputs, registry, true),
+  ) {
     const before = store.get(selection);
-    const planned = commit(inputs, true);
+    written(inputs, planned);
     if (collab !== undefined) {
       collab.send(lowered(planned));
       return;
@@ -147,15 +156,44 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     if (connected) step(inputs, store.get(selection));
   }
 
-  function started(text: string): boolean {
-    const blockId = options.newId();
+  function started(text: string, blockId: BlockId): Result {
     const block: Block = { id: blockId, type: 'paragraph', props: {}, fields: { text: '' } };
     const typed = { kind: 'insertText', blockId, field: 'text', offset: 0, text } as const;
     const end = text.length;
-    const after: Selection = { kind: 'text', blockId, field: 'text', from: end, to: end };
-    step([{ kind: 'insertBlock', block, parent: null, index: 0 }, typed], after);
-    store.set(selection, after);
-    return true;
+    return {
+      ops: [{ kind: 'insertBlock', block, parent: null, index: 0 }, typed],
+      selection: { kind: 'text', blockId, field: 'text', from: end, to: end },
+    };
+  }
+
+  function resolved<C extends keyof Commands>(name: C, args: Commands[C], newId: () => BlockId) {
+    if (name === 'insertText' && view.ids.length === 0 && 'text' in args) {
+      const { text } = args;
+      return typeof text === 'string' && text !== '' ? started(text, newId()) : undefined;
+    }
+    const context = { doc: view, selection: store.get(selection), newId };
+    return run(registry.components.values(), name, context, args);
+  }
+
+  function accepted(ops: readonly Op[]): Planned[] | undefined {
+    try {
+      return planAll(view, ops, registry, true);
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      return undefined;
+    }
+  }
+
+  function throwaway(): () => BlockId {
+    let next = 0;
+    return () => {
+      let id: BlockId;
+      do {
+        id = `can-${next}`;
+        next += 1;
+      } while (view.blocks.get(id) !== undefined);
+      return id;
+    };
   }
 
   function doc(): Doc {
@@ -221,18 +259,25 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     dispatch,
     command(name, args) {
       if (!connected) return false;
-      if (name === 'insertText' && view.ids.length === 0 && 'text' in args) {
-        return typeof args.text === 'string' && args.text !== '' && started(args.text);
-      }
-      const context = { doc: view, selection: store.get(selection), newId: options.newId };
-      const result = run(registry.components.values(), name, context, args);
+      const result = resolved(name, args, options.newId);
       if (result === undefined) {
         if (name === 'undo') return undoing();
         return name === 'redo' && redoing();
       }
-      if (result.ops.length > 0) step(result.ops, result.selection ?? store.get(selection));
+      if (result.ops.length > 0) {
+        const planned = accepted(result.ops);
+        if (planned === undefined) return false;
+        step(result.ops, result.selection ?? store.get(selection), planned);
+      }
       if (result.selection !== undefined) store.set(selection, result.selection);
       return true;
+    },
+    can(name, args) {
+      if (!connected) return false;
+      const result = resolved(name, args, throwaway());
+      return (
+        result !== undefined && (result.ops.length === 0 || accepted(result.ops) !== undefined)
+      );
     },
     undo: undoing,
     redo: redoing,

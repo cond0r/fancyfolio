@@ -4,7 +4,8 @@ import { hasKeys, schema } from '../src/core/model.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
 import type { AnyComponent, Editor, Handlers, Selection } from '../src/core/types.ts';
-import { counter } from './generate.ts';
+import { join, room } from './collab.ts';
+import { callout, counter, metric } from './generate.ts';
 
 function editorAt(markdown: string, components: readonly AnyComponent[] = []): Editor {
   return createEditor(markdown, { now: () => 0, newId: counter(), components });
@@ -517,5 +518,227 @@ describe('typing and history commands', () => {
     expect(saved(editor)).toBe('uab\n');
     expect(editor.undo()).toBe(true);
     expect(saved(editor)).toBe('ab\n');
+  });
+});
+
+describe('block commands', () => {
+  const components = [callout, metric];
+  const page = 'Before.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n\nAfter.\n';
+  const inCallout = (body: string) =>
+    `Before.\n\n:::callout{tone="info"}\n${body}\n:::\n\nAfter.\n`;
+  const other = ':::callout{tone="info"}\nOther\n:::\n';
+  const two = `${page}\n${other}`;
+  const heading = { type: 'heading', props: { level: 2 } };
+  const metricType = { type: 'metric', props: {} };
+  const value = (blockId: string): Selection => ({
+    kind: 'text',
+    blockId,
+    field: 'value',
+    from: 0,
+    to: 0,
+  });
+
+  function listed(editor: Editor): string[] {
+    const { ids, blocks } = editor.doc();
+    return [
+      ...ids,
+      ...[...blocks.values()].flatMap(({ slots }) => Object.values(slots ?? {}).flat()),
+    ];
+  }
+
+  it.each<[string, string, ...Parameters<Editor['can']>, string, Selection]>([
+    [
+      'moves a block before a sibling',
+      page,
+      'moveBlockTo',
+      { blockId: 'b4', target: 'b0', side: 'before' },
+      'After.\n\nBefore.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n',
+      caret('b4', 0),
+    ],
+    [
+      'moves a child after a sibling',
+      page,
+      'moveBlockTo',
+      { blockId: 'b2', target: 'b3', side: 'after' },
+      inCallout('Second\n\nFirst'),
+      caret('b2', 0),
+    ],
+    [
+      'moves a block into a callout',
+      page,
+      'moveBlockTo',
+      { blockId: 'b0', target: 'b2', side: 'before' },
+      ':::callout{tone="info"}\nBefore.\n\nFirst\n\nSecond\n:::\n\nAfter.\n',
+      caret('b0', 0),
+    ],
+    [
+      'moves a first child up above its callout',
+      page,
+      'moveBlockTo',
+      { blockId: 'b2', target: 'b1', side: 'before' },
+      'Before.\n\nFirst\n\n:::callout{tone="info"}\nSecond\n:::\n\nAfter.\n',
+      caret('b2', 0),
+    ],
+    [
+      'moves a child from one callout into another',
+      two,
+      'moveBlockTo',
+      { blockId: 'b3', target: 'b6', side: 'after' },
+      `${inCallout('First')}\n:::callout{tone="info"}\nOther\n\nSecond\n:::\n`,
+      caret('b3', 0),
+    ],
+    [
+      'duplicates a block',
+      page,
+      'duplicateBlock',
+      { blockId: 'b0' },
+      `Before.\n\n${page}`,
+      caret('b0', 0),
+    ],
+    [
+      'duplicates a child',
+      page,
+      'duplicateBlock',
+      { blockId: 'b3' },
+      inCallout('First\n\nSecond\n\nSecond'),
+      caret('b0', 0),
+    ],
+    [
+      'inserts an empty metric after a block',
+      page,
+      'insertBlockAfter',
+      { blockId: 'b0', ...metricType },
+      page.replace('\n\n', '\n\n::metric\n\n'),
+      value('b5'),
+    ],
+    [
+      'inserts an empty heading after a child',
+      page,
+      'insertBlockAfter',
+      { blockId: 'b2', ...heading },
+      inCallout('First\n\n##\n\nSecond'),
+      caret('b5', 0),
+    ],
+    [
+      'inserts a callout holding one empty paragraph',
+      page,
+      'insertBlockAfter',
+      { blockId: 'b4', type: 'callout', props: { tone: 'info' } },
+      `${page}\n:::callout{tone="info"}\n:::\n`,
+      caret('b6', 0),
+    ],
+    [
+      'turns a paragraph into a heading, keeping its text',
+      page,
+      'turnInto',
+      { blockId: 'b0', ...heading, replace: false },
+      `## ${page}`,
+      caret('b0', 0),
+    ],
+    [
+      'turns a child into a heading',
+      page,
+      'turnInto',
+      { blockId: 'b3', ...heading, replace: false },
+      inCallout('First\n\n## Second'),
+      caret('b3', 0),
+    ],
+    [
+      'replaces the text when turning into another type',
+      '/me\n',
+      'turnInto',
+      { blockId: 'b0', ...metricType, replace: true },
+      '::metric\n',
+      value('b0'),
+    ],
+    [
+      'turns a paragraph into a callout holding one empty paragraph',
+      page,
+      'turnInto',
+      { blockId: 'b4', type: 'callout', props: { tone: 'info' }, replace: true },
+      page.replace('After.', ':::callout{tone="info"}\n:::'),
+      { kind: 'blocks', ids: ['b4'] },
+    ],
+  ])('%s, as one step with one undo', (_name, source, name, args, markdown, selection) => {
+    const { adapter, sent } = join(room(source, components));
+    const shared = createEditor(source, {
+      now: () => 0,
+      newId: counter(),
+      components,
+      collab: adapter,
+    });
+    for (const editor of [editorAt(source, components), shared]) {
+      expect([editor.can(name, args), editor.command(name, args)]).toEqual([true, true]);
+      expect(saved(editor)).toBe(markdown);
+      expect(editor.store.get(editor.selection)).toEqual(selection);
+      expect(listed(editor)).toEqual([...new Set(listed(editor))]);
+      expect(
+        [...editor.doc().blocks.values()].filter(({ slots }) =>
+          Object.values(slots ?? {}).some((list) => list.length === 0),
+        ),
+      ).toEqual([]);
+      expect(editor.undo()).toBe(true);
+      expect(saved(editor)).toBe(source);
+    }
+    expect(sent).toHaveLength(1);
+  });
+
+  it.each<[string, string, ...Parameters<Editor['can']>]>([
+    [
+      'a callout into a callout',
+      two,
+      'moveBlockTo',
+      { blockId: 'b5', target: 'b2', side: 'before' },
+    ],
+    [
+      'a block onto its own child',
+      page,
+      'moveBlockTo',
+      { blockId: 'b1', target: 'b2', side: 'after' },
+    ],
+    ['a block onto itself', page, 'moveBlockTo', { blockId: 'b4', target: 'b4', side: 'after' }],
+    [
+      'a block onto its current place',
+      page,
+      'moveBlockTo',
+      { blockId: 'b2', target: 'b3', side: 'before' },
+    ],
+    [
+      'a paragraph with text into a metric',
+      page,
+      'turnInto',
+      { blockId: 'b0', ...metricType, replace: false },
+    ],
+    [
+      'a callout with children into a paragraph',
+      page,
+      'turnInto',
+      { blockId: 'b1', type: 'paragraph', props: {}, replace: false },
+    ],
+  ])('refuses %s, changing nothing', (_name, source, name, args) => {
+    const editor = editorAt(source, components);
+    const before = [editor.doc(), editor.store.get(editor.selection)];
+    expect([editor.can(name, args), editor.command(name, args), editor.undo()]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect([editor.doc(), editor.store.get(editor.selection)]).toEqual(before);
+  });
+
+  it('duplicates a callout with its children under new ids', () => {
+    const editor = editorAt(page, components);
+    const original = editor.doc();
+    expect(editor.command('duplicateBlock', { blockId: 'b1' })).toBe(true);
+    const { ids, blocks } = editor.doc();
+    expect(ids).toEqual(['b0', 'b1', 'b5', 'b4']);
+    expect(['b1', 'b2', 'b3'].map((id) => blocks.get(id))).toEqual(
+      ['b1', 'b2', 'b3'].map((id) => original.blocks.get(id)),
+    );
+    expect(blocks.get('b5')?.slots).toEqual({ body: ['b6', 'b7'] });
+    expect(['b6', 'b7'].map((id) => blocks.get(id)?.fields)).toEqual([
+      { text: 'First' },
+      { text: 'Second' },
+    ]);
   });
 });

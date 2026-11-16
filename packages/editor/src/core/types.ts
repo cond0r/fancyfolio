@@ -235,16 +235,27 @@ export type Commands = {
   readonly deleteBackward: NoArgs;
   readonly deleteForward: NoArgs;
   readonly deleteSelection: NoArgs;
+  readonly moveBlockTo: {
+    readonly blockId: BlockId;
+    readonly target: BlockId;
+    readonly side: 'before' | 'after';
+  };
+  readonly duplicateBlock: { readonly blockId: BlockId };
+  readonly insertBlockAfter: BlockKind & { readonly blockId: BlockId };
+  readonly turnInto: BlockKind & { readonly blockId: BlockId; readonly replace: boolean };
   readonly undo: NoArgs;
   readonly redo: NoArgs;
 };
 
 export type Result = { readonly ops: readonly Op[]; readonly selection?: Selection } | undefined;
 
+export type Shape = { readonly fields: readonly string[]; readonly slots: readonly string[] };
+
 export type Context = {
   readonly doc: DocView;
   readonly selection: Selection;
   newId(): BlockId;
+  shapeOf(type: string): Shape | undefined;
 };
 
 export type Handler<Args> = (context: Context, args: Args, next: () => Result) => Result;

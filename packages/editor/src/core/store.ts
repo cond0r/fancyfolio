@@ -6,6 +6,7 @@ import { emptyHistory, record, redo, undo } from './history.ts';
 import { load, save } from './markdown.ts';
 import { planAll } from './ops.ts';
 import { registryOf } from './registry.ts';
+import { parentsOf, relinked } from './tree.ts';
 import type {
   Block,
   BlockId,
@@ -33,6 +34,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   const blocks = new Map<BlockId, PrimitiveAtom<Block>>();
   for (const [id, block] of initial.blocks) blocks.set(id, atom(block));
   const retired = new WeakMap<Op, PrimitiveAtom<Block>>();
+  const parents = parentsOf(initial);
   const selection = atom<Selection>({ kind: 'blocks', ids: [] });
   let history = emptyHistory;
   const { collab } = options;
@@ -54,9 +56,14 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
         return block === undefined ? undefined : store.get(block);
       },
     },
+    parentOf: (id) => parents.get(id),
   };
 
   function write(change: Change, input: Op, reverse: Op) {
+    for (const [id, parent] of relinked(view, change)) {
+      if (parent === undefined) parents.delete(id);
+      else parents.set(id, parent);
+    }
     for (const block of change.put) {
       const existing = blocks.get(block.id) ?? retired.get(input);
       if (existing === undefined) blocks.set(block.id, atom(block));
@@ -210,6 +217,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     ids,
     blocks,
     selection,
+    view,
     dispatch,
     command(name, args) {
       if (!connected) return false;

@@ -21,7 +21,8 @@ function docOf(body: readonly string[], texts: { readonly [id: string]: string }
   const box = { id: 'c', type: 'callout', props: { tone: 'info' }, fields: {}, slots: { body } };
   const children = body.map((id) => paragraph(id, texts[id]));
   const blocks = new Map([paragraph('p', 'Before.'), box, ...children].map((b) => [b.id, b]));
-  return { ids: ['p', 'c'], blocks };
+  const parentOf = (id: string) => (body.includes(id) ? { blockId: 'c', slot: 'body' } : null);
+  return { ids: ['p', 'c'], blocks, parentOf };
 }
 
 function caret(blockId: string, field = 'text', offset = 0) {
@@ -32,7 +33,8 @@ const lower = () => ({ ops: [{ kind: 'removeBlock', blockId: 'lower' }] as const
 
 describe('the metric component', () => {
   const block = { id: 'm', type: 'metric', props: {}, fields: { value: '42%', label: 'Faster' } };
-  const doc = { ids: ['m', 'p'], blocks: new Map([block, paragraph('p')].map((b) => [b.id, b])) };
+  const blocks = new Map([block, paragraph('p')].map((b) => [b.id, b]));
+  const doc = { ids: ['m', 'p'], blocks, parentOf: () => null };
   const breakIn = (selection: ReturnType<typeof caret>) =>
     metric.commands?.insertBreak?.({ doc, selection, newId: () => 'n' }, {}, lower);
 

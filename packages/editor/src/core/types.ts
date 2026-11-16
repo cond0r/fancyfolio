@@ -131,6 +131,7 @@ export type Doc = {
 export type DocView = {
   readonly ids: readonly BlockId[];
   readonly blocks: { get(id: BlockId): Block | undefined };
+  parentOf(id: BlockId): Parent | undefined;
 };
 
 export type Parent = { readonly blockId: BlockId; readonly slot: string } | null;
@@ -149,7 +150,11 @@ export type Presence = {
   readonly to: number;
 };
 
-export type Place = { readonly parent: Parent; readonly list: readonly BlockId[] };
+export type Place = {
+  readonly parent: Parent;
+  readonly list: readonly BlockId[];
+  readonly index: number;
+};
 
 export type Op =
   | {
@@ -283,6 +288,7 @@ export type Editor = {
   readonly ids: Atom<readonly BlockId[]>;
   readonly blocks: ReadonlyMap<BlockId, Atom<Block>>;
   readonly selection: PrimitiveAtom<Selection>;
+  readonly view: DocView;
   dispatch(...ops: Op[]): void;
   command<C extends keyof Commands>(name: C, args: Commands[C]): boolean;
   undo(): boolean;

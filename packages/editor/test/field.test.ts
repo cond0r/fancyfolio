@@ -6,7 +6,8 @@ const box = { id: 'c', type: 'box', props: {}, fields: {}, slots: { body: ['x', 
 const blocks = new Map(
   [paragraph('a'), box, paragraph('x'), paragraph('y'), paragraph('b')].map((b) => [b.id, b]),
 );
-const view = { ids: ['a', 'c', 'b'], blocks };
+const parentOf = (id: string) => (['x', 'y'].includes(id) ? { blockId: 'c', slot: 'body' } : null);
+const view = { ids: ['a', 'c', 'b'], blocks, parentOf };
 
 describe('a drag between blocks', () => {
   it.each([

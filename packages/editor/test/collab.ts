@@ -2,6 +2,7 @@ import { load, save } from '../src/core/markdown.ts';
 import { sameJson } from '../src/core/model.ts';
 import { mapIn, plan } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
+import { viewOf } from '../src/core/tree.ts';
 import type { AnyComponent, CollabAdapter, Doc, Op, Parent, RemoteOp } from '../src/core/types.ts';
 import { counter } from './generate.ts';
 
@@ -12,7 +13,7 @@ type Replica = { doc: Doc; readonly positions: Map<string, string>; readonly reg
 export type Room = ReturnType<typeof room>;
 
 function applied(doc: Doc, op: Op, registry: Registry): { doc: Doc; inverse: Op } {
-  const { change, inverse } = plan(doc, op, registry, true);
+  const { change, inverse } = plan(viewOf(doc), op, registry, true);
   const blocks = new Map(doc.blocks);
   for (const id of change.drop) blocks.delete(id);
   for (const block of change.put) blocks.set(block.id, block);

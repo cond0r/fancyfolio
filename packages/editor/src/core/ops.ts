@@ -1,5 +1,6 @@
 import { isCanonicalText, isRaw, isRecord, jsonOf, sameJson } from './model.ts';
 import { builtins, fieldsFor, propsFor } from './registry.ts';
+import { placeOf, relinked, viewOf } from './tree.ts';
 import type {
   Block,
   BlockId,
@@ -186,23 +187,13 @@ function slotsFor(op: Op, component: Registered, slots: Slots | undefined): Slot
   return Object.fromEntries(names.map((name) => [name, []]));
 }
 
-export function placeOf(view: DocView, blockId: BlockId): Place | undefined {
-  if (view.ids.includes(blockId)) return { parent: null, list: view.ids };
-  for (const id of view.ids) {
-    for (const [slot, list] of Object.entries(view.blocks.get(id)?.slots ?? {})) {
-      if (list.includes(blockId)) return { parent: { blockId: id, slot }, list };
-    }
-  }
-  return undefined;
-}
-
 function placed(op: Op, view: DocView, blockId: BlockId): Place {
   return placeOf(view, blockId) ?? refuse(op, 'the block is in no list');
 }
 
 function relisted(
-  view: DocView,
-  { parent }: Place,
+  view: Pick<DocView, 'ids' | 'blocks'>,
+  { parent }: Pick<Place, 'parent'>,
   list: readonly BlockId[],
 ): { put: Block[]; ids?: readonly BlockId[] } {
   if (parent === null) return { put: [], ids: list };
@@ -211,7 +202,7 @@ function relisted(
   return { put: [{ ...owner, slots: { ...owner.slots, [parent.slot]: list } }] };
 }
 
-function listIn(op: Op, view: DocView, parent: Parent): readonly BlockId[] {
+function listIn(op: Op, view: Pick<DocView, 'ids' | 'blocks'>, parent: Parent): readonly BlockId[] {
   if (parent === null) return view.ids;
   const owner = view.blocks.get(parent.blockId);
   if (owner?.slots === undefined || !Object.hasOwn(owner.slots, parent.slot)) {
@@ -275,7 +266,7 @@ function inserting(
   if (parent !== null) fitsSlot(op, component);
   const next = putAt(op, list, op.index, block.id);
   const made: Block = { id: block.id, type: block.type, props, fields, ...(slots && { slots }) };
-  const { put, ids } = relisted(view, { parent, list }, next);
+  const { put, ids } = relisted(view, { parent }, next);
   return {
     change: { put: [made, ...put], ids, drop: [] },
     inverse: { kind: 'removeBlock', blockId: block.id },
@@ -331,8 +322,7 @@ function planned(
       const place = placed(op, view, blockId);
       if (place.parent !== null) fitsSlot(op, target);
       const added: Block = { id: op.newId, type: op.type, props, fields: { [targetField]: tail } };
-      const list = [...place.list];
-      list.splice(list.indexOf(blockId) + 1, 0, op.newId);
+      const list = place.list.toSpliced(place.index + 1, 0, op.newId);
       const { put, ids } = relisted(view, place, list);
       return {
         change: { put: [withField(op, block, field, head), added, ...put], ids, drop: [] },
@@ -342,7 +332,7 @@ function planned(
     case 'mergeBlocks': {
       const text = textIn(op, block, component, soleField(op, component));
       const place = placed(op, view, blockId);
-      const previousId = place.list[place.list.indexOf(blockId) - 1];
+      const previousId = place.list[place.index - 1];
       const previous = previousId === undefined ? undefined : view.blocks.get(previousId);
       if (previous === undefined) refuse(op, 'no block before');
       const before = componentOf(op, registry, previous.type);
@@ -436,7 +426,7 @@ function planned(
           kind: 'insertBlock',
           block,
           parent: place.parent,
-          index: place.list.indexOf(blockId),
+          index: place.index,
         },
       };
     }
@@ -447,13 +437,13 @@ function planned(
         from,
         from.list.filter((id) => id !== blockId),
       );
-      const out: DocView = {
+      const out: Pick<DocView, 'ids' | 'blocks'> = {
         ids: left.ids ?? view.ids,
         blocks: { get: (id) => left.put.find((each) => each.id === id) ?? view.blocks.get(id) },
       };
       const list = listIn(op, out, op.parent);
       if (op.parent !== null) fitsSlot(op, component);
-      const into = relisted(out, { parent: op.parent, list }, putAt(op, list, op.index, blockId));
+      const into = relisted(out, { parent: op.parent }, putAt(op, list, op.index, blockId));
       const owners = new Set(into.put.map((each) => each.id));
       return {
         change: {
@@ -465,7 +455,7 @@ function planned(
           kind: 'moveBlock',
           blockId,
           parent: from.parent,
-          index: from.list.indexOf(blockId),
+          index: from.index,
         },
       };
     }
@@ -512,15 +502,18 @@ export function planAll(
 ): Planned[] {
   if (inputs.length === 0) throw new RangeError('dispatch refused: no ops');
   const blocks = new Map<BlockId, Block | undefined>();
+  const parents = new Map<BlockId, Parent | undefined>();
   let ids = view.ids;
   const working: DocView = {
     get ids() {
       return ids;
     },
     blocks: { get: (id) => (blocks.has(id) ? blocks.get(id) : view.blocks.get(id)) },
+    parentOf: (id) => (parents.has(id) ? parents.get(id) : view.parentOf(id)),
   };
   const planOne = (input: unknown) => {
     const step = plan(working, input, registry, !transformed);
+    for (const [id, parent] of relinked(working, step.change)) parents.set(id, parent);
     for (const id of step.change.drop) blocks.set(id, undefined);
     for (const block of step.change.put) blocks.set(block.id, block);
     ids = step.change.ids ?? ids;
@@ -550,7 +543,7 @@ function textOf(block: Block): string {
 }
 
 export function apply(doc: Doc, op: Op, registry: Registry = builtins): { doc: Doc; inverse: Op } {
-  const { change, inverse } = plan(doc, op, registry);
+  const { change, inverse } = plan(viewOf(doc), op, registry);
   const blocks = new Map(doc.blocks);
   for (const id of change.drop) blocks.delete(id);
   for (const block of change.put) blocks.set(block.id, block);

@@ -12,3 +12,71 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+:where([data-ff-editor]) {
+  position: relative;
+}
+
+:where([data-ff-editor] [data-field]:focus) {
+  outline: none;
+}
+
+:where([data-ff-chrome]) {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  visibility: hidden;
+  opacity: 0;
+  transition-property: opacity, visibility;
+  transition-duration: var(--ff-fade, 120ms);
+}
+
+:where(
+  [data-ff-editor]:is(:hover, :focus-within, :has([data-ff-menu]:popover-open))
+    > [data-ff-chrome][data-ff-target]
+) {
+  visibility: visible;
+  opacity: 1;
+}
+
+@media (hover: none) {
+  :where(
+    [data-ff-editor]:not(:focus-within, :has([data-ff-menu]:popover-open)) > [data-ff-chrome]
+  ) {
+    visibility: hidden;
+    opacity: 0;
+  }
+}
+
+:where([data-ff-handle]) {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+:where([data-ff-menu]) {
+  inset: 0 auto auto 0;
+  margin: 0;
+  transition-property: opacity, display, overlay;
+  transition-duration: var(--ff-fade, 120ms);
+  transition-behavior: allow-discrete;
+}
+
+:where([data-ff-menu]:popover-open) {
+  visibility: visible;
+}
+
+:where([data-ff-menu]:not(:popover-open)) {
+  opacity: 0;
+}
+
+@starting-style {
+  :where([data-ff-menu]:popover-open) {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where([data-ff-chrome], [data-ff-menu]) {
+    transition: none;
+  }
+}

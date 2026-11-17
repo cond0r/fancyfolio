@@ -1,7 +1,7 @@
 'use client';
 
 import '@fancyfolio/editor/chrome.css';
-import type { BlockChrome, OnSave } from '@fancyfolio/editor/types';
+import type { OnSave } from '@fancyfolio/editor/types';
 import dynamic from 'next/dynamic';
 import { useCallback, useRef } from 'react';
 import { Callout } from '../../../components/blocks/callout';
@@ -11,20 +11,20 @@ const Editor = dynamic(
   () =>
     Promise.all([import('@fancyfolio/editor/react'), import('./components')]).then(
       ([{ createReactEditor }, { components }]) =>
-        createReactEditor({ components, views: { callout: Callout, metric: Metric } }),
+        createReactEditor({
+          components,
+          views: { callout: Callout, metric: Metric },
+          insert: [
+            { type: 'paragraph', props: {}, label: 'Text' },
+            { type: 'heading', props: { level: 1 }, label: 'Heading 1' },
+            { type: 'heading', props: { level: 2 }, label: 'Heading 2' },
+            { type: 'heading', props: { level: 3 }, label: 'Heading 3' },
+            { type: 'metric', props: {}, label: 'Metric' },
+            { type: 'callout', props: { tone: 'info' }, label: 'Callout' },
+          ],
+        }),
     ),
   { ssr: false },
-);
-
-export const renderBlockChrome = ({ remove }: BlockChrome) => (
-  <button
-    type="button"
-    onClick={remove}
-    aria-label="Remove block"
-    className="absolute top-0 -left-6 w-6 rounded text-slate-500 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-sky-600"
-  >
-    ×
-  </button>
 );
 
 export function Playground({ body }: { readonly body: string }) {
@@ -38,14 +38,8 @@ export function Playground({ body }: { readonly body: string }) {
   }, []);
   return (
     <>
-      <div className="[&_[data-block-id]]:relative [&_h1]:mb-6 [&_h1]:text-4xl [&_h1]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_p]:my-3 [&_pre]:my-3 [&_pre]:font-mono">
-        <Editor
-          markdown={body}
-          version="1"
-          onSave={onSave}
-          onRender={onRender}
-          renderBlockChrome={renderBlockChrome}
-        />
+      <div className="pl-2 [&_h1]:mb-6 [&_h1]:text-4xl [&_h1]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_p]:my-3 [&_pre]:my-3 [&_pre]:font-mono">
+        <Editor markdown={body} version="1" onSave={onSave} onRender={onRender} />
       </div>
       <output ref={commits} hidden data-testid="commits" />
     </>

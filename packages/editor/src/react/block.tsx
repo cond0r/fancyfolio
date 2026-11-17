@@ -1,8 +1,8 @@
 import { useAtomValue } from 'jotai/react';
-import { memo, useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import type { BlockId, Editor } from '../core/types.ts';
 import { flagSelected } from '../dom/chrome.ts';
-import { bindField, deleteBlock } from '../dom/field.ts';
+import { bindField } from '../dom/field.ts';
 import type { BlockProps, FieldProps } from './types.ts';
 import { Raw } from './views.tsx';
 
@@ -23,6 +23,7 @@ const Field = memo(function Field({ editor, blockId, field, label }: FieldProps)
       role="textbox"
       tabIndex={0}
       aria-label={label}
+      aria-keyshortcuts="Control+/ Meta+/"
       contentEditable
       suppressContentEditableWarning
       data-field={field}
@@ -30,27 +31,14 @@ const Field = memo(function Field({ editor, blockId, field, label }: FieldProps)
   );
 });
 
-export const Block = memo(function Block({
-  id,
-  editor,
-  views,
-  components,
-  onRender,
-  renderBlockChrome,
-}: BlockProps) {
+export const Block = memo(function Block({ id, editor, views, components, onRender }: BlockProps) {
   const block = useAtomValue(atomOf(editor, id), { store: editor.store });
-  const wrapper = useRef<HTMLDivElement | null>(null);
   const flag = useCallback(
     (element: HTMLDivElement | null) => {
-      wrapper.current = element;
       if (element !== null) flagSelected(element, editor);
     },
     [editor],
   );
-  const remove = useCallback(() => {
-    const root = wrapper.current?.closest<HTMLElement>('[data-ff-editor]');
-    if (root !== null && root !== undefined) deleteBlock(root, editor, id);
-  }, [editor, id]);
   useEffect(() => {
     onRender?.(id);
   });
@@ -73,14 +61,12 @@ export const Block = memo(function Block({
           views={views}
           components={components}
           onRender={onRender}
-          renderBlockChrome={undefined}
         />
       )),
     ]),
   );
   return (
     <div ref={flag} data-block-id={id}>
-      {renderBlockChrome?.({ blockId: id, remove })}
       <View props={block.props} fields={fields} slots={slots} />
     </div>
   );

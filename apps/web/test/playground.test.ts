@@ -1,7 +1,7 @@
 import { createEditor } from '@fancyfolio/editor';
 import { createReactEditor } from '@fancyfolio/editor/react';
-import type { Editor } from '@fancyfolio/editor/types';
-import { createElement } from 'react';
+import type { Editor, EditorProps } from '@fancyfolio/editor/types';
+import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { callout, components, metric } from '../app/(app)/playground/components.ts';
@@ -99,6 +99,25 @@ describe('the callout component', () => {
 });
 
 describe('the playground editor', () => {
+  const host = createElement('button', { type: 'button', 'data-host': '' }, 'Comment');
+
+  it.each<[string, EditorProps['renderBlockChrome'], number]>([
+    ['the default chrome once', undefined, 1],
+    [
+      'a host button beside the default chrome',
+      ({ chrome }) => createElement(Fragment, null, chrome, host),
+      1,
+    ],
+    ['only the host button when the host leaves the chrome out', () => host, 0],
+  ])('renders %s for the whole document', (_name, renderBlockChrome, handles) => {
+    const Editor = createReactEditor({ components, views: { callout: Callout, metric: Metric } });
+    const markup = renderToStaticMarkup(
+      createElement(Editor, { markdown: body, renderBlockChrome }),
+    );
+    expect(markup.split('data-ff-handle').length - 1).toBe(handles);
+    expect(markup.split('data-host').length - 1).toBe(renderBlockChrome === undefined ? 0 : 1);
+  });
+
   it('exposes every field as a textbox named by its component label', () => {
     const Editor = createReactEditor({ components, views: { callout: Callout, metric: Metric } });
     const markup = renderToStaticMarkup(createElement(Editor, { markdown: body }));

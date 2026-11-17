@@ -6,6 +6,7 @@ import type {
   BlockOf,
   Editor,
   HeadingProps,
+  Json,
   NoProps,
   Registered,
   Saving,
@@ -30,14 +31,27 @@ export type BuiltinViews = {
   readonly raw?: ComponentType<ViewProps<TypedBlock<NoProps, 'text'>>>;
 };
 
+export type Insertion = { readonly type: string; readonly props: Json; readonly label: string };
+
+type Insertable<B> = B extends { readonly type: infer T; readonly props: infer Props }
+  ? { readonly type: T; readonly props: Props; readonly label: string }
+  : never;
+
+export type Insert<P extends readonly AnyComponent[]> = readonly Insertable<
+  | BlockOf<P>
+  | (TypedBlock<NoProps, 'text'> & { readonly type: 'paragraph' })
+  | (TypedBlock<HeadingProps, 'text'> & { readonly type: 'heading' })
+>[];
+
 export type ReactEditorOptions<P extends readonly AnyComponent[]> = {
   readonly components: P;
   readonly views: Views<P> & BuiltinViews;
+  readonly insert?: Insert<P>;
 };
 
 export type BlockChrome = {
-  readonly blockId: BlockId;
-  remove(): void;
+  readonly chrome: ReactNode;
+  blockId(): BlockId | undefined;
 };
 
 export type RenderBlockChrome = (chrome: BlockChrome) => ReactNode;
@@ -56,7 +70,12 @@ export type BlockProps = {
   readonly views: ViewMap;
   readonly components: ReadonlyMap<string, Registered>;
   readonly onRender: ((blockId: BlockId) => void) | undefined;
-  readonly renderBlockChrome: RenderBlockChrome | undefined;
+};
+
+export type ChromeProps = {
+  readonly editor: Editor;
+  readonly labelOf: (block: Block) => string;
+  readonly render: RenderBlockChrome | undefined;
 };
 
 export type FieldProps = {

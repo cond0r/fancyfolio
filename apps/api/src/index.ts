@@ -3,10 +3,11 @@ import { openAPIRouteHandler } from 'hono-openapi';
 import { health } from './routes/health.ts';
 import { rooms } from './routes/rooms.ts';
 import { sites } from './routes/sites.ts';
-import { type Env, encodedPath, notFound, onError, shell } from './shell.ts';
+import { appHostOnly, type Env, encodedPath, notFound, onError, shell } from './shell.ts';
 
 const app = new Hono<Env>({ getPath: encodedPath })
   .use(shell)
+  .use(appHostOnly)
   .notFound(notFound)
   .onError(onError)
   .basePath('/api')

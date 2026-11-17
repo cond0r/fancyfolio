@@ -28,11 +28,26 @@ test('the landing page is prerendered static', () => {
   expect(routes['/']).toMatchObject({ compute: 'static', response: 'complete' });
 });
 
-test('the landing page ships no client module of its own', () => {
-  const source = readBuildFile('server', 'app', 'page_client-reference-manifest.js');
-  const start = source.indexOf('{', source.indexOf('["/page"]'));
-  const manifest = JSON.parse(source.slice(start, source.lastIndexOf('}') + 1));
-  const modules = Object.keys(manifest.clientModules);
-  expect(modules.length).toBeGreaterThan(0);
-  for (const module of modules) expect(module).toMatch(/\/node_modules\/next\/dist\//);
+test('the site home renders blocking on demand; the build reads no API', () => {
+  const { routes, dynamicRoutes } = JSON.parse(readBuildFile('prerender-manifest.json'));
+  expect(dynamicRoutes['/sites/[site]']).toMatchObject({
+    renderingMode: 'PARTIALLY_STATIC',
+    compute: 'blocking',
+  });
+  expect(Object.keys(routes).filter((route) => route.startsWith('/sites/'))).toEqual(['/sites/_']);
+  expect(JSON.parse(readBuildFile('server', 'app', 'sites', '_.meta')).status).toBe(404);
 });
+
+for (const [dir, page] of [
+  [[], '/page'],
+  [['sites', '[site]'], '/sites/[site]/page'],
+] as const) {
+  test(`${page} ships no client module of its own`, () => {
+    const source = readBuildFile('server', 'app', ...dir, 'page_client-reference-manifest.js');
+    const start = source.indexOf('{', source.indexOf(`["${page}"]`));
+    const manifest = JSON.parse(source.slice(start, source.lastIndexOf('}') + 1));
+    const modules = Object.keys(manifest.clientModules);
+    expect(modules.length).toBeGreaterThan(0);
+    for (const module of modules) expect(module).toMatch(/\/node_modules\/next\/dist\//);
+  });
+}

@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 
-export function parseEnv<TSchema extends v.ObjectSchema<v.ObjectEntries, undefined>>(
+export function parseEnv<TSchema extends v.GenericSchema>(
   schema: TSchema,
   source: Record<string, string | undefined>,
 ): v.InferOutput<TSchema> {

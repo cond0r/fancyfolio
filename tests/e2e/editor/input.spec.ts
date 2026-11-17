@@ -106,8 +106,7 @@ test('a drag across two blocks selects both whole; Backspace removes them in one
   const flagged = page.locator('[data-block-id][data-selected]');
   await expect(flagged).toHaveCount(2);
   await frame(page);
-  const ids = await flagged.evaluateAll((blocks) => blocks.map((block) => block.dataset.blockId));
-  expect((await commits.textContent())?.trim().split(' ').sort()).toEqual(ids.sort());
+  expect(await commits.textContent()).toBe('');
   await page.keyboard.press('Backspace');
   await expect(fields(page)).toHaveCount(body.length - 2);
   await expect(fields(page).nth(1)).toHaveText(body[3] ?? '');

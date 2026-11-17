@@ -1,7 +1,7 @@
 import { useAtomValue } from 'jotai/react';
-import { atom } from 'jotai/vanilla';
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 import type { BlockId, Editor } from '../core/types.ts';
+import { flagSelected } from '../dom/chrome.ts';
 import { bindField, deleteBlock } from '../dom/field.ts';
 import type { BlockProps, FieldProps } from './types.ts';
 import { Raw } from './views.tsx';
@@ -39,18 +39,16 @@ export const Block = memo(function Block({
   renderBlockChrome,
 }: BlockProps) {
   const block = useAtomValue(atomOf(editor, id), { store: editor.store });
-  const flag = useMemo(
-    () =>
-      atom((get) => {
-        const selection = get(editor.selection);
-        return selection.kind === 'blocks' && selection.ids.includes(id);
-      }),
-    [editor, id],
+  const wrapper = useRef<HTMLDivElement | null>(null);
+  const flag = useCallback(
+    (element: HTMLDivElement | null) => {
+      wrapper.current = element;
+      if (element !== null) flagSelected(element, editor);
+    },
+    [editor],
   );
-  const selected = useAtomValue(flag, { store: editor.store });
-  const element = useRef<HTMLDivElement>(null);
   const remove = useCallback(() => {
-    const root = element.current?.closest<HTMLElement>('[data-ff-editor]');
+    const root = wrapper.current?.closest<HTMLElement>('[data-ff-editor]');
     if (root !== null && root !== undefined) deleteBlock(root, editor, id);
   }, [editor, id]);
   useEffect(() => {
@@ -81,8 +79,8 @@ export const Block = memo(function Block({
     ]),
   );
   return (
-    <div ref={element} data-block-id={id} data-selected={selected ? '' : undefined}>
-      {renderBlockChrome?.({ blockId: id, selected, remove })}
+    <div ref={flag} data-block-id={id}>
+      {renderBlockChrome?.({ blockId: id, remove })}
       <View props={block.props} fields={fields} slots={slots} />
     </div>
   );

@@ -6,6 +6,7 @@ import type { heading } from '../core/heading.ts';
 import { registryOf } from '../core/registry.ts';
 import { createEditor } from '../core/store.ts';
 import type { AnyComponent, Editor, SaveState } from '../core/types.ts';
+import { bindSelection } from '../dom/chrome.ts';
 import { bindEditor } from '../dom/field.ts';
 import { Block } from './block.tsx';
 import type { AnyViews, EditorProps, ReactEditorOptions, ViewMap, Views } from './types.ts';
@@ -57,7 +58,15 @@ export function createReactEditor({
       }),
     );
     const ids = useAtomValue(editor.ids, { store: editor.store });
-    const bind = useCallback((root: HTMLDivElement) => bindEditor(root, editor), [editor]);
+    const bind = useCallback(
+      (root: HTMLDivElement) => {
+        const unbind = [bindEditor(root, editor), bindSelection(root, editor)];
+        return () => {
+          for (const run of unbind) run();
+        };
+      },
+      [editor],
+    );
     return (
       <div ref={bind} data-ff-editor="" tabIndex={-1}>
         {ids.map((id) => (
@@ -72,6 +81,7 @@ export function createReactEditor({
           />
         ))}
         <Status editor={editor} />
+        <span data-ff-live="" aria-live="polite" />
       </div>
     );
   };

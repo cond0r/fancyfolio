@@ -6,7 +6,8 @@
     ".": "./src/index.ts",
     "./dialect": "./src/dialect.ts",
     "./types": "./src/types.ts",
-    "./react": "./src/react/editor.tsx"
+    "./react": "./src/react/editor.tsx",
+    "./chrome.css": "./src/chrome.css"
   },
   "scripts": {
     "typecheck": "tsc -p ."

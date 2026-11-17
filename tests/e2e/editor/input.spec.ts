@@ -1,5 +1,4 @@
 import { expect, type Page, test } from '@playwright/test';
-import { body as playground } from '../../../apps/web/app/(app)/playground/fixture.ts';
 import { frame } from '../frame.ts';
 
 const body = [
@@ -138,17 +137,16 @@ test('a keystroke commits exactly one block and the editor sends no request', as
   expect(requests).toEqual([]);
 });
 
-test('the block chrome removes its block and undo brings it back', async ({ page }) => {
+test('the block handle deletes its block and undo brings it back', async ({ page }) => {
   await open(page);
-  const topLevel = playground.trim().split('\n\n').length;
-  await expect(page.getByRole('button', { name: 'Remove block' })).toHaveCount(topLevel);
-  const block = fields(page).nth(1).locator('xpath=ancestor::*[@data-block-id][1]');
-  const remove = block.getByRole('button', { name: 'Remove block' });
+  const handle = page.locator('[data-ff-handle]');
   await caretAt(page, 1, 'End');
-  await remove.focus();
+  await expect(handle).toBeVisible();
+  await handle.focus();
   await page.keyboard.press('Backspace');
   await expect(fields(page)).toHaveText(body);
-  await remove.click();
+  await handle.click();
+  await page.getByRole('menuitem', { name: 'Delete' }).click();
   await expect(fields(page)).toHaveText(body.filter((_text, index) => index !== 1));
   await page.keyboard.press('ControlOrMeta+z');
   await expect(fields(page)).toHaveText(body);

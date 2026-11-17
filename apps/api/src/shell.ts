@@ -1,4 +1,4 @@
-import { type ErrorBody, errorBody } from '@fancyfolio/contracts';
+import { type ErrorBody, errorBody, hostEnv, parseEnv, parseHost } from '@fancyfolio/contracts';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
 import { describeRoute, resolver, validator } from 'hono-openapi';
 import * as v from 'valibot';
@@ -22,6 +22,13 @@ export const shell: MiddlewareHandler<Env> = async (c, next) => {
   c.header('Cache-Control', 'private, no-store');
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Content-Security-Policy', "default-src 'none'");
+};
+
+export const appHostOnly: MiddlewareHandler<Env> = async (c, next) => {
+  const { ROOT_DOMAIN } = parseEnv(hostEnv, process.env);
+  const host = parseHost(c.req.header('x-forwarded-host') ?? new URL(c.req.url).host);
+  if (host?.hostname !== ROOT_DOMAIN && host?.hostname !== 'localhost') return notFound(c);
+  await next();
 };
 
 export function notFound(c: Context<Env>) {

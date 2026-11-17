@@ -64,7 +64,7 @@ function listening(api: ChildProcessByStdio<null, Readable, Readable>): Promise<
 }
 
 function fetchHealth(port: number): Promise<Response> {
-  return fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2_000) });
+  return fetch(`http://localhost:${port}/api/health`, { signal: AbortSignal.timeout(2_000) });
 }
 
 describe('the API server under Node type stripping', () => {

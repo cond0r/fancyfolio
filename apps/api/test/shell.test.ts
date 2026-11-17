@@ -59,6 +59,28 @@ describe('every response', () => {
   });
 });
 
+describe('a request host', () => {
+  it.each([
+    ['http://fancyfolio.test/api/health', undefined, 200],
+    ['http://FancyFolio.TEST.:3200/api/health', undefined, 200],
+    ['http://localhost:3200/api/health', undefined, 200],
+    ['http://127.0.0.1:41000/api/health', 'FancyFolio.TEST.:443', 200],
+    ['http://fancyfolio.test/api/health', 'ines.fancyfolio.test', 404],
+    ['http://fancyfolio.test/api/health', 'fancyfolio.test, localhost', 404],
+    ['http://ines.fancyfolio.test/api/health', undefined, 404],
+    ['http://www.fancyfolio.test/api/health', undefined, 404],
+    ['http://fancyfolio.test.evil.test/api/health', undefined, 404],
+    ['http://ines.localhost:3200/api/health', undefined, 404],
+    ['http://127.0.0.1:3200/api/health', undefined, 404],
+  ])('%s forwarded for %j answers %i', async (url, forwardedHost, status) => {
+    const headers = new Headers();
+    if (forwardedHost !== undefined) headers.set('x-forwarded-host', forwardedHost);
+    const res = await app.request(url, { headers });
+    expect(res.status).toBe(status);
+    expectShellHeaders(res);
+  });
+});
+
 describe('an internal error', () => {
   const secret = 'leaky-param-marker';
   const failing = new Hono<Env>()
@@ -182,6 +204,16 @@ describe('a configuration error', () => {
     expect(JSON.parse(line)).toMatchObject({
       error: 'Error',
       message: 'Invalid environment: DATABASE_URL (missing)',
+    });
+  });
+
+  it('answers 500 and names ROOT_DOMAIN when the API runs without it', async () => {
+    vi.stubEnv('ROOT_DOMAIN', undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await app.request('/api/health');
+    expect(res.status).toBe(500);
+    expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({
+      message: 'Invalid environment: ROOT_DOMAIN (missing)',
     });
   });
 

@@ -37,7 +37,6 @@ export type ReactEditorOptions<P extends readonly AnyComponent[]> = {
 
 export type BlockChrome = {
   readonly blockId: BlockId;
-  readonly selected: boolean;
   remove(): void;
 };
 

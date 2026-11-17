@@ -75,6 +75,18 @@ export function deleteBlock(root: HTMLElement, editor: Editor, blockId: BlockId)
   else store.set(editor.selection, before);
 }
 
+export function editsIn(root: HTMLElement, node: EventTarget | null): boolean {
+  return node === root || (node instanceof Node && fieldOf(node) !== undefined);
+}
+
+export function saveOn(event: KeyboardEvent, editor: Editor): boolean {
+  const mod = (event.metaKey || event.ctrlKey) && !event.altKey;
+  if (!mod || event.key.toLowerCase() !== 's') return false;
+  event.preventDefault();
+  editor.save().catch((error: unknown) => console.error(error));
+  return true;
+}
+
 export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   const { store } = editor;
   const document = root.ownerDocument;
@@ -89,8 +101,7 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     return true;
   };
 
-  const inFieldOrBlockSelection = (node: EventTarget | null) =>
-    node === root || (node instanceof Node && fieldOf(node) !== undefined);
+  const inFieldOrBlockSelection = (node: EventTarget | null) => editsIn(root, node);
 
   const sync = () => {
     if (composing !== undefined || spanning) return;
@@ -163,18 +174,14 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.isComposing || composing !== undefined) return;
+    if (!inFieldOrBlockSelection(event.target)) return;
+    if (saveOn(event, editor)) return;
     const key = event.key.toLowerCase();
     const mod = (event.metaKey || event.ctrlKey) && !event.altKey;
-    if (mod && key === 's') {
-      event.preventDefault();
-      editor.save().catch((error: unknown) => console.error(error));
-      return;
-    }
     if (mod && (key === 'z' || key === 'y')) {
       event.preventDefault();
       return run(key === 'y' || event.shiftKey ? 'redo' : 'undo', {});
     }
-    if (!inFieldOrBlockSelection(event.target)) return;
     const modified = event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
     const deletion = event.key === 'Backspace' ? 'deleteBackward' : 'deleteForward';
     if ((event.key === 'Backspace' || event.key === 'Delete') && !modified) {

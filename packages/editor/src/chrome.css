@@ -1,0 +1,14 @@
+:where([data-ff-editor] [data-block-id][data-selected]) {
+  outline: var(--ff-selected-outline, 2px solid #0284c7);
+  outline-offset: var(--ff-selected-offset, 2px);
+  background: var(--ff-selected-tint, rgb(2 132 199 / 0.08));
+}
+
+:where([data-ff-live]) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

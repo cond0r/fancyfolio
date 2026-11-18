@@ -201,6 +201,7 @@ test('Move down and up restore the order; Move up stops at the top, leaves a cal
   await action(page, 'Move up').click();
   await expect(fields(page)).toHaveText(texts);
   await menuOf(page, 0);
+  await faded(page);
   await expect(action(page, 'Move up')).toHaveAttribute('aria-disabled', 'true');
   await action(page, 'Move up').click({ force: true });
   await expect(action(page, 'Move up')).toBeVisible();

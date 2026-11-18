@@ -48,7 +48,7 @@ export function Playground({ body }: { readonly body: string }) {
   }, []);
   return (
     <>
-      <div className="pl-10 md:pl-2 [&_h1]:mb-6 [&_h1]:text-4xl [&_h1]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_p]:my-3 [&_pre]:my-3 [&_pre]:font-mono">
+      <div className="pl-10 md:pl-2 [&_h1]:mb-6 [&_h1]:text-4xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:font-mono [&_figure]:mt-3 [&_figure_p]:mt-3 [&_aside]:mt-0 [&_aside]:pt-4">
         <Editor markdown={body} version="1" onSave={onSave} onRender={onRender} />
       </div>
       <output ref={commits} hidden data-testid="commits" />

@@ -1,21 +1,7 @@
-import { placeOf } from '../core/tree.ts';
-import type { Block, BlockId, DocView, Editor } from '../core/types.ts';
+import type { BlockId, Editor } from '../core/types.ts';
 import { editsIn, saveOn } from './field.ts';
 import { blockOf, place } from './selection.ts';
-
-export const blockElement = (root: HTMLElement, blockId: BlockId) =>
-  [...root.querySelectorAll<HTMLElement>('[data-block-id]')].find(
-    (block) => block.dataset.blockId === blockId,
-  );
-
-export function positionOf(view: DocView, blockId: BlockId, labelOf: (block: Block) => string) {
-  const block = view.blocks.get(blockId);
-  const at = placeOf(view, blockId);
-  if (block === undefined || at === undefined) return undefined;
-  const owner = at.parent === null ? undefined : view.blocks.get(at.parent.blockId);
-  const where = owner === undefined ? '' : ` in ${labelOf(owner)}`;
-  return { label: labelOf(block), position: `${at.index + 1} of ${at.list.length}${where}` };
-}
+import type { Overlay } from './types.ts';
 
 function stepTo(items: readonly HTMLElement[], at: number, key: string): number | undefined {
   const last = items.length - 1;
@@ -82,15 +68,14 @@ export function choose(item: HTMLElement, run: (root: HTMLElement, blockId: Bloc
 export function bindChrome(
   chrome: HTMLElement,
   editor: Editor,
-  labelOf: (block: Block) => string,
+  overlay: Overlay,
   refresh: (menu: HTMLElement, blockId: BlockId) => void,
 ): () => void {
   const root = chrome.closest<HTMLElement>('[data-ff-editor]');
   if (root === null) throw new Error('the block chrome sits outside an editor');
-  const { store, view } = editor;
+  const { store } = editor;
   const document = root.ownerDocument;
   const handle = chrome.querySelector<HTMLButtonElement>('[data-ff-handle]');
-  const insert = chrome.querySelector<HTMLButtonElement>('[data-ff-insert]');
   const menus = [...chrome.querySelectorAll<HTMLButtonElement>('button[popovertarget]')].flatMap(
     (invoker) => {
       const menu = invoker.popoverTargetElement;
@@ -99,49 +84,26 @@ export function bindChrome(
         : [];
     },
   );
-  let hovered: BlockId | undefined;
   let pinned: BlockId | undefined;
-  let frame = 0;
 
   const focused = () => {
     const selection = store.get(editor.selection);
     return selection.kind === 'text' ? selection.blockId : selection.ids[0];
   };
 
-  const name = (blockId: BlockId) => {
-    const at = positionOf(view, blockId, labelOf);
-    if (at === undefined) return;
-    handle?.setAttribute('aria-label', `${at.label} options, ${at.position}`);
-    insert?.setAttribute('aria-label', `Insert below ${at.label}, ${at.position}`);
-  };
-
-  const show = () => {
-    for (const blockId of pinned === undefined ? [hovered, focused()] : [pinned]) {
-      const block = blockId === undefined ? undefined : blockElement(root, blockId);
-      if (blockId === undefined || block === undefined) continue;
-      const [from, to] = [root.getBoundingClientRect(), block.getBoundingClientRect()];
-      const line = block.querySelector('[data-field]')?.getClientRects()[0];
-      const top = line === undefined ? to.top : line.top + (line.height - chrome.offsetHeight) / 2;
-      chrome.style.translate = `${to.left - from.left}px ${top - from.top}px`;
-      chrome.dataset.ffTarget = blockId;
-      name(blockId);
-      return;
-    }
-    delete chrome.dataset.ffTarget;
+  const pin = (blockId: BlockId | undefined) => {
+    pinned = blockId;
+    overlay.set({ pinned });
+    if (pinned !== undefined) overlay.flush();
   };
 
   const onPointerOver = (event: PointerEvent) => {
     if (!(event.target instanceof Node) || chrome.contains(event.target)) return;
-    const blockId = blockOf(event.target);
-    if (blockId === undefined || blockId === hovered) return;
-    hovered = blockId;
-    show();
+    const hovered = blockOf(event.target);
+    if (hovered !== undefined) overlay.set({ hovered });
   };
 
-  const onPointerLeave = () => {
-    hovered = undefined;
-    show();
-  };
+  const onPointerLeave = () => overlay.set({ hovered: undefined, selected: undefined });
 
   const controller = new AbortController();
   const options = { signal: controller.signal };
@@ -166,8 +128,9 @@ export function bindChrome(
     if (!mod || event.key !== '/' || !editsIn(root, event.target)) return;
     const menu = handle?.popoverTargetElement;
     if (!(menu instanceof HTMLElement)) return;
-    pinned = focused();
-    if (pinned === undefined) return;
+    const blockId = focused();
+    if (blockId === undefined) return;
+    pin(blockId);
     event.preventDefault();
     menu.showPopover();
     focusFirst(menu);
@@ -186,10 +149,8 @@ export function bindChrome(
   for (const { menu } of menus) {
     const onBeforeToggle = (event: ToggleEvent) => {
       if (event.newState !== 'open') return;
-      pinned ??= chrome.dataset.ffTarget;
-      show();
-      const target = chrome.dataset.ffTarget;
-      if (target !== undefined) refresh(menu, target);
+      pin(pinned ?? chrome.dataset.ffTarget);
+      if (pinned !== undefined) refresh(menu, pinned);
       requestAnimationFrame(follow);
     };
 
@@ -199,8 +160,7 @@ export function bindChrome(
         return;
       }
       if (shown() !== undefined) return;
-      pinned = undefined;
-      show();
+      pin(undefined);
       place(root, store.get(editor.selection));
     };
 
@@ -221,16 +181,10 @@ export function bindChrome(
   }
 
   const unsubscribe = store.sub(editor.selection, () => {
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(show);
+    if (root.contains(document.activeElement)) overlay.set({ selected: focused() });
   });
-  const resize = new ResizeObserver(show);
-  resize.observe(root);
-  show();
   return () => {
     controller.abort();
     unsubscribe();
-    resize.disconnect();
-    cancelAnimationFrame(frame);
   };
 }

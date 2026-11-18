@@ -6,7 +6,6 @@ import type { Drop, Overlay, Press } from './types.ts';
 
 const travel = 5;
 const hold = 150;
-const slide = { duration: 180, easing: 'ease-out' };
 const unique = [
   'id',
   'data-block-id',
@@ -23,8 +22,9 @@ export function bindDrag(
   overlay: Overlay,
 ): () => void {
   const root = chrome.closest<HTMLElement>('[data-ff-editor]');
+  const layer = chrome.closest<HTMLElement>('[data-ff-overlay]');
   const handle = chrome.querySelector<HTMLElement>('[data-ff-handle]');
-  if (root === null || handle === null) return () => {};
+  if (root === null || layer === null || handle === null) return () => {};
   const { store, view } = editor;
   const document = root.ownerDocument;
   const live = root.querySelector(':scope > [data-ff-live]');
@@ -32,54 +32,66 @@ export function bindDrag(
   let dragged = false;
   let frame = 0;
 
-  const offsetOf = (box: DOMRect) => {
-    const from = root.getBoundingClientRect();
-    return { x: box.left - from.left, y: box.top - from.top };
-  };
-
   const ghostOf = (block: HTMLElement) => {
     const ghost = block.cloneNode(true) as HTMLElement;
     for (const node of [ghost, ...ghost.querySelectorAll('*')]) {
       for (const name of unique) node.removeAttribute(name);
     }
     const box = block.getBoundingClientRect();
-    const at = offsetOf(box);
     ghost.setAttribute('data-ff-ghost', '');
     ghost.setAttribute('aria-hidden', 'true');
     ghost.inert = true;
     Object.assign(ghost.style, {
-      left: `${at.x}px`,
-      top: `${at.y}px`,
+      left: `${box.left}px`,
+      top: `${box.top}px`,
       width: `${box.width}px`,
+      height: `${box.height}px`,
       margin: '0',
     });
-    root.append(ghost);
+    layer.append(ghost);
     return ghost;
   };
 
-  const targetAt = (hit: Element, blockId: BlockId) => {
-    let block: HTMLElement | null | undefined = hit.closest<HTMLElement>('[data-block-id]');
+  const nearest = (owner: HTMLElement, blockId: BlockId, y: number) => {
+    let found: { id: BlockId; block: HTMLElement } | undefined;
+    let gap = Number.POSITIVE_INFINITY;
+    for (const block of owner.querySelectorAll<HTMLElement>('[data-block-id]')) {
+      const id = block.dataset.blockId;
+      const parent = block.parentElement?.closest('[data-block-id]') ?? root;
+      if (id === undefined || id === blockId || parent !== owner) continue;
+      const box = block.getBoundingClientRect();
+      const distance = Math.max(box.top - y, y - box.bottom, 0);
+      if (distance < gap) [found, gap] = [{ id, block }, distance];
+    }
+    return found;
+  };
+
+  const targetAt = (hit: Element, blockId: BlockId, y: number) => {
+    const own = hit.closest<HTMLElement>('[data-block-id]');
+    if (own === null) return hit === root ? nearest(root, blockId, y) : undefined;
+    let block: HTMLElement | null | undefined = own;
     while (block) {
       const id = block.dataset.blockId;
-      if (id !== undefined && pathOf(view, id)?.includes(blockId) === false) return { id, block };
+      if (id !== undefined && pathOf(view, id)?.includes(blockId) === false) {
+        const inPadding = block === own && hit !== own;
+        return (inPadding ? nearest(own, blockId, y) : undefined) ?? { id, block };
+      }
       block = block.parentElement?.closest<HTMLElement>('[data-block-id]');
     }
     return undefined;
   };
 
   const aim = (current: Press, x: number, y: number) => {
-    const hit = document.elementFromPoint(x, y);
-    const inside = hit !== null && root.contains(hit);
-    const target = inside ? targetAt(hit, current.blockId) : undefined;
-    if (inside && target === undefined) return;
-    const box = target?.block.getBoundingClientRect();
-    const side = box !== undefined && y >= box.top + box.height / 2 ? 'after' : 'before';
-    const key = target === undefined ? undefined : `${target.id} ${side}`;
+    const hit = document.elementsFromPoint(x, y).find((each) => !layer.contains(each));
+    const target = hit && root.contains(hit) ? targetAt(hit, current.blockId, y) : undefined;
+    if (target === undefined) return;
+    const box = target.block.getBoundingClientRect();
+    const side = y >= box.top + box.height / 2 ? 'after' : 'before';
+    const key = `${target.id} ${side}`;
     if (key === current.aim) return;
     current.aim = key;
-    const drop: Drop | undefined =
-      target === undefined ? undefined : { blockId: current.blockId, target: target.id, side };
-    current.drop = drop !== undefined && editor.can('moveBlockTo', drop) ? drop : undefined;
+    const drop: Drop = { blockId: current.blockId, target: target.id, side };
+    current.drop = editor.can('moveBlockTo', drop) ? drop : undefined;
     overlay.set({ aim: current.drop && { blockId: current.drop.target, side } });
   };
 
@@ -89,19 +101,9 @@ export function bindDrag(
     press = undefined;
     overlay.set({ source: undefined, aim: undefined });
     current.block?.removeAttribute('data-dragging');
-    const from = current.ghost?.getBoundingClientRect();
     current.ghost?.remove();
     dragged = current.started;
-    return { drop: current.drop, from };
-  };
-
-  const settle = (blockId: BlockId, from: DOMRect | undefined) => {
-    const block = blockElement(root, blockId);
-    const still = document.defaultView?.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (block === undefined || from === undefined || still !== false) return;
-    const to = block.getBoundingClientRect();
-    const shift = `translate(${from.left - to.left}px, ${from.top - to.top}px)`;
-    block.animate([{ transform: shift }, { transform: 'none' }], slide);
+    return current.drop;
   };
 
   const onPointerDown = (event: PointerEvent) => {
@@ -145,7 +147,7 @@ export function bindDrag(
 
   const onPointerUp = (event: PointerEvent) => {
     if (press?.pointerId !== event.pointerId) return;
-    const { drop, from } = end() ?? {};
+    const drop = end();
     if (drop === undefined || !editor.command('moveBlockTo', drop)) return;
     place(root, store.get(editor.selection));
     const at = positionOf(view, drop.blockId, labelOf);
@@ -154,7 +156,6 @@ export function bindDrag(
     // bindSelection rewrites the live region in the frame after a selection change.
     frame = requestAnimationFrame(() => {
       if (live !== null) live.textContent = text;
-      settle(drop.blockId, from);
     });
   };
 

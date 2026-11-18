@@ -66,7 +66,7 @@ export const Block = memo(function Block({ id, editor, views, components, onRend
     ]),
   );
   return (
-    <div ref={flag} data-block-id={id}>
+    <div ref={flag} data-block-id={id} data-block-type={block.type}>
       <View props={block.props} fields={fields} slots={slots} />
     </div>
   );

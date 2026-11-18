@@ -52,7 +52,8 @@ export function bindSelection(root: HTMLElement, editor: Editor): () => void {
 
 export function placeMenu(menu: HTMLElement, anchor: DOMRect): void {
   const { clientWidth, clientHeight } = menu.ownerDocument.documentElement;
-  const { width, height } = menu.getBoundingClientRect();
+  // Offset sizes ignore the scale a menu opens from.
+  const { offsetWidth: width, offsetHeight: height } = menu;
   const x = Math.max(0, Math.min(anchor.left, clientWidth - width));
   const y =
     anchor.bottom + height <= clientHeight ? anchor.bottom : Math.max(0, anchor.top - height);
@@ -60,6 +61,7 @@ export function placeMenu(menu: HTMLElement, anchor: DOMRect): void {
 }
 
 export function choose(item: HTMLElement, run: (root: HTMLElement, blockId: BlockId) => void) {
+  if (item.getAttribute('aria-disabled') === 'true') return;
   const chrome = item.closest<HTMLElement>('[data-ff-chrome]');
   const root = chrome?.closest<HTMLElement>('[data-ff-editor]');
   const blockId = chrome?.dataset.ffTarget;
@@ -72,13 +74,22 @@ export function bindChrome(
   chrome: HTMLElement,
   editor: Editor,
   labelOf: (block: Block) => string,
+  refresh: (menu: HTMLElement, blockId: BlockId) => void,
 ): () => void {
   const root = chrome.closest<HTMLElement>('[data-ff-editor]');
   if (root === null) throw new Error('the block chrome sits outside an editor');
   const { store, view } = editor;
   const document = root.ownerDocument;
   const handle = chrome.querySelector<HTMLButtonElement>('[data-ff-handle]');
-  const menu = chrome.querySelector<HTMLElement>('[data-ff-menu]');
+  const insert = chrome.querySelector<HTMLButtonElement>('[data-ff-insert]');
+  const menus = [...chrome.querySelectorAll<HTMLButtonElement>('button[popovertarget]')].flatMap(
+    (invoker) => {
+      const menu = invoker.popoverTargetElement;
+      return menu instanceof HTMLElement && menu.matches('[data-ff-menu]')
+        ? [{ invoker, menu }]
+        : [];
+    },
+  );
   let hovered: BlockId | undefined;
   let pinned: BlockId | undefined;
   let frame = 0;
@@ -88,13 +99,15 @@ export function bindChrome(
     return selection.kind === 'text' ? selection.blockId : selection.ids[0];
   };
 
-  const nameOf = (blockId: BlockId) => {
+  const name = (blockId: BlockId) => {
     const block = view.blocks.get(blockId);
     const at = placeOf(view, blockId);
-    if (block === undefined || at === undefined) return 'Block options';
+    if (block === undefined || at === undefined) return;
     const owner = at.parent === null ? undefined : view.blocks.get(at.parent.blockId);
     const where = owner === undefined ? '' : ` in ${labelOf(owner)}`;
-    return `${labelOf(block)} options, ${at.index + 1} of ${at.list.length}${where}`;
+    const position = `${at.index + 1} of ${at.list.length}${where}`;
+    handle?.setAttribute('aria-label', `${labelOf(block)} options, ${position}`);
+    insert?.setAttribute('aria-label', `Insert below ${labelOf(block)}, ${position}`);
   };
 
   const show = () => {
@@ -102,9 +115,11 @@ export function bindChrome(
       const block = blockId === undefined ? undefined : blockElement(root, blockId);
       if (blockId === undefined || block === undefined) continue;
       const [from, to] = [root.getBoundingClientRect(), block.getBoundingClientRect()];
-      chrome.style.translate = `${to.left - from.left}px ${to.top - from.top}px`;
+      const line = block.querySelector('[data-field]')?.getClientRects()[0];
+      const top = line === undefined ? to.top : line.top + (line.height - chrome.offsetHeight) / 2;
+      chrome.style.translate = `${to.left - from.left}px ${top - from.top}px`;
       chrome.dataset.ffTarget = blockId;
-      handle?.setAttribute('aria-label', nameOf(blockId));
+      name(blockId);
       return;
     }
     delete chrome.dataset.ffTarget;
@@ -129,46 +144,59 @@ export function bindChrome(
   root.addEventListener('pointerleave', onPointerLeave, options);
   chrome.addEventListener('keydown', (event) => saveOn(event, editor), options);
 
-  if (handle !== null && menu !== null) {
-    const focusFirst = () => {
-      if (!menu.contains(document.activeElement))
-        menu.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
-    };
+  const shown = () => menus.find(({ menu }) => menu.matches(':popover-open'));
 
-    const follow = () => {
-      if (menu.matches(':popover-open')) placeMenu(menu, handle.getBoundingClientRect());
-    };
+  const follow = () => {
+    const open = shown();
+    if (open !== undefined) placeMenu(open.menu, open.invoker.getBoundingClientRect());
+  };
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      const mod = (event.metaKey || event.ctrlKey) && !event.altKey;
-      if (!mod || event.key !== '/' || !editsIn(root, event.target)) return;
-      pinned = focused();
-      if (pinned === undefined) return;
-      event.preventDefault();
-      menu.showPopover();
-      focusFirst();
-    };
+  const focusFirst = (menu: HTMLElement) => {
+    if (!menu.contains(document.activeElement))
+      menu.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
+  };
 
+  const onKeyDown = (event: KeyboardEvent) => {
+    const mod = (event.metaKey || event.ctrlKey) && !event.altKey;
+    if (!mod || event.key !== '/' || !editsIn(root, event.target)) return;
+    const menu = handle?.popoverTargetElement;
+    if (!(menu instanceof HTMLElement)) return;
+    pinned = focused();
+    if (pinned === undefined) return;
+    event.preventDefault();
+    menu.showPopover();
+    focusFirst(menu);
+  };
+
+  const onOutsidePress = (event: PointerEvent) => {
+    const outside = event.target instanceof Node && !chrome.contains(event.target);
+    if (outside && shown() !== undefined) event.preventDefault();
+  };
+
+  root.addEventListener('keydown', onKeyDown, options);
+  document.addEventListener('pointerdown', onOutsidePress, { ...options, capture: true });
+  document.addEventListener('scroll', follow, { ...options, capture: true, passive: true });
+  document.defaultView?.addEventListener('resize', follow, options);
+
+  for (const { menu } of menus) {
     const onBeforeToggle = (event: ToggleEvent) => {
       if (event.newState !== 'open') return;
       pinned ??= chrome.dataset.ffTarget;
       show();
+      const target = chrome.dataset.ffTarget;
+      if (target !== undefined) refresh(menu, target);
       requestAnimationFrame(follow);
     };
 
     const onToggle = (event: ToggleEvent) => {
       if (event.newState === 'open') {
-        focusFirst();
+        focusFirst(menu);
         return;
       }
+      if (shown() !== undefined) return;
       pinned = undefined;
       show();
       place(root, store.get(editor.selection));
-    };
-
-    const onOutsidePress = (event: PointerEvent) => {
-      const outside = event.target instanceof Node && !chrome.contains(event.target);
-      if (outside && menu.matches(':popover-open')) event.preventDefault();
     };
 
     const onMenuKeyDown = (event: KeyboardEvent) => {
@@ -182,13 +210,9 @@ export function bindChrome(
       else items[to]?.focus();
     };
 
-    root.addEventListener('keydown', onKeyDown, options);
     menu.addEventListener('beforetoggle', onBeforeToggle, options);
     menu.addEventListener('toggle', onToggle, options);
     menu.addEventListener('keydown', onMenuKeyDown, options);
-    document.addEventListener('pointerdown', onOutsidePress, { ...options, capture: true });
-    document.addEventListener('scroll', follow, { ...options, capture: true, passive: true });
-    document.defaultView?.addEventListener('resize', follow, options);
   }
 
   const unsubscribe = store.sub(editor.selection, () => {

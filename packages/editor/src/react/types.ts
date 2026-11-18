@@ -31,10 +31,15 @@ export type BuiltinViews = {
   readonly raw?: ComponentType<ViewProps<TypedBlock<NoProps, 'text'>>>;
 };
 
-export type Insertion = { readonly type: string; readonly props: Json; readonly label: string };
+export type Insertion = {
+  readonly type: string;
+  readonly props: Json;
+  readonly label: string;
+  readonly iconPath?: string;
+};
 
 type Insertable<B> = B extends { readonly type: infer T; readonly props: infer Props }
-  ? { readonly type: T; readonly props: Props; readonly label: string }
+  ? { readonly type: T; readonly props: Props; readonly label: string; readonly iconPath?: string }
   : never;
 
 export type Insert<P extends readonly AnyComponent[]> = readonly Insertable<
@@ -74,8 +79,21 @@ export type BlockProps = {
 
 export type ChromeProps = {
   readonly editor: Editor;
-  readonly labelOf: (block: Block) => string;
+  readonly insert: readonly Insertion[];
   readonly render: RenderBlockChrome | undefined;
+};
+
+export type Look = {
+  readonly label: string;
+  readonly iconPath: string;
+  readonly kind?: Insertion;
+  readonly hint?: string;
+  readonly danger?: true;
+};
+
+export type Entry = Look & {
+  can(blockId: BlockId): boolean;
+  run(root: HTMLElement, blockId: BlockId): void;
 };
 
 export type FieldProps = {

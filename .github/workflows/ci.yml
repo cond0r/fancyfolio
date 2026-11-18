@@ -47,6 +47,10 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --user 1001
     env:
       NEXT_TELEMETRY_DISABLED: 1
     steps:
@@ -61,7 +65,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps --only-shell chromium firefox webkit
       - run: pnpm build
       - run: pnpm e2e
 

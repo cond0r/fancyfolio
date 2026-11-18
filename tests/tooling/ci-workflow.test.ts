@@ -6,6 +6,7 @@ const workflow = readFileSync(
   join(import.meta.dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
   'utf8',
 );
+const lockfile = readFileSync(join(import.meta.dirname, '..', '..', 'pnpm-lock.yaml'), 'utf8');
 const checkStart = workflow.indexOf('\n  check:\n');
 const e2eStart = workflow.indexOf('\n  e2e:\n');
 const bunStart = workflow.indexOf('\n  bun:\n');
@@ -70,15 +71,21 @@ describe('the CI workflow', () => {
     }
   });
 
-  it('builds the web and runs the smoke spec on Chromium with dummy env and no secrets', () => {
+  it('runs e2e in the Playwright image of the locked version, pinned by digest', () => {
+    const locked = lockfile.match(/^ {2}'@playwright\/test@([\d.]+)':$/m)?.[1];
+    expect(locked).toBeDefined();
+    expect(e2eJob).toMatch(
+      new RegExp(
+        `\\n {4}container:\\n {6}image: mcr\\.microsoft\\.com/playwright:v${locked?.replaceAll('.', '\\.')}-noble@sha256:[0-9a-f]{64}\\n {6}options: --user 1001\\n`,
+      ),
+    );
+    expect(e2eJob).not.toContain('playwright install');
+  });
+
+  it('builds the web and runs the e2e specs with dummy env and no secrets', () => {
     expect(e2eStart).toBeGreaterThan(checkStart);
     expect(e2eJob).toContain('    env:\n      NEXT_TELEMETRY_DISABLED: 1\n    steps:\n');
-    for (const step of [
-      'pnpm install --frozen-lockfile',
-      'pnpm exec playwright install --with-deps --only-shell chromium firefox webkit',
-      'pnpm build',
-      'pnpm e2e',
-    ]) {
+    for (const step of ['pnpm install --frozen-lockfile', 'pnpm build', 'pnpm e2e']) {
       expect(e2eJob).toContain(`- run: ${step}\n`);
     }
     expect(e2eJob.indexOf('- run: pnpm build\n')).toBeLessThan(e2eJob.indexOf('- run: pnpm e2e\n'));

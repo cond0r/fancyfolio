@@ -142,10 +142,11 @@
 }
 
 :where([data-ff-ghost]) {
-  position: absolute;
+  position: fixed;
+  box-sizing: border-box;
   border-radius: 4px;
   background: var(--ff-surface);
-  opacity: var(--ff-ghost, 0.6);
+  opacity: var(--ff-ghost, 0.4);
   box-shadow:
     0 0 0 6px var(--ff-surface),
     var(--ff-shadow);
@@ -162,7 +163,7 @@
   background: var(--ff-accent);
   pointer-events: none;
   transition-property: transform, width;
-  transition-duration: var(--ff-glide, 150ms);
+  transition-duration: var(--ff-glide, 100ms);
   transition-timing-function: ease-out;
 }
 

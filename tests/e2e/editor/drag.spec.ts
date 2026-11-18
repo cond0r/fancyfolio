@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { frame } from '../frame.ts';
 
 const fields = (page: Page) => page.locator('[data-ff-editor] [data-field]');
 const handle = (page: Page) => page.locator('[data-ff-handle]');
@@ -21,8 +22,10 @@ async function grab(page: Page, block: Locator, position?: { x: number; y: numbe
   await block.hover({ position });
   const box = await handle(page).boundingBox();
   if (box === null) throw new Error('the handle has no box');
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const press = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(press.x, press.y);
   await page.mouse.down();
+  return press;
 }
 
 async function aim(page: Page, over: Locator, side: 'before' | 'after') {
@@ -161,3 +164,187 @@ test('a pointercancel mid-drag hides the still line and moves nothing', async ({
   await page.mouse.up();
   await expect(fields(page)).toHaveText(texts);
 });
+
+async function boxOf(locator: Locator) {
+  const box = await locator.boundingBox();
+  if (box === null) throw new Error('the element has no box');
+  return box;
+}
+
+const spans = (page: Page, block: Locator) =>
+  expect
+    .poll(async () => {
+      const [drop, box] = await Promise.all([boxOf(line(page)), boxOf(block)]);
+      return Math.max(Math.abs(drop.x - box.x), Math.abs(drop.width - box.width));
+    })
+    .toBeLessThanOrEqual(1);
+
+for (const width of [1280, 390]) {
+  test.describe(`at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test('the line shows in place, glides 100 ms, and a drop lands at once', async ({ page }) => {
+      await open(page);
+      const shown = await line(page).evaluateHandle((node) => {
+        const animated: number[] = [];
+        let hidden = true;
+        const tick = () =>
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              const now = node.hasAttribute('hidden');
+              if (hidden && !now) animated.push(node.getAnimations().length);
+              hidden = now;
+            });
+            tick();
+          });
+        tick();
+        return animated;
+      });
+      for (const [from, over, to] of [
+        [1, 3, 3],
+        [4, 0, 1],
+      ] as const) {
+        const text = await fields(page).nth(from).textContent();
+        const id = await field(page, from).getAttribute('data-block-id');
+        await grab(page, field(page, from));
+        await aim(page, field(page, over), 'before');
+        await expect(line(page)).toBeVisible();
+        const run = await line(page).evaluateHandle((node) => ({
+          duration: new Promise<string>((resolve) => {
+            const read = () => resolve(getComputedStyle(node).transitionDuration);
+            node.addEventListener('transitionrun', read, { once: true });
+          }),
+        }));
+        await aim(page, field(page, over), 'after');
+        expect(await run.evaluate(({ duration }) => duration)).toBe('0.1s');
+        const drop = await page.evaluateHandle((id) => {
+          const next = new Promise((resolve) => {
+            const read = () => {
+              const block = document.querySelector(`[data-block-id="${id}"]`);
+              resolve({
+                ghosts: document.querySelectorAll('[data-ff-ghost]').length,
+                animations: block?.getAnimations().length,
+                top: block?.getBoundingClientRect().top,
+              });
+            };
+            const up = () => requestAnimationFrame(() => setTimeout(read));
+            addEventListener('pointerup', up, { capture: true, once: true });
+          });
+          return { next };
+        }, id);
+        await page.mouse.up();
+        const seen = await drop.evaluate(({ next }) => next);
+        await expect(fields(page).nth(to)).toHaveText(text ?? '');
+        const settled = await boxOf(page.locator(`[data-block-id="${id}"]`));
+        expect(seen).toEqual({ ghosts: 0, animations: 0, top: expect.closeTo(settled.y, 1) });
+        await frame(page);
+        expect([...new Set(await shown.evaluate((animated) => animated.splice(0)))]).toEqual([0]);
+      }
+    });
+
+    test('the ghost follows the pointer at 0.4 under the line; Escape cancels', async ({
+      page,
+    }) => {
+      await open(page);
+      const texts = await fields(page).allTextContents();
+      const callout = blockOf(callouts(page).first());
+      for (const [source, over, at] of [
+        [field(page, 1), field(page, 2), undefined],
+        [field(page, 0), field(page, 1), undefined],
+        [field(page, 5), callout, undefined],
+        [callout, field(page, 4), { x: 8, y: 2 }],
+      ] as const) {
+        const press = await grab(page, source, at);
+        await aim(page, over, 'after');
+        await expect(line(page)).toBeVisible();
+        const travel = (await boxOf(over)).x + 10 - press.x;
+        const seen = await page.evaluate(async () => {
+          const [copy, dimmed, drop] = ['[data-ff-ghost]', '[data-dragging]', '[data-ff-drop]'].map(
+            (selector) => document.querySelector<HTMLElement>(selector),
+          );
+          if (!copy || !dimmed || !drop) throw new Error('no drag in progress');
+          await Promise.all(drop.getAnimations().map((each) => each.finished));
+          const lineTop = (block: HTMLElement) => {
+            const text = document
+              .createTreeWalker(block, NodeFilter.SHOW_TEXT, (node) =>
+                node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
+              )
+              .nextNode();
+            const range = document.createRange();
+            range.selectNodeContents(text ?? block);
+            const top = range.getClientRects()[0]?.top ?? Number.NaN;
+            return top - block.getBoundingClientRect().top;
+          };
+          const mid = drop.getBoundingClientRect();
+          const hit = (on: boolean) => {
+            copy.inert = !on;
+            for (const each of [copy, drop]) each.style.pointerEvents = on ? 'auto' : '';
+          };
+          hit(true);
+          const stack = document.elementsFromPoint(mid.x + mid.width / 2, mid.y + mid.height / 2);
+          hit(false);
+          const { scrollWidth, clientWidth } = document.documentElement;
+          return {
+            travel: copy.getBoundingClientRect().left - dimmed.getBoundingClientRect().left,
+            lineTop: lineTop(copy) - lineTop(dimmed),
+            overflow: scrollWidth - clientWidth,
+            opacity: getComputedStyle(copy).opacity,
+            lineOver: stack[0] === drop && copy.contains(stack[1] ?? null),
+          };
+        });
+        expect(seen).toEqual({
+          travel: expect.closeTo(travel, 0),
+          lineTop: expect.closeTo(0, 0),
+          overflow: 0,
+          opacity: '0.4',
+          lineOver: true,
+        });
+        await page.keyboard.press('Escape');
+        await page.mouse.up();
+        await expect(ghost(page)).toHaveCount(0);
+        await expect(line(page)).toBeHidden();
+        await expect(fields(page)).toHaveText(texts);
+      }
+    });
+
+    test('a drop past the blocks, in a padding or outside lands at the aim', async ({ page }) => {
+      await open(page);
+      await page.locator('[data-ff-editor]').evaluate((root) => {
+        root.style.paddingBlock = '60px';
+      });
+      const texts = await fields(page).allTextContents();
+      const callout = blockOf(callouts(page).first());
+      const press = await grab(page, blockOf(calloutFields(page, 0)));
+      await page.mouse.move(press.x, press.y + 6);
+      await spans(page, callout);
+      await page.keyboard.press('Escape');
+      await page.mouse.up();
+      const aside = await boxOf(callouts(page).first());
+      await grab(page, field(page, 1));
+      await page.mouse.move(aside.x + 8, aside.y + aside.height - 2, { steps: 5 });
+      await spans(page, blockOf(calloutFields(page, 0)));
+      await page.mouse.up();
+      await expect(calloutFields(page, 0)).toHaveText([texts[7] ?? '', texts[1] ?? '']);
+      const box = await boxOf(callout);
+      await grab(page, field(page, 1));
+      await page.mouse.move(box.x + 8, box.y + box.height - 6, { steps: 5 });
+      await spans(page, callout);
+      await page.mouse.move(box.x + 8, box.y + box.height + 40, { steps: 5 });
+      await spans(page, callout);
+      await page.mouse.up();
+      await expect(fields(page).last()).toHaveText(texts[2] ?? '');
+      const first = await boxOf(field(page, 0));
+      await grab(page, field(page, 1));
+      await page.mouse.move(first.x + 10, first.y - 40, { steps: 5 });
+      await spans(page, field(page, 0));
+      await page.mouse.up();
+      await expect(fields(page).first()).toHaveText(texts[3] ?? '');
+      await grab(page, field(page, 2));
+      const y = await aim(page, field(page, 0), 'before');
+      await page.mouse.move(width - 2, y, { steps: 5 });
+      await spans(page, field(page, 0));
+      await page.mouse.up();
+      await expect(fields(page).first()).toHaveText(texts[4] ?? '');
+    });
+  });
+}

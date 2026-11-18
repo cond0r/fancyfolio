@@ -1,12 +1,21 @@
 import { placeOf } from '../core/tree.ts';
-import type { Block, BlockId, Editor } from '../core/types.ts';
+import type { Block, BlockId, DocView, Editor } from '../core/types.ts';
 import { editsIn, saveOn } from './field.ts';
 import { blockOf, place } from './selection.ts';
 
-const blockElement = (root: HTMLElement, blockId: BlockId) =>
+export const blockElement = (root: HTMLElement, blockId: BlockId) =>
   [...root.querySelectorAll<HTMLElement>('[data-block-id]')].find(
     (block) => block.dataset.blockId === blockId,
   );
+
+export function positionOf(view: DocView, blockId: BlockId, labelOf: (block: Block) => string) {
+  const block = view.blocks.get(blockId);
+  const at = placeOf(view, blockId);
+  if (block === undefined || at === undefined) return undefined;
+  const owner = at.parent === null ? undefined : view.blocks.get(at.parent.blockId);
+  const where = owner === undefined ? '' : ` in ${labelOf(owner)}`;
+  return { label: labelOf(block), position: `${at.index + 1} of ${at.list.length}${where}` };
+}
 
 function stepTo(items: readonly HTMLElement[], at: number, key: string): number | undefined {
   const last = items.length - 1;
@@ -100,14 +109,10 @@ export function bindChrome(
   };
 
   const name = (blockId: BlockId) => {
-    const block = view.blocks.get(blockId);
-    const at = placeOf(view, blockId);
-    if (block === undefined || at === undefined) return;
-    const owner = at.parent === null ? undefined : view.blocks.get(at.parent.blockId);
-    const where = owner === undefined ? '' : ` in ${labelOf(owner)}`;
-    const position = `${at.index + 1} of ${at.list.length}${where}`;
-    handle?.setAttribute('aria-label', `${labelOf(block)} options, ${position}`);
-    insert?.setAttribute('aria-label', `Insert below ${labelOf(block)}, ${position}`);
+    const at = positionOf(view, blockId, labelOf);
+    if (at === undefined) return;
+    handle?.setAttribute('aria-label', `${at.label} options, ${at.position}`);
+    insert?.setAttribute('aria-label', `Insert below ${at.label}, ${at.position}`);
   };
 
   const show = () => {

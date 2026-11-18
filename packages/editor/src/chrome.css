@@ -110,6 +110,66 @@
   min-height: 24px;
 }
 
+:where([data-ff-handle]) {
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:where([data-ff-editor]:has([data-dragging]), [data-ff-editor]:has([data-dragging]) *) {
+  cursor: grabbing;
+}
+
+:where([data-ff-editor] [data-block-id][data-dragging]) {
+  opacity: var(--ff-dragging, 0.4);
+}
+
+:where([data-ff-ghost]) {
+  position: absolute;
+  border-radius: 4px;
+  background: var(--ff-surface);
+  opacity: var(--ff-ghost, 0.6);
+  box-shadow:
+    0 0 0 6px var(--ff-surface),
+    var(--ff-shadow);
+  pointer-events: none;
+}
+
+:where([data-ff-drop]) {
+  position: absolute;
+  top: -1.5px;
+  left: 0;
+  height: 3px;
+  border-radius: 1.5px;
+  z-index: 1;
+  background: var(--ff-accent);
+  pointer-events: none;
+  transition-property: transform, width;
+  transition-duration: var(--ff-glide, 150ms);
+  transition-timing-function: ease-out;
+}
+
+:where([data-ff-drop])::before,
+:where([data-ff-drop])::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: inherit;
+}
+
+:where([data-ff-drop])::before {
+  left: -3.5px;
+}
+
+:where([data-ff-drop])::after {
+  right: -3.5px;
+}
+
 :where([data-ff-menu]) {
   inset: 0 auto auto 0;
   margin: 0;
@@ -239,7 +299,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :where([data-ff-chrome], [data-ff-menu]) {
+  :where([data-ff-chrome], [data-ff-menu], [data-ff-drop]) {
     transition: none;
   }
 }

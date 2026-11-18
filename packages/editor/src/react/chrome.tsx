@@ -2,6 +2,7 @@ import { type MouseEvent, memo, useCallback, useId, useMemo, useRef } from 'reac
 import { childrenOf, placeOf } from '../core/tree.ts';
 import type { Block, BlockId, Commands, Editor } from '../core/types.ts';
 import { bindChrome, choose } from '../dom/chrome.ts';
+import { bindDrag } from '../dom/drag.ts';
 import { deleteBlock } from '../dom/field.ts';
 import { place } from '../dom/selection.ts';
 import { Icon, iconOf, iconPaths } from './icons.tsx';
@@ -151,9 +152,14 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
   const bind = useCallback(
     (chrome: HTMLDivElement) => {
       element.current = chrome;
-      return bindChrome(chrome, editor, labelsOf(insert), (menu, blockId) =>
-        refresh(editor, menu, blockId),
-      );
+      const labelOf = labelsOf(insert);
+      const unbind = [
+        bindChrome(chrome, editor, labelOf, (menu, blockId) => refresh(editor, menu, blockId)),
+        bindDrag(chrome, editor, labelOf),
+      ];
+      return () => {
+        for (const run of unbind) run();
+      };
     },
     [editor, insert],
   );
@@ -178,7 +184,11 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
         popoverTarget={menu}
         tabIndex={-1}
       >
-        <span aria-hidden="true">⋮⋮</span>
+        <svg aria-hidden="true" viewBox="0 0 10 16" width="10" height="16" fill="currentColor">
+          {[3, 8, 13].flatMap((y) =>
+            [2, 8].map((x) => <circle key={`${x} ${y}`} cx={x} cy={y} r="1.5" />),
+          )}
+        </svg>
       </button>
       <div id={menu} popover="auto" role="menu" data-ff-menu="">
         <fieldset>
@@ -199,8 +209,11 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
     </>
   );
   return (
-    <div ref={bind} data-ff-chrome="">
-      {render === undefined ? chrome : render({ chrome, blockId })}
-    </div>
+    <>
+      <div ref={bind} data-ff-chrome="">
+        {render === undefined ? chrome : render({ chrome, blockId })}
+      </div>
+      <div data-ff-drop="" hidden />
+    </>
   );
 });

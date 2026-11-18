@@ -57,7 +57,11 @@ export function bindField(field: HTMLElement, editor: Editor, blockId: BlockId, 
   const block = editor.blocks.get(blockId);
   if (block === undefined) throw new Error(`block ${blockId} has no atom`);
   field.style.whiteSpace = 'pre-wrap';
-  const show = () => renderText(field, editor.store.get(block).fields[name] ?? '');
+  const show = () => {
+    const text = editor.store.get(block).fields[name] ?? '';
+    renderText(field, text);
+    field.toggleAttribute('data-empty', text === '');
+  };
   show();
   const root = field.closest<HTMLElement>('[data-ff-editor]');
   const selection = editor.store.get(editor.selection);

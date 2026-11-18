@@ -5,7 +5,7 @@ import {
   metricProps,
 } from '@fancyfolio/contracts/blocks';
 import { containerDirective, leafDirective, placeOf } from '@fancyfolio/editor';
-import type { Block, BlockId, Component, DocView, Op } from '@fancyfolio/editor/types';
+import type { Block, BlockId, Component, DocView } from '@fancyfolio/editor/types';
 
 function emptyParagraph(id: BlockId): Block {
   return { id, type: 'paragraph', props: {}, fields: { text: '' } };
@@ -77,17 +77,6 @@ export const callout: Component<'callout', CalloutProps, never, 'body'> = {
         selection: { kind: 'text', blockId: id, field: 'text', from: 0, to: 0 },
       };
     },
-  },
-  transform(op, after) {
-    if (op.kind !== 'removeBlock') return [];
-    return after.ids.flatMap((id): Op[] => {
-      const block = after.blocks.get(id);
-      if (block?.type !== 'callout' || block.slots?.body?.length !== 0) return [];
-      const refill = emptyParagraph(crypto.randomUUID());
-      return [
-        { kind: 'insertBlock', block: refill, parent: { blockId: id, slot: 'body' }, index: 0 },
-      ];
-    });
   },
 };
 

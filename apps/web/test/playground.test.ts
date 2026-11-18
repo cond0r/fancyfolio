@@ -76,26 +76,6 @@ describe('the callout component', () => {
   ])('leaves Enter in %s to the lower handlers', (_name, doc, blockId) => {
     expect(breakAt(doc, blockId)).toBeUndefined();
   });
-
-  it('refills a slot that a removal empties with one empty paragraph', () => {
-    const [follow, ...rest] =
-      callout.transform?.({ kind: 'removeBlock', blockId: 'a' }, docOf([])) ?? [];
-    expect(rest).toEqual([]);
-    expect(follow).toEqual({
-      kind: 'insertBlock',
-      block: paragraph(follow?.kind === 'insertBlock' ? follow.block.id : ''),
-      parent: { blockId: 'c', slot: 'body' },
-      index: 0,
-    });
-    expect(follow?.kind === 'insertBlock' && follow.block.id).toMatch(/^[0-9a-f-]{36}$/);
-  });
-
-  it.each([
-    ['a removal that leaves a child', { kind: 'removeBlock', blockId: 'b' } as const, docOf(['a'])],
-    ['an op that is no removal', { kind: 'mergeBlocks', blockId: 'b' } as const, docOf([])],
-  ])('adds nothing after %s', (_name, op, after) => {
-    expect(callout.transform?.(op, after)).toEqual([]);
-  });
 });
 
 describe('the playground editor', () => {
@@ -145,7 +125,9 @@ describe('the playground editor', () => {
       },
     });
     const markup = renderToStaticMarkup(createElement(Editor, { markdown: 'Text\n' }));
-    expect(markup).toMatch(/^<div[^>]*><div data-block-id="[^"]+"><p class="lead"><span /);
+    expect(markup).toMatch(
+      /^<div[^>]*><div data-block-id="[^"]+" data-block-type="paragraph"><p class="lead"><span /,
+    );
   });
 });
 

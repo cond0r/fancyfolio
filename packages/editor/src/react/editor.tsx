@@ -5,7 +5,7 @@ import { type ComponentType, useCallback, useState } from 'react';
 import type { heading } from '../core/heading.ts';
 import { registryOf } from '../core/registry.ts';
 import { createEditor } from '../core/store.ts';
-import type { AnyComponent, Block as BlockData, Editor, SaveState } from '../core/types.ts';
+import type { AnyComponent, Editor, SaveState } from '../core/types.ts';
 import { bindSelection } from '../dom/chrome.ts';
 import { bindEditor } from '../dom/field.ts';
 import { Block } from './block.tsx';
@@ -52,14 +52,6 @@ const texts: Insert<readonly []> = [
   { type: 'heading', props: { level: 3 }, label: 'Heading 3' },
 ];
 
-const labelsOf = (insert: readonly Insertion[]) => (block: BlockData) => {
-  const same = insert.filter((item) => item.type === block.type);
-  const props = JSON.stringify(block.props);
-  return (
-    (same.find((item) => JSON.stringify(item.props) === props) ?? same[0])?.label ?? block.type
-  );
-};
-
 export function createReactEditor<const P extends readonly AnyComponent[]>(
   options: ReactEditorOptions<P>,
 ): ComponentType<EditorProps>;
@@ -74,7 +66,6 @@ export function createReactEditor({
 }): ComponentType<EditorProps> {
   const all: ViewMap = new Map(Object.entries({ ...builtins, ...views }));
   const registered = registryOf(components).components;
-  const labelOf = labelsOf(insert);
   return function ReactEditor({ markdown, onRender, renderBlockChrome, ...saving }: EditorProps) {
     const [editor] = useState(() =>
       createEditor(markdown, {
@@ -106,7 +97,7 @@ export function createReactEditor({
             onRender={onRender}
           />
         ))}
-        <Chrome editor={editor} labelOf={labelOf} render={renderBlockChrome} />
+        <Chrome editor={editor} insert={insert} render={renderBlockChrome} />
         <Status editor={editor} />
         <span data-ff-live="" aria-live="polite" />
       </div>

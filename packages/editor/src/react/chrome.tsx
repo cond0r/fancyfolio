@@ -4,6 +4,7 @@ import type { Block, BlockId, Commands, Editor } from '../core/types.ts';
 import { bindChrome, choose } from '../dom/chrome.ts';
 import { bindDrag } from '../dom/drag.ts';
 import { deleteBlock } from '../dom/field.ts';
+import { bindOverlay } from '../dom/overlay.ts';
 import { place } from '../dom/selection.ts';
 import { Icon, iconOf, iconPaths } from './icons.tsx';
 import type { ChromeProps, Entry, Insertion, Look } from './types.ts';
@@ -150,12 +151,14 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
   const [menu, inserting] = [useId(), useId()];
   const { kinds, actions, inserts } = useMemo(() => entriesOf(editor, insert), [editor, insert]);
   const bind = useCallback(
-    (chrome: HTMLDivElement) => {
-      element.current = chrome;
+    (layer: HTMLDivElement) => {
       const labelOf = labelsOf(insert);
+      const overlay = bindOverlay(layer, editor, labelOf);
+      const { chrome } = overlay;
       const unbind = [
-        bindChrome(chrome, editor, labelOf, (menu, blockId) => refresh(editor, menu, blockId)),
-        bindDrag(chrome, editor, labelOf),
+        bindChrome(chrome, editor, overlay, (menu, blockId) => refresh(editor, menu, blockId)),
+        bindDrag(chrome, editor, labelOf, overlay),
+        overlay.unbind,
       ];
       return () => {
         for (const run of unbind) run();
@@ -209,11 +212,11 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
     </>
   );
   return (
-    <>
-      <div ref={bind} data-ff-chrome="">
+    <div ref={bind} data-ff-overlay="">
+      <div ref={element} data-ff-chrome="">
         {render === undefined ? chrome : render({ chrome, blockId })}
       </div>
       <div data-ff-drop="" hidden />
-    </>
+    </div>
   );
 });

@@ -10,6 +10,7 @@
   --ff-radius: 8px;
   --ff-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.12);
   --ff-fade: 120ms;
+  --ff-gutter: 54px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -46,6 +47,30 @@
   position: relative;
 }
 
+:where([data-ff-editor] [data-block-id]) {
+  display: flow-root;
+  position: relative;
+}
+
+:where([data-ff-editor] [data-block-id])::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  right: 100%;
+  width: var(--ff-gutter);
+}
+
+:where([data-ff-editor] [data-block-id] [data-block-id])::before {
+  width: var(--ff-inset, 16px);
+}
+
+:where([data-ff-overlay]) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
 :where([data-ff-editor] [data-field]:focus) {
   outline: none;
 }
@@ -72,26 +97,16 @@
   top: 0;
   right: 100%;
   padding-inline-end: 4px;
-  visibility: hidden;
-  opacity: 0;
-  transition-property: opacity, visibility;
-  transition-duration: var(--ff-fade, 120ms);
+  pointer-events: auto;
 }
 
-:where(
-  [data-ff-editor]:is(:hover, :focus-within, :has([data-ff-menu]:popover-open))
-    > [data-ff-chrome][data-ff-target]
-) {
-  visibility: visible;
-  opacity: 1;
+:where([data-ff-chrome]:not([data-ff-target])) {
+  visibility: hidden;
 }
 
 @media (hover: none) {
-  :where(
-    [data-ff-editor]:not(:focus-within, :has([data-ff-menu]:popover-open)) > [data-ff-chrome]
-  ) {
+  :where([data-ff-editor]:not(:focus-within, :has([data-ff-menu]:popover-open)) [data-ff-chrome]) {
     visibility: hidden;
-    opacity: 0;
   }
 }
 
@@ -299,7 +314,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :where([data-ff-chrome], [data-ff-menu], [data-ff-drop]) {
+  :where([data-ff-menu], [data-ff-drop]) {
     transition: none;
   }
 }

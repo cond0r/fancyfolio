@@ -1,8 +1,8 @@
 import { pathOf } from '../core/tree.ts';
 import type { Block, BlockId, Editor } from '../core/types.ts';
-import { blockElement, positionOf } from './chrome.ts';
+import { blockElement, positionOf } from './overlay.ts';
 import { place } from './selection.ts';
-import type { Drop, Press } from './types.ts';
+import type { Drop, Overlay, Press } from './types.ts';
 
 const travel = 5;
 const hold = 150;
@@ -20,11 +20,11 @@ export function bindDrag(
   chrome: HTMLElement,
   editor: Editor,
   labelOf: (block: Block) => string,
+  overlay: Overlay,
 ): () => void {
   const root = chrome.closest<HTMLElement>('[data-ff-editor]');
   const handle = chrome.querySelector<HTMLElement>('[data-ff-handle]');
-  const line = root?.querySelector<HTMLElement>(':scope > [data-ff-drop]');
-  if (root === null || handle === null || line === null || line === undefined) return () => {};
+  if (root === null || handle === null) return () => {};
   const { store, view } = editor;
   const document = root.ownerDocument;
   const live = root.querySelector(':scope > [data-ff-live]');
@@ -80,19 +80,14 @@ export function bindDrag(
     const drop: Drop | undefined =
       target === undefined ? undefined : { blockId: current.blockId, target: target.id, side };
     current.drop = drop !== undefined && editor.can('moveBlockTo', drop) ? drop : undefined;
-    line.hidden = current.drop === undefined;
-    if (box === undefined || current.drop === undefined) return;
-    const at = offsetOf(box);
-    const edge = side === 'before' ? at.y : at.y + box.height;
-    line.style.transform = `translate(${at.x}px, ${edge}px)`;
-    line.style.width = `${box.width}px`;
+    overlay.set({ aim: current.drop && { blockId: current.drop.target, side } });
   };
 
   const end = () => {
     const current = press;
     if (current === undefined) return undefined;
     press = undefined;
-    line.hidden = true;
+    overlay.set({ source: undefined, aim: undefined });
     current.block?.removeAttribute('data-dragging');
     const from = current.ghost?.getBoundingClientRect();
     current.ghost?.remove();
@@ -140,6 +135,7 @@ export function bindDrag(
       current.block = blockElement(root, current.blockId);
       current.ghost = current.block && ghostOf(current.block);
       current.block?.setAttribute('data-dragging', '');
+      overlay.set({ source: current.blockId });
     }
     const ghost = current.ghost?.style;
     if (ghost)

@@ -319,6 +319,7 @@ test.describe('on a 375 px touch screen', () => {
     };
     const offset = await gap();
     const top = (await handle(page).boundingBox())?.y;
+    await page.mouse.move(5, 5);
     await page.evaluate(() => {
       document.body.style.paddingBottom = '100vh';
       window.scrollBy(0, 40);

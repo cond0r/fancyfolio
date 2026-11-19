@@ -177,7 +177,7 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.isComposing || composing !== undefined) return;
+    if (event.defaultPrevented || event.isComposing || composing !== undefined) return;
     if (!inFieldOrBlockSelection(event.target)) return;
     if (saveOn(event, editor)) return;
     const key = event.key.toLowerCase();

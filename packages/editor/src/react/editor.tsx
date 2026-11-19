@@ -10,6 +10,7 @@ import { bindSelection } from '../dom/chrome.ts';
 import { bindEditor } from '../dom/field.ts';
 import { Block } from './block.tsx';
 import { Chrome } from './chrome.tsx';
+import { Slash } from './slash.tsx';
 import type {
   AnyViews,
   EditorProps,
@@ -100,6 +101,7 @@ export function createReactEditor({
         <Chrome editor={editor} insert={insert} render={renderBlockChrome} />
         <Status editor={editor} />
         <span data-ff-live="" aria-live="polite" />
+        <Slash editor={editor} insert={insert} />
       </div>
     );
   };

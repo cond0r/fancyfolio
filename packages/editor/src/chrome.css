@@ -34,7 +34,7 @@
   background: color-mix(in srgb, var(--ff-accent) 8%, transparent);
 }
 
-:where([data-ff-live]) {
+:where([data-ff-live], [data-ff-announce]) {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -217,7 +217,7 @@
   scale: 0.96;
 }
 
-:where([data-ff-menu] [role^="menuitem"]) {
+:where([data-ff-menu] :is([role^="menuitem"], [role="option"])) {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -234,8 +234,15 @@
   cursor: pointer;
 }
 
-:where([data-ff-menu] [role^="menuitem"]:is(:hover, :focus)) {
+:where(
+  [data-ff-menu]
+    :is([role^="menuitem"]:is(:hover, :focus), [role="option"]:is(:hover, [aria-selected="true"]))
+) {
   background: var(--ff-hover);
+}
+
+:where([data-ff-menu] [role="option"][hidden]) {
+  display: none;
 }
 
 :where([data-ff-menu] [role^="menuitem"]:focus) {

@@ -96,6 +96,15 @@ export type Entry = Look & {
   run(root: HTMLElement, blockId: BlockId): void;
 };
 
+export type Open = {
+  readonly blockId: BlockId;
+  readonly field: HTMLElement;
+  readonly allowed: readonly number[];
+  text: string;
+  shown: readonly number[];
+  active: number;
+};
+
 export type FieldProps = {
   readonly editor: Editor;
   readonly blockId: BlockId;

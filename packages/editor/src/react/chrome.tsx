@@ -29,7 +29,7 @@ function caretInFill(editor: Editor, blockId: BlockId) {
   store.set(editor.selection, { kind: 'text', blockId: block.id, field, from: 0, to: 0 });
 }
 
-function entry<C extends Exclude<keyof Commands, 'undo' | 'redo'>>(
+export function entry<C extends Exclude<keyof Commands, 'undo' | 'redo'>>(
   editor: Editor,
   look: Look,
   name: C,

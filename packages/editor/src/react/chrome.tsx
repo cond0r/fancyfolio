@@ -11,6 +11,12 @@ import type { ChromeProps, Entry, Insertion, Look } from './types.ts';
 
 const entries = new WeakMap<Element, Entry>();
 
+const dots = (xs: readonly number[], ys: readonly number[]) => (
+  <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+    {ys.flatMap((y) => xs.map((x) => <circle key={`${x} ${y}`} cx={x} cy={y} r="1.5" />))}
+  </svg>
+);
+
 const sameKind = (item: Insertion, block: Block) =>
   item.type === block.type && JSON.stringify(item.props) === JSON.stringify(block.props);
 
@@ -171,6 +177,16 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
     <>
       <button
         type="button"
+        data-ff-handle=""
+        aria-haspopup="menu"
+        aria-label="Block options"
+        popoverTarget={menu}
+        tabIndex={-1}
+      >
+        <Icon path={iconPaths.cog} />
+      </button>
+      <button
+        type="button"
         data-ff-insert=""
         aria-haspopup="menu"
         aria-label="Insert below"
@@ -179,20 +195,9 @@ export const Chrome = memo(function Chrome({ editor, insert, render }: ChromePro
       >
         <Icon path={iconPaths.plus} />
       </button>
-      <button
-        type="button"
-        data-ff-handle=""
-        aria-haspopup="menu"
-        aria-label="Block options"
-        popoverTarget={menu}
-        tabIndex={-1}
-      >
-        <svg aria-hidden="true" viewBox="0 0 10 16" width="10" height="16" fill="currentColor">
-          {[3, 8, 13].flatMap((y) =>
-            [2, 8].map((x) => <circle key={`${x} ${y}`} cx={x} cy={y} r="1.5" />),
-          )}
-        </svg>
-      </button>
+      <div data-ff-grip="" aria-hidden="true">
+        {dots([5, 11], [3, 8, 13])}
+      </div>
       <div id={menu} popover="auto" role="menu" data-ff-menu="">
         <fieldset>
           <legend>Turn into</legend>

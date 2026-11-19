@@ -3,28 +3,18 @@
   --ff-text: #171717;
   --ff-border: #e5e5e5;
   --ff-muted: #737373;
+  --ff-chrome-icon: #a3a3a3;
+  --ff-chrome-icon-hover: #404040;
+  --ff-chrome-fill: #fff;
+  --ff-chrome-fill-hover: #e5e5e5;
+  --ff-chrome-fill-pressed: #d4d4d4;
   --ff-hover: rgb(0 0 0 / 0.05);
-  --ff-pressed: rgb(0 0 0 / 0.1);
   --ff-accent: #0284c7;
   --ff-danger: #dc2626;
   --ff-radius: 8px;
   --ff-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.12);
   --ff-fade: 120ms;
-  --ff-gutter: 54px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :where([data-ff-editor]) {
-    --ff-surface: #1f1f1f;
-    --ff-text: #f5f5f5;
-    --ff-border: #383838;
-    --ff-muted: #a3a3a3;
-    --ff-hover: rgb(255 255 255 / 0.08);
-    --ff-pressed: rgb(255 255 255 / 0.14);
-    --ff-accent: #38bdf8;
-    --ff-danger: #f87171;
-    --ff-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.5);
-  }
+  --ff-gutter: 80px;
 }
 
 :where([data-ff-editor] [data-block-id][data-selected]) {
@@ -110,7 +100,7 @@
   }
 }
 
-:where([data-ff-handle], [data-ff-insert]) {
+:where([data-ff-handle], [data-ff-insert], [data-ff-grip]) {
   display: grid;
   place-items: center;
   box-sizing: border-box;
@@ -119,13 +109,13 @@
   border: 0;
   border-radius: 4px;
   padding: 0;
-  background: none;
-  color: var(--ff-muted);
+  background: var(--ff-chrome-fill);
+  color: var(--ff-chrome-icon);
   min-width: 24px;
   min-height: 24px;
 }
 
-:where([data-ff-handle]) {
+:where([data-ff-grip]) {
   cursor: grab;
   touch-action: none;
   -webkit-user-select: none;
@@ -144,12 +134,8 @@
 :where([data-ff-ghost]) {
   position: fixed;
   box-sizing: border-box;
-  border-radius: 4px;
   background: var(--ff-surface);
   opacity: var(--ff-ghost, 0.4);
-  box-shadow:
-    0 0 0 6px var(--ff-surface),
-    var(--ff-shadow);
   pointer-events: none;
 }
 
@@ -300,13 +286,13 @@
   color: var(--ff-accent);
 }
 
-:where([data-ff-handle]:hover, [data-ff-insert]:hover) {
-  background: var(--ff-hover);
-  color: var(--ff-text);
+:where([data-ff-handle]:hover, [data-ff-insert]:hover, [data-ff-grip]:hover) {
+  background: var(--ff-chrome-fill-hover);
+  color: var(--ff-chrome-icon-hover);
 }
 
-:where([data-ff-handle]:active, [data-ff-insert]:active) {
-  background: var(--ff-pressed);
+:where([data-ff-handle]:active, [data-ff-insert]:active, [data-ff-grip]:active) {
+  background: var(--ff-chrome-fill-pressed);
 }
 
 :where([data-ff-handle]:focus-visible, [data-ff-insert]:focus-visible) {

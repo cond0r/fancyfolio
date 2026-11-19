@@ -103,30 +103,42 @@ for (const width of [1280, 390]) {
       expect(await translate(page)).toBe(start);
     });
 
-    test('a child keeps its chrome up to "+"; left of a border is the callout', async ({
+    test('a child keeps its chrome, left of the border in one column; left of it is the callout', async ({
       page,
     }) => {
       await open(page);
       const read = await sampler(page, chrome);
+      const columns: number[] = [];
       for (const index of [1, 7]) {
         const line = await lineOf(page, index);
         await page.mouse.move(line.x, line.y);
         await frame(page);
         const start = await translate(page);
         await read();
-        const plus = await boxOf(page.locator('[data-ff-insert]'));
-        await glide(page, line, { x: plus.x + plus.width / 2, y: line.y });
+        const [cog, plus, grip] = await Promise.all(
+          [handle(page), page.locator('[data-ff-insert]'), page.locator('[data-ff-grip]')].map(
+            boxOf,
+          ),
+        );
+        expect([cog.x < plus.x, plus.x < grip.x]).toEqual([true, true]);
+        await glide(page, line, { x: cog.x + cog.width / 2, y: line.y });
         expect(shown(await read(), start)).toEqual([start]);
+        columns.push((await boxOf(page.locator(chrome))).x);
       }
       const aside = await boxOf(page.locator('[data-ff-editor] aside'));
       const child = await lineOf(page, 7);
       await page.mouse.move(aside.x + 8, child.y);
       await expect(handle(page)).toHaveAccessibleName('Text options, 1 of 1 in Callout');
       const inner = await boxOf(handle(page));
+      const nested = await boxOf(page.locator(chrome));
+      expect(nested.x + nested.width).toBeLessThanOrEqual(aside.x);
       await page.mouse.move(2, child.y);
       await page.mouse.move(aside.x - 10, child.y);
       await expect(handle(page)).toHaveAccessibleName('Callout options, 7 of 7');
       const outer = await boxOf(handle(page));
+      columns.push(nested.x, (await boxOf(page.locator(chrome))).x);
+      expect(Math.max(...columns) - Math.min(...columns)).toBeLessThan(1);
+      expect(Math.min(...columns)).toBeGreaterThanOrEqual(0);
       expect(Math.abs(outer.y - aside.y)).toBeLessThan(1);
       expect(inner.y - outer.y).toBeGreaterThan(2);
     });

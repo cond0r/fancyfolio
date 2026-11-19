@@ -2,7 +2,7 @@ import { expect, type Locator, type Page, test } from '@playwright/test';
 import { frame } from '../frame.ts';
 
 const fields = (page: Page) => page.locator('[data-ff-editor] [data-field]');
-const handle = (page: Page) => page.locator('[data-ff-handle]');
+const handle = (page: Page) => page.locator('[data-ff-grip]');
 const line = (page: Page) => page.locator('[data-ff-drop]');
 const dragging = (page: Page) => page.locator('[data-dragging]');
 const ghost = (page: Page) => page.locator('[data-ff-ghost]');
@@ -134,18 +134,15 @@ test('a callout over another callout body shows no line and moves nothing', asyn
   await expect(callouts(page)).toHaveCount(2);
 });
 
-test('a handle click opens the menu; after a drag it stays shut', async ({ page }) => {
+test('a grip click opens nothing; the dots button opens the menu', async ({ page }) => {
   await open(page);
-  const texts = await fields(page).allTextContents();
   const remove = page.getByRole('menuitem', { name: 'Delete', exact: true });
   await field(page, 1).hover();
   await handle(page).click();
+  await frame(page);
+  await expect(remove).toBeHidden();
+  await page.locator('[data-ff-handle]').click();
   await expect(remove).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(remove).toBeHidden();
-  await drag(page, field(page, 1), field(page, 2), 'after');
-  await expect(fields(page).nth(2)).toHaveText(texts[1] ?? '');
-  await expect(remove).toBeHidden();
 });
 
 test('a pointercancel mid-drag hides the still line and moves nothing', async ({ page }) => {
@@ -169,6 +166,21 @@ async function boxOf(locator: Locator) {
   const box = await locator.boundingBox();
   if (box === null) throw new Error('the element has no box');
   return box;
+}
+
+async function differing(shots: readonly string[]) {
+  const [a = [], b = []] = await Promise.all(
+    shots.map(async (shot) => {
+      const bytes = Uint8Array.from(atob(shot), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes]));
+      const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+      context?.drawImage(bitmap, 0, 0);
+      return [...(context?.getImageData(0, 0, bitmap.width, bitmap.height).data ?? [])];
+    }),
+  );
+  if (a.length !== b.length) return 1;
+  const off = a.filter((value, at) => at % 4 < 3 && Math.abs(value - (b[at] ?? 0)) > 4);
+  return off.length / (a.length * 0.75);
 }
 
 const spans = (page: Page, block: Locator) =>
@@ -305,6 +317,39 @@ for (const width of [1280, 390]) {
         await expect(line(page)).toBeHidden();
         await expect(fields(page)).toHaveText(texts);
       }
+    });
+
+    test('the ghost is drawn like its block, and a drag renders nothing', async ({ page }) => {
+      await open(page);
+      const commits = page.getByTestId('commits');
+      await commits.evaluate((output) => output.replaceChildren());
+      const shot = async (locator: Locator) =>
+        (await page.screenshot({ clip: await boxOf(locator) })).toString('base64');
+      for (const source of [
+        field(page, 1),
+        field(page, 0),
+        field(page, 5),
+        blockOf(calloutFields(page, 0)),
+      ]) {
+        // Chromium may draw LCD text on one and not the other; a filter turns it off on both.
+        await source.evaluate((node) => node.style.setProperty('filter', 'opacity(0.99)'));
+        const block = await shot(source);
+        await source.evaluate((node) => node.style.removeProperty('filter'));
+        const press = await grab(page, source);
+        await page.mouse.move(press.x, press.y + 12);
+        await expect(ghost(page)).toHaveCount(1);
+        await page.evaluate(() => {
+          const copy = document.querySelector<HTMLElement>('[data-ff-ghost]')?.style;
+          copy?.setProperty('opacity', '1');
+          copy?.setProperty('filter', 'opacity(0.99)');
+          document.querySelector<HTMLElement>('[data-ff-drop]')?.setAttribute('hidden', '');
+        });
+        expect(await page.evaluate(differing, [block, await shot(ghost(page))])).toBeLessThan(0.01);
+        await page.keyboard.press('Escape');
+        await page.mouse.up();
+      }
+      await frame(page);
+      expect(await commits.textContent()).toBe('');
     });
 
     test('a drop past the blocks, in a padding or outside lands at the aim', async ({ page }) => {

@@ -23,20 +23,39 @@ export function bindDrag(
 ): () => void {
   const root = chrome.closest<HTMLElement>('[data-ff-editor]');
   const layer = chrome.closest<HTMLElement>('[data-ff-overlay]');
-  const handle = chrome.querySelector<HTMLElement>('[data-ff-handle]');
+  const handle = chrome.querySelector<HTMLElement>('[data-ff-grip]');
   if (root === null || layer === null || handle === null) return () => {};
   const { store, view } = editor;
   const document = root.ownerDocument;
   const live = root.querySelector(':scope > [data-ff-live]');
   let press: Press | undefined;
-  let dragged = false;
   let frame = 0;
 
-  const ghostOf = (block: HTMLElement) => {
-    const ghost = block.cloneNode(true) as HTMLElement;
-    for (const node of [ghost, ...ghost.querySelectorAll('*')]) {
+  const copyOf = (block: HTMLElement) => {
+    const copy = block.cloneNode(true) as HTMLElement;
+    const sources = [block, ...block.querySelectorAll<HTMLElement | SVGElement>('*')];
+    const copies = [copy, ...copy.querySelectorAll<HTMLElement | SVGElement>('*')];
+    sources.forEach((source, index) => {
+      const node = copies[index];
+      if (node === undefined) return;
+      const style = getComputedStyle(source);
+      for (const name of style) node.style.setProperty(name, style.getPropertyValue(name));
       for (const name of unique) node.removeAttribute(name);
+    });
+    copy.style.margin = '0';
+    return copy;
+  };
+
+  const backdropOf = (block: HTMLElement) => {
+    for (let node = block.parentElement; node !== null; node = node.parentElement) {
+      const color = getComputedStyle(node).backgroundColor;
+      if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
     }
+    return '';
+  };
+
+  const ghostOf = (block: HTMLElement) => {
+    const ghost = document.createElement('div');
     const box = block.getBoundingClientRect();
     ghost.setAttribute('data-ff-ghost', '');
     ghost.setAttribute('aria-hidden', 'true');
@@ -46,8 +65,9 @@ export function bindDrag(
       top: `${box.top}px`,
       width: `${box.width}px`,
       height: `${box.height}px`,
-      margin: '0',
+      backgroundColor: backdropOf(block),
     });
+    ghost.append(copyOf(block));
     layer.append(ghost);
     return ghost;
   };
@@ -102,14 +122,12 @@ export function bindDrag(
     overlay.set({ source: undefined, aim: undefined });
     current.block?.removeAttribute('data-dragging');
     current.ghost?.remove();
-    dragged = current.started;
     return current.drop;
   };
 
   const onPointerDown = (event: PointerEvent) => {
     const blockId = chrome.dataset.ffTarget;
     if (event.button !== 0 || blockId === undefined || press !== undefined) return;
-    dragged = false;
     handle.setPointerCapture(event.pointerId);
     press = {
       pointerId: event.pointerId,
@@ -165,13 +183,6 @@ export function bindDrag(
     end();
   };
 
-  const onClick = (event: MouseEvent) => {
-    if (!dragged) return;
-    dragged = false;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  };
-
   const controller = new AbortController();
   const options = { signal: controller.signal };
   handle.addEventListener('pointerdown', onPointerDown, options);
@@ -179,7 +190,6 @@ export function bindDrag(
   handle.addEventListener('pointerup', onPointerUp, options);
   handle.addEventListener('pointercancel', end, options);
   handle.addEventListener('lostpointercapture', end, options);
-  handle.addEventListener('click', onClick, { ...options, capture: true });
   document.addEventListener('keydown', onKeyDown, { ...options, capture: true });
   return () => {
     controller.abort();

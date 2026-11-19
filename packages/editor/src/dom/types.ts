@@ -35,4 +35,5 @@ export type Box = {
   readonly width: number;
   readonly height: number;
   readonly handle: number;
+  readonly column: number;
 };

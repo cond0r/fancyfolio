@@ -287,6 +287,34 @@ for (const viewport of [
   });
 }
 
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`under an OS in ${colorScheme} the buttons sit on light fills; hover shows a darker fill`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme });
+    await open(page);
+    await blockAt(page, 2).hover();
+    const grip = page.locator('[data-ff-grip]');
+    const colorOf = (locator: Locator) =>
+      locator.evaluate((element) => getComputedStyle(element).color);
+    const fillOf = (locator: Locator) =>
+      locator.evaluate((element) => getComputedStyle(element).backgroundColor);
+    const lightness = (color: string) =>
+      (color.match(/\d+/g) ?? []).slice(0, 3).reduce((sum, value) => sum + Number(value), 0);
+    const solid = /^rgb\(/;
+    for (const button of [plus(page), handle(page), grip]) {
+      await expect(button).toHaveCSS('background-color', solid);
+      expect(lightness(await fillOf(button))).toBeGreaterThan(600);
+    }
+    const rest = await colorOf(grip);
+    const restFill = await fillOf(grip);
+    expect(rest).toBe(await colorOf(plus(page)));
+    await grip.hover();
+    expect(lightness(await colorOf(grip))).toBeLessThan(lightness(rest));
+    expect(lightness(await fillOf(grip))).toBeLessThan(lightness(restFill) - 30);
+  });
+}
+
 test.describe('on a 375 px touch screen', () => {
   test.use({ viewport: { width: 375, height: 640 }, hasTouch: true });
 

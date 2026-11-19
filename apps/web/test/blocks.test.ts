@@ -14,7 +14,7 @@ describe('the block views', () => {
       createElement(Callout, { props: { tone }, slots: { body: quoted } }),
     );
     expect(markup).toBe(
-      `<aside class="my-6 rounded-lg border-l-4 px-4 py-1 ${colours}">&quot; onmouseover=&quot;alert(1)</aside>`,
+      `<aside class="my-6 rounded-lg border-l-4 px-4 py-1 [--ff-inset:20px] ${colours}">&quot; onmouseover=&quot;alert(1)</aside>`,
     );
   });
 });

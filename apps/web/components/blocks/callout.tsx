@@ -14,7 +14,9 @@ export function Callout({
   readonly slots: { readonly body: ReactNode };
 }) {
   return (
-    <aside className={`my-6 rounded-lg border-l-4 px-4 py-1 ${tones[props.tone]}`}>
+    <aside
+      className={`my-6 rounded-lg border-l-4 px-4 py-1 [--ff-inset:20px] ${tones[props.tone]}`}
+    >
       {slots.body}
     </aside>
   );

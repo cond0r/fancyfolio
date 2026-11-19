@@ -33,6 +33,11 @@ export function bindOverlay(
   let targets: Targets = {};
   let frame = 0;
 
+  const outermost = (block: HTMLElement): HTMLElement => {
+    const up = block.parentElement?.closest<HTMLElement>('[data-block-id]');
+    return up && root.contains(up) ? outermost(up) : block;
+  };
+
   const measure = (blockId: BlockId): Box | undefined => {
     const cached = boxes.get(blockId);
     const block = cached === undefined ? blockElement(root, blockId) : undefined;
@@ -53,6 +58,7 @@ export function bindOverlay(
       width: box.width,
       height: box.height,
       handle: top - from.top,
+      column: outermost(block).getBoundingClientRect().left - from.left,
     };
     boxes.set(blockId, measured);
     return measured;
@@ -76,7 +82,7 @@ export function bindOverlay(
     const at = target === undefined ? undefined : positionOf(editor.view, target, labelOf);
     if (target === undefined || box === undefined) delete chrome.dataset.ffTarget;
     else {
-      chrome.style.translate = `${box.left}px ${box.handle}px`;
+      chrome.style.translate = `${box.column}px ${box.handle}px`;
       chrome.dataset.ffTarget = target;
     }
     if (at !== undefined) {

@@ -54,8 +54,15 @@ export function fieldElement(root: HTMLElement, blockId: BlockId, name: string) 
 }
 
 function point(field: HTMLElement, offset: number): [Node, number] {
-  const text = field.firstChild;
-  return text instanceof Text ? [text, Math.min(offset, text.length)] : [field, 0];
+  const walker = field.ownerDocument.createTreeWalker(field, NodeFilter.SHOW_TEXT);
+  let left = offset;
+  let last: Text | undefined;
+  for (let node = walker.nextNode(); node instanceof Text; node = walker.nextNode()) {
+    if (left <= node.length) return [node, left];
+    left -= node.length;
+    last = node;
+  }
+  return last === undefined ? [field, 0] : [last, last.length];
 }
 
 export function place(root: HTMLElement, selection: Selection): void {

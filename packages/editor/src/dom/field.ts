@@ -1,5 +1,18 @@
+import { marksIn, typedMarks } from '../core/marks.ts';
+import { sameJson } from '../core/model.ts';
 import { placeOf } from '../core/tree.ts';
-import type { Bare, BlockId, Commands, DocView, Editor, Selection } from '../core/types.ts';
+import type {
+  Bare,
+  Block,
+  BlockId,
+  Commands,
+  DocView,
+  Editor,
+  Mark,
+  MarkType,
+  Selection,
+  TextSelection,
+} from '../core/types.ts';
 import {
   blockOf,
   fieldElement,
@@ -28,21 +41,88 @@ const arrows = new Map<string, -1 | 1>([
   ['ArrowDown', 1],
 ]);
 
-function textIn(editor: Editor, blockId: BlockId, name: string): string {
+const formats = new Map<string, MarkType>([
+  ['formatBold', 'bold'],
+  ['formatItalic', 'italic'],
+  ['formatStrikeThrough', 'strike'],
+]);
+
+const keys = new Map<string, MarkType>([
+  ['b', 'bold'],
+  ['i', 'italic'],
+  ['e', 'code'],
+]);
+
+const nesting: readonly MarkType[] = ['link', 'bold', 'italic', 'strike', 'code'];
+
+const tags = {
+  link: 'span',
+  bold: 'strong',
+  italic: 'em',
+  strike: 's',
+  code: 'code',
+} as const satisfies Record<MarkType, string>;
+
+function blockIn(editor: Editor, blockId: BlockId): Block | undefined {
   const block = editor.blocks.get(blockId);
-  return block === undefined ? '' : (editor.store.get(block).fields[name] ?? '');
+  return block === undefined ? undefined : editor.store.get(block);
 }
 
-export function renderText(field: HTMLElement, text: string): void {
-  const broken = text === '' || text.endsWith('\n');
-  const nodes = [...field.childNodes];
-  const wanted = (text === '' ? 0 : 1) + (broken ? 1 : 0);
-  const [first] = nodes;
-  const textOk = text === '' || (first instanceof Text && first.data === text);
-  const breakOk = !broken || nodes.at(-1)?.nodeName === 'BR';
-  if (nodes.length === wanted && textOk && breakOk) return;
-  const line = field.ownerDocument.createElement('br');
-  field.replaceChildren(...(text === '' ? [] : [text]), ...(broken ? [line] : []));
+function textIn(editor: Editor, blockId: BlockId, name: string): string {
+  return blockIn(editor, blockId)?.fields[name] ?? '';
+}
+
+function markKey(event: KeyboardEvent): MarkType | undefined {
+  const key = event.key.toLowerCase();
+  return event.shiftKey ? (key === 'x' ? 'strike' : undefined) : keys.get(key);
+}
+
+function pendingMarks(
+  block: Block | undefined,
+  { field, from }: TextSelection,
+  text: string,
+  pending: ReadonlyMap<MarkType, boolean>,
+): Mark[] {
+  const typed = block === undefined ? [] : typedMarks(block, field, from, text);
+  const kept = typed.filter(({ type }) => pending.get(type) !== false);
+  const added = [...pending]
+    .filter(([type, on]) => on && !kept.some((mark) => mark.type === type))
+    .map(([type]) => ({ type, from: 0, to: text.length }));
+  return [...kept, ...added];
+}
+
+const shown = new WeakMap<HTMLElement, readonly [string, readonly Mark[]]>();
+
+function renderField(field: HTMLElement, block: Block | undefined, name: string): void {
+  const text = block?.fields[name] ?? '';
+  const marks = block === undefined ? [] : marksIn(block, name);
+  const last = shown.get(field);
+  if (last !== undefined && last[0] === text && sameJson(last[1], marks)) return;
+  shown.set(field, [text, marks]);
+  const document = field.ownerDocument;
+  const top = document.createDocumentFragment();
+  const cuts = [...new Set([0, text.length, ...marks.flatMap(({ from, to }) => [from, to])])];
+  cuts.sort((a, b) => a - b);
+  let open: { mark: Mark; element: HTMLElement }[] = [];
+  let from = 0;
+  for (const to of cuts.slice(1)) {
+    const wanted = nesting.flatMap((type) =>
+      marks.filter((mark) => mark.type === type && mark.from <= from && to <= mark.to),
+    );
+    let depth = 0;
+    while (depth < open.length && open[depth]?.mark === wanted[depth]) depth += 1;
+    open = open.slice(0, depth);
+    for (const mark of wanted.slice(depth)) {
+      const element = document.createElement(tags[mark.type]);
+      if (mark.type === 'link') element.dataset.ffLink = '';
+      (open.at(-1)?.element ?? top).append(element);
+      open.push({ mark, element });
+    }
+    (open.at(-1)?.element ?? top).append(text.slice(from, to));
+    from = to;
+  }
+  if (text === '' || text.endsWith('\n')) top.append(document.createElement('br'));
+  field.replaceChildren(top);
 }
 
 export function spanOf(view: DocView, from: BlockId, to: BlockId): BlockId[] | undefined {
@@ -58,9 +138,9 @@ export function bindField(field: HTMLElement, editor: Editor, blockId: BlockId, 
   if (block === undefined) throw new Error(`block ${blockId} has no atom`);
   field.style.whiteSpace = 'pre-wrap';
   const show = () => {
-    const text = editor.store.get(block).fields[name] ?? '';
-    renderText(field, text);
-    field.toggleAttribute('data-empty', text === '');
+    const current = editor.store.get(block);
+    renderField(field, current, name);
+    field.toggleAttribute('data-empty', (current.fields[name] ?? '') === '');
   };
   show();
   const root = field.closest<HTMLElement>('[data-ff-editor]');
@@ -97,12 +177,54 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
   let composing: Selection | undefined;
   let anchor: BlockId | undefined;
   let spanning = false;
+  let pending: { at: TextSelection; marks: ReadonlyMap<MarkType, boolean> } | undefined;
 
   const select = (selection: Selection) => {
     const before = store.get(editor.selection);
     if (sameSelection(before, selection)) return false;
+    pending = undefined;
     store.set(editor.selection, selection);
     return true;
+  };
+
+  const pendingAt = (at: Selection) =>
+    at.kind === 'text' && pending !== undefined && sameSelection(pending.at, at)
+      ? pending.marks
+      : undefined;
+
+  const run = <C extends keyof Commands>(name: C, args: Commands[C]) => {
+    editor.command(name, args);
+    place(root, store.get(editor.selection));
+  };
+
+  const insert = (text: string) => {
+    const at = store.get(editor.selection);
+    const marks = pendingAt(at);
+    if (marks === undefined || at.kind !== 'text') {
+      editor.command('insertText', { text });
+      return;
+    }
+    editor.command('insertText', {
+      text,
+      marks: pendingMarks(blockIn(editor, at.blockId), at, text, marks),
+    });
+    const after = store.get(editor.selection);
+    if (after.kind === 'text') pending = { at: after, marks };
+  };
+
+  const format = (mark: MarkType) => {
+    const at = store.get(editor.selection);
+    if (at.kind !== 'text') return;
+    if (at.from < at.to) return run('toggleMark', { mark });
+    const block = blockIn(editor, at.blockId);
+    const before = pendingAt(at) ?? new Map<MarkType, boolean>();
+    const on = pendingMarks(block, at, 'x', before).some((each) => each.type === mark);
+    const marks = new Map([...before, [mark, !on]]);
+    const accepted = editor.can('insertText', {
+      text: 'x',
+      marks: pendingMarks(block, at, 'x', marks),
+    });
+    if (accepted) pending = { at, marks };
   };
 
   const inFieldOrBlockSelection = (node: EventTarget | null) => editsIn(root, node);
@@ -111,11 +233,6 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     if (composing !== undefined || spanning) return;
     const read = readSelection(root);
     if (read !== undefined) select(read);
-  };
-
-  const run = <C extends keyof Commands>(name: C, args: Commands[C]) => {
-    editor.command(name, args);
-    place(root, store.get(editor.selection));
   };
 
   const target = (event: InputEvent) => {
@@ -138,11 +255,12 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     sync();
     const command = bare.get(inputType);
     if (command !== undefined) return run(command, {});
+    const mark = formats.get(inputType);
+    if (mark !== undefined) return format(mark);
     if (inputType === 'insertText' || inputType === 'insertReplacementText') {
       if (inputType === 'insertReplacementText' && target(event) === undefined) return;
-      return run('insertText', {
-        text: event.data ?? event.dataTransfer?.getData('text/plain') ?? '',
-      });
+      insert(event.data ?? event.dataTransfer?.getData('text/plain') ?? '');
+      return place(root, store.get(editor.selection));
     }
     const range = inputType.startsWith('delete') ? target(event) : undefined;
     if (range !== undefined && range.from < range.to) run('deleteSelection', {});
@@ -186,6 +304,12 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
       event.preventDefault();
       return run(key === 'y' || event.shiftKey ? 'redo' : 'undo', {});
     }
+    const mark = mod ? markKey(event) : undefined;
+    if (mark !== undefined) {
+      event.preventDefault();
+      sync();
+      return format(mark);
+    }
     const modified = event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
     const deletion = event.key === 'Backspace' ? 'deleteBackward' : 'deleteForward';
     if ((event.key === 'Backspace' || event.key === 'Delete') && !modified) {
@@ -209,10 +333,11 @@ export function bindEditor(root: HTMLElement, editor: Editor): () => void {
     composing = undefined;
     if (before === undefined) return;
     store.set(editor.selection, before);
-    if (event.data !== '') editor.command('insertText', { text: event.data });
+    if (event.data !== '') insert(event.data);
     const field = event.target instanceof Node ? fieldOf(event.target) : undefined;
     if (field !== undefined && before.kind === 'text') {
-      renderText(field, textIn(editor, before.blockId, before.field));
+      shown.delete(field);
+      renderField(field, blockIn(editor, before.blockId), before.field);
     }
     place(root, store.get(editor.selection));
   };

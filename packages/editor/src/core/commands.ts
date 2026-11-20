@@ -1,4 +1,4 @@
-import { coverage, marksIn, sliced } from './marks.ts';
+import { coverage, marksIn, sliced, typedMarks } from './marks.ts';
 import { sameJson } from './model.ts';
 import { emptyParagraph, movable } from './ops.ts';
 import { childrenOf, pathOf, placeOf } from './tree.ts';
@@ -185,23 +185,6 @@ function selected(context: Context): Result {
 
 const none = () => undefined;
 
-const endInclusive: readonly MarkType[] = ['bold', 'italic', 'strike'];
-
-function inherited(marks: readonly Mark[], offset: number, text: string): Mark[] {
-  const lines = text.split('\n');
-  return marks.flatMap(({ from, to, ...mark }) => {
-    const at = endInclusive.includes(mark.type) ? offset <= to : offset < to;
-    if (from >= offset || !at) return [];
-    if (mark.type !== 'code') return [{ ...mark, from: 0, to: text.length }];
-    let start = 0;
-    return lines.flatMap((line) => {
-      const span = { ...mark, from: start, to: start + line.length };
-      start += line.length + 1;
-      return line === '' ? [] : [span];
-    });
-  });
-}
-
 function marked(
   context: Context,
   mark: MarkType,
@@ -267,7 +250,7 @@ const defaults: DefaultHandlers = {
   insertText(context, { text, marks }) {
     const at = textAt(context);
     if (at === undefined || text === '') return undefined;
-    const added = marks ?? inherited(marksIn(at.block, at.field), at.from, text);
+    const added = marks ?? typedMarks(at.block, at.field, at.from, text);
     const typed: Op = {
       kind: 'insertText',
       blockId: at.blockId,

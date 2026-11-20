@@ -1,18 +1,25 @@
+import { coverage, marksIn, sliced } from './marks.ts';
+import { sameJson } from './model.ts';
 import { emptyParagraph, movable } from './ops.ts';
 import { childrenOf, pathOf, placeOf } from './tree.ts';
 import type {
   Block,
   BlockId,
+  Case,
   Commands,
   Context,
   DefaultHandlers,
   DocView,
   Handler,
+  Mark,
+  MarkType,
   Op,
   Parent,
   Registered,
   Result,
+  Run,
   Selection,
+  Span,
 } from './types.ts';
 
 function caret(blockId: BlockId, field: string, offset: number): Selection {
@@ -178,16 +185,96 @@ function selected(context: Context): Result {
 
 const none = () => undefined;
 
+const endInclusive: readonly MarkType[] = ['bold', 'italic', 'strike'];
+
+function inherited(marks: readonly Mark[], offset: number, text: string): Mark[] {
+  const lines = text.split('\n');
+  return marks.flatMap(({ from, to, ...mark }) => {
+    const at = endInclusive.includes(mark.type) ? offset <= to : offset < to;
+    if (from >= offset || !at) return [];
+    if (mark.type !== 'code') return [{ ...mark, from: 0, to: text.length }];
+    let start = 0;
+    return lines.flatMap((line) => {
+      const span = { ...mark, from: start, to: start + line.length };
+      start += line.length + 1;
+      return line === '' ? [] : [span];
+    });
+  });
+}
+
+function marked(
+  context: Context,
+  mark: MarkType,
+  spans: (range: Span, old: readonly Span[]) => Span[],
+): Result {
+  const at = textAt(context);
+  if (at === undefined || at.from === at.to) return undefined;
+  const { blockId, field, from, to } = at;
+  const old = coverage(marksIn(at.block, field), mark, from, to);
+  const next = spans({ from, to }, old);
+  if (sameJson(old, next)) return undefined;
+  return { ops: [{ kind: 'markText', blockId, field, mark, from, to, spans: next }] };
+}
+
+function recased(text: string, from: number, to: number, mode: Case): Run[] {
+  const runs: Run[] = [];
+  let lettered = false;
+  for (let at = 0; at < to; ) {
+    const char = String.fromCodePoint(text.codePointAt(at) ?? 0);
+    const letter = /\p{L}/u.test(char);
+    const first = letter && !lettered;
+    lettered = /\s/u.test(char) ? false : lettered || letter;
+    const next = at + char.length;
+    const out =
+      mode === 'lower' ? char.toLowerCase() : mode === 'upper' || first ? char.toUpperCase() : char;
+    if (at >= from && out !== char) {
+      let run = runs.at(-1);
+      if (run === undefined || run.to !== at) {
+        run = { from: at, to: at, text: '', offsets: new Map([[0, 0]]) };
+        runs.push(run);
+      }
+      run.to = next;
+      run.text += out;
+      run.offsets.set(next - run.from, run.text.length);
+    }
+    at = next;
+  }
+  return runs;
+}
+
+function casing(block: Block, field: string, run: Run): Op[] {
+  const blockId = block.id;
+  const moved = (offset: number) => run.offsets.get(offset) ?? 0;
+  const marks = sliced(marksIn(block, field), run.from, run.to).map((mark) => ({
+    ...mark,
+    from: moved(mark.from),
+    to: moved(mark.to),
+  }));
+  return [
+    { kind: 'deleteText', blockId, field, from: run.from, to: run.to },
+    {
+      kind: 'insertText',
+      blockId,
+      field,
+      offset: run.from,
+      text: run.text,
+      ...(marks.length > 0 && { marks }),
+    },
+  ];
+}
+
 const defaults: DefaultHandlers = {
-  insertText(context, { text }) {
+  insertText(context, { text, marks }) {
     const at = textAt(context);
     if (at === undefined || text === '') return undefined;
+    const added = marks ?? inherited(marksIn(at.block, at.field), at.from, text);
     const typed: Op = {
       kind: 'insertText',
       blockId: at.blockId,
       field: at.field,
       offset: at.from,
       text,
+      ...(added.length > 0 && { marks: added }),
     };
     return {
       ops: [...cleared(at), typed],
@@ -309,9 +396,31 @@ const defaults: DefaultHandlers = {
           : caret(blockId, field, 0),
     };
   },
-  toggleMark: none,
-  setCase: none,
-  setLink: none,
+  toggleMark: (context, { mark }) =>
+    marked(context, mark, (range, old) => {
+      const covered = old.reduce((sum, span) => sum + span.to - span.from, 0);
+      return covered === range.to - range.from ? [] : [range];
+    }),
+  setCase(context, { to: mode }) {
+    const at = textAt(context);
+    if (at === undefined || at.from === at.to) return undefined;
+    const text = at.block.fields[at.field] ?? '';
+    const runs = recased(text, at.from, at.to, mode);
+    if (runs.length === 0) return undefined;
+    const grown = runs.reduce((sum, run) => sum + run.text.length - (run.to - run.from), 0);
+    return {
+      ops: runs.toReversed().flatMap((run) => casing(at.block, at.field, run)),
+      selection: {
+        kind: 'text',
+        blockId: at.blockId,
+        field: at.field,
+        from: at.from,
+        to: at.to + grown,
+      },
+    };
+  },
+  setLink: (context, { href }) =>
+    marked(context, 'link', (range) => (href === null ? [] : [{ ...range, href }])),
   undo: none,
   redo: none,
 };

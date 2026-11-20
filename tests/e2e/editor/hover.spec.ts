@@ -173,14 +173,58 @@ for (const width of [1280, 390]) {
       await expect(handle(page)).toBeHidden();
     });
 
-    test('the handle centres on the first text line of each block type', async ({ page }) => {
+    test('the handle centres on a text line, or tops a boxed block', async ({ page }) => {
       await open(page);
-      for (const index of [0, 1, 5]) {
+      for (const index of [0, 1]) {
         const line = await lineOf(page, index);
         await page.mouse.move(line.x, line.y);
         await frame(page);
         const box = await boxOf(handle(page));
         expect(Math.abs(box.y + box.height / 2 - line.y)).toBeLessThan(2);
+      }
+      const figure = page.locator('[data-ff-editor] figure');
+      const card = await boxOf(figure);
+      const padding = await figure.evaluate((node) =>
+        parseFloat(getComputedStyle(node).paddingTop),
+      );
+      await page.mouse.move(card.x + card.width / 2, card.y + card.height - 4);
+      await frame(page);
+      expect(Math.abs((await boxOf(handle(page))).y - card.y - padding)).toBeLessThan(1);
+    });
+
+    test("a pointer heading for a tall block's chrome keeps it until it rests", async ({
+      page,
+    }) => {
+      await open(page);
+      const read = await sampler(page, chrome);
+      for (const [view, name, reach, corner, aim] of [
+        ['aside', 'Callout options, 7 of 7', 1, 1, '[data-ff-handle]'],
+        ['aside', 'Callout options, 7 of 7', 1, 0, '[data-ff-grip]'],
+        ['figure', 'Metric options, 6 of 7', 1, 1, '[data-ff-handle]'],
+        ['aside', 'Text options, 1 of 1 in Callout', 0.2, 1, '[data-ff-grip]'],
+      ] as const) {
+        const card = await boxOf(page.locator(`[data-ff-editor] ${view}`));
+        const from = { x: card.x + 4 + (card.width - 8) * corner, y: card.y + card.height - 2 };
+        await page.mouse.move(2, 2);
+        await page.mouse.move(from.x, from.y);
+        await frame(page);
+        const start = await translate(page);
+        await read();
+        const button = await boxOf(page.locator(aim));
+        const to = { x: button.x + button.width / 2, y: button.y + button.height / 2 };
+        const end = { x: from.x + (to.x - from.x) * reach, y: from.y + (to.y - from.y) * reach };
+        const steps = Math.ceil(Math.hypot(end.x - from.x, end.y - from.y) / 10);
+        await page.mouse.move(end.x, end.y, { steps });
+        await expect(handle(page)).toHaveAccessibleName(name);
+        const samples = await read();
+        if (reach < 1) {
+          expect(afterLastOver(samples)).toBe(start);
+          continue;
+        }
+        expect(shown(samples, start)).toEqual([start]);
+        await handle(page).click();
+        await expect(page.getByRole('menu').first()).toBeVisible();
+        await page.keyboard.press('Escape');
       }
     });
 

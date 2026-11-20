@@ -97,17 +97,18 @@ export function bindChrome(
     if (pinned !== undefined) overlay.flush();
   };
 
-  const onPointerOver = (event: PointerEvent) => {
-    if (!(event.target instanceof Node) || chrome.contains(event.target)) return;
-    const hovered = blockOf(event.target);
-    if (hovered !== undefined) overlay.set({ hovered });
+  const onPointer = (event: PointerEvent) => {
+    if (!(event.target instanceof Node)) return;
+    const hovered = chrome.contains(event.target) ? chrome.dataset.ffTarget : blockOf(event.target);
+    overlay.hover(hovered, event.clientX, event.clientY);
   };
 
   const onPointerLeave = () => overlay.set({ hovered: undefined, selected: undefined });
 
   const controller = new AbortController();
   const options = { signal: controller.signal };
-  root.addEventListener('pointerover', onPointerOver, options);
+  root.addEventListener('pointerover', onPointer, options);
+  root.addEventListener('pointermove', onPointer, options);
   root.addEventListener('pointerleave', onPointerLeave, options);
   chrome.addEventListener('keydown', (event) => saveOn(event, editor), options);
 

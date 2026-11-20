@@ -20,6 +20,8 @@ async function open(page: Page) {
 
 async function grab(page: Page, block: Locator, position?: { x: number; y: number }) {
   await block.hover({ position });
+  const id = await block.getAttribute('data-block-id');
+  await expect(page.locator('[data-ff-chrome]')).toHaveAttribute('data-ff-target', id ?? '');
   const box = await handle(page).boundingBox();
   if (box === null) throw new Error('the handle has no box');
   const press = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -108,6 +110,7 @@ test('a block drags into a callout, between callouts and out of one', async ({ p
   await drag(page, field(page, 1), field(page, 7), 'after');
   await expect(calloutFields(page, 0)).toHaveText([texts[7] ?? '', texts[1] ?? '']);
   await expect(live).toHaveText('Moved Text to 2 of 2 in Callout');
+  await expect(calloutFields(page, 0).nth(1)).toBeFocused();
   await insertCallout(page, 3);
   const moved = blockOf(calloutFields(page, 1).nth(1));
   const id = await moved.getAttribute('data-block-id');
@@ -119,6 +122,8 @@ test('a block drags into a callout, between callouts and out of one', async ({ p
   await expect(fields(page).first()).toHaveText(texts[7] ?? '');
   await expect(calloutFields(page, 1)).toHaveText(['']);
   await expect(live).toHaveText('Moved Text to 1 of 8');
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(calloutFields(page, 1)).toHaveText([texts[7] ?? '']);
 });
 
 test('a callout over another callout body shows no line and moves nothing', async ({ page }) => {

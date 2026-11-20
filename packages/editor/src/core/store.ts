@@ -16,6 +16,7 @@ import type {
   DocView,
   Editor,
   EditorOptions,
+  Mark,
   Op,
   Planned,
   Presence,
@@ -30,7 +31,7 @@ import type {
 const empty: Doc = { ids: [], blocks: new Map(), sources: new Map() };
 
 export function createEditor(source: string | Doc, options: EditorOptions): Editor {
-  const registry = registryOf(options.components ?? []);
+  const registry = { ...registryOf(options.components ?? []), safeHref: options.safeHref };
   const store = createStore();
   const initial = typeof source === 'string' ? load(source, options.newId, registry) : empty;
   const ids = atom(initial.ids);
@@ -157,9 +158,10 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     if (connected) step(inputs, store.get(selection));
   }
 
-  function started(text: string, blockId: BlockId): Result {
+  function started(text: string, marks: readonly Mark[], blockId: BlockId): Result {
     const block: Block = { id: blockId, type: 'paragraph', props: {}, fields: { text: '' } };
-    const typed = { kind: 'insertText', blockId, field: 'text', offset: 0, text } as const;
+    const plain = { kind: 'insertText', blockId, field: 'text', offset: 0, text } as const;
+    const typed = marks.length > 0 ? { ...plain, marks } : plain;
     const end = text.length;
     return {
       ops: [{ kind: 'insertBlock', block, parent: null, index: 0 }, typed],
@@ -174,8 +176,8 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
 
   function resolved<C extends keyof Commands>(name: C, args: Commands[C], newId: () => BlockId) {
     if (name === 'insertText' && view.ids.length === 0 && 'text' in args) {
-      const { text } = args;
-      return typeof text === 'string' && text !== '' ? started(text, newId()) : undefined;
+      const { text, marks = [] } = args;
+      return typeof text === 'string' && text !== '' ? started(text, marks, newId()) : undefined;
     }
     const context = { doc: view, selection: store.get(selection), newId, shapeOf };
     return run(registry.components.values(), name, context, args);

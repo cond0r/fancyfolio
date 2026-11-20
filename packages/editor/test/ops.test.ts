@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { docOf } from '../src/core/model.ts';
 import { apply, mapIn } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
-import type { AnyComponent, Doc, Op } from '../src/core/types.ts';
+import type { AnyComponent, Block, Doc, Mark, Op, Registry } from '../src/core/types.ts';
 import {
   answeringLater,
   docProblems,
   kinds,
+  marked,
+  markedKinds,
   metric,
   randomOp,
+  safeHref,
   seeded,
   seeds,
   snapshot,
@@ -464,17 +467,132 @@ describe('refused ops leave nothing half applied', () => {
   });
 });
 
+const plain: AnyComponent = {
+  ...marked,
+  name: 'plain',
+  marks: [],
+  markdown: { ...marked.markdown, match: 'leafDirective:plain' },
+};
+const linking: Registry = { ...registryOf([marked, plain]), safeHref };
+
+describe('marks', () => {
+  const bold = (from: number, to: number): Mark => ({ type: 'bold', from, to });
+  const italic = (from: number, to: number): Mark => ({ type: 'italic', from, to });
+  const note: Block = {
+    id: 'm',
+    type: 'marked',
+    props: {},
+    fields: { text: 'one two' },
+    marks: { text: [bold(0, 3), italic(4, 7)] },
+  };
+  const notes = docOf([note, { id: 'q', type: 'plain', props: {}, fields: { text: 'x' } }]);
+  const on = { blockId: 'm', field: 'text' };
+  const typed = (offset: number, text: string, marks?: readonly Mark[]) => ({
+    kind: 'insertText' as const,
+    ...on,
+    offset,
+    text,
+    ...(marks && { marks }),
+  });
+  const marksOf = (doc: Doc) => doc.ids.map((id) => doc.blocks.get(id)?.marks);
+
+  it.each<[string, Op, ReturnType<typeof marksOf>]>([
+    [
+      'types in a bold mark without marks',
+      typed(1, 'x'),
+      [{ text: [bold(0, 1), bold(2, 4), italic(5, 8)] }, undefined],
+    ],
+    [
+      'types in a bold mark with bold',
+      typed(1, 'x', [bold(0, 1)]),
+      [{ text: [bold(0, 4), italic(5, 8)] }, undefined],
+    ],
+    [
+      'deletes across two marks',
+      { kind: 'deleteText', ...on, from: 2, to: 5 },
+      [{ text: [bold(0, 2), italic(2, 4)] }, undefined],
+    ],
+    [
+      'splits a bold word, and merges it back into one mark',
+      { kind: 'splitBlock', ...on, offset: 1, newId: 'n', type: 'marked', props: {} },
+      [{ text: [bold(0, 1)] }, { text: [bold(0, 2), italic(3, 6)] }, undefined],
+    ],
+    [
+      'sets one type over a range',
+      { kind: 'markText', ...on, mark: 'bold', from: 2, to: 7, spans: [{ from: 2, to: 5 }] },
+      [{ text: [bold(0, 5), italic(4, 7)] }, undefined],
+    ],
+    [
+      'links a range',
+      {
+        kind: 'markText',
+        ...on,
+        mark: 'link',
+        from: 4,
+        to: 7,
+        spans: [{ from: 4, to: 7, href: 'https://a.test' }],
+      },
+      [
+        {
+          text: [
+            bold(0, 3),
+            italic(4, 7),
+            { type: 'link', from: 4, to: 7, href: 'https://a.test' },
+          ],
+        },
+        undefined,
+      ],
+    ],
+  ])('%s, and its inverse restores the marks', (_name, op, expected) => {
+    const { doc, inverse } = apply(notes, op, linking);
+    expect(marksOf(doc)).toEqual(expected);
+    expect(docProblems(doc)).toEqual([]);
+    expect(snapshot(apply(doc, inverse, linking).doc)).toEqual(snapshot(notes));
+  });
+
+  it.each<[string, Op, Registry?]>([
+    ['marks on a field that takes none', { ...typed(0, 'y', [bold(0, 1)]), blockId: 'q' }],
+    [
+      'an unknown mark type',
+      typed(0, 'y', JSON.parse('[{ "type": "underline", "from": 0, "to": 1 }]')),
+    ],
+    [
+      'a link with no safeHref',
+      typed(0, 'y', [{ type: 'link', from: 0, to: 1, href: 'https://a.test' }]),
+      registryOf([marked]),
+    ],
+    [
+      'a link safeHref refuses',
+      typed(0, 'y', [{ type: 'link', from: 0, to: 1, href: 'javascript:alert(1)' }]),
+    ],
+    [
+      'an href on a mark that is no link',
+      typed(0, 'y', [{ ...bold(0, 1), href: 'https://a.test' }]),
+    ],
+    ['code over a line break', typed(0, 'a\nb', [{ type: 'code', from: 0, to: 3 }])],
+    ['a mark boundary inside a surrogate pair', typed(0, '😀', [bold(0, 1)])],
+    ['a mark past the inserted text', typed(0, 'y', [bold(0, 2)])],
+    [
+      'a type whose field takes no marks',
+      { kind: 'setType', blockId: 'm', type: 'plain', props: {} },
+    ],
+  ])('refuses %s and keeps the doc', (_name, op, registry = linking) => {
+    expect(() => apply(notes, op, registry)).toThrow(RangeError);
+    expect(snapshot(notes)).toEqual([note, notes.blocks.get('q')]);
+  });
+});
+
 describe('random op sequences', () => {
   it.each(seeds)('keep every invariant and invert exactly (seed %i)', (seed) => {
     const random = seeded(seed);
     let next = 0;
     let doc = start;
     for (let step = 0; step < 300; step += 1) {
-      const op = randomOp(doc, random, () => `n${next++}`, kinds, true);
+      const op = randomOp(doc, random, () => `n${next++}`, markedKinds, true);
       const where = `seed ${seed} step ${step} ${JSON.stringify(op)}`;
-      const { doc: after, inverse } = apply(doc, op);
+      const { doc: after, inverse } = apply(doc, op, linking);
       expect(docProblems(after), where).toEqual([]);
-      const back = apply(after, inverse).doc;
+      const back = apply(after, inverse, linking).doc;
       expect(back.ids, where).toEqual(doc.ids);
       expect(blocks(back), where).toEqual(blocks(doc));
       const removed = doc.ids.filter((id) => !after.blocks.has(id));

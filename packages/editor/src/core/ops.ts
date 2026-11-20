@@ -1,3 +1,15 @@
+import {
+  coverage,
+  covered,
+  deleted,
+  inserted,
+  isMarkType,
+  marksFor,
+  marksIn,
+  shifted,
+  sliced,
+  withMarks,
+} from './marks.ts';
 import { isCanonicalText, isRaw, isRecord, jsonOf, sameJson } from './model.ts';
 import { builtins, fieldsFor, propsFor } from './registry.ts';
 import { placeOf, relinked, viewOf } from './tree.ts';
@@ -7,7 +19,10 @@ import type {
   Change,
   Doc,
   DocView,
+  Fail,
   Json,
+  Mark,
+  Marks,
   Op,
   Parent,
   Place,
@@ -16,6 +31,7 @@ import type {
   Registered,
   Registry,
   Slots,
+  Span,
 } from './types.ts';
 
 function refuse(op: Op, reason: string): never {
@@ -49,6 +65,48 @@ function slotsFrom(input: unknown): Slots | undefined {
   return Object.freeze(Object.fromEntries(entries));
 }
 
+function spanFrom(input: unknown): Span | undefined {
+  const from = field(input, 'from');
+  const to = field(input, 'to');
+  const href = field(input, 'href');
+  if (typeof from !== 'number' || typeof to !== 'number') return undefined;
+  if (href === undefined) return Object.freeze({ from, to });
+  return typeof href === 'string' ? Object.freeze({ from, to, href }) : undefined;
+}
+
+function listFrom<T>(
+  input: unknown,
+  each: (item: unknown) => T | undefined,
+): readonly T[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const items: T[] = [];
+  for (const item of input) {
+    const parsed = each(item);
+    if (parsed === undefined) return undefined;
+    items.push(parsed);
+  }
+  return Object.freeze(items);
+}
+
+function markFrom(input: unknown): Mark | undefined {
+  const type = field(input, 'type');
+  const span = spanFrom(input);
+  return typeof type === 'string' && isMarkType(type) && span !== undefined
+    ? Object.freeze({ type, ...span })
+    : undefined;
+}
+
+function marksFrom(input: unknown): Marks | undefined {
+  if (!isRecord(input)) return undefined;
+  const entries: [string, readonly Mark[]][] = [];
+  for (const [name, list] of Object.entries(input)) {
+    const marks = listFrom(list, markFrom);
+    if (marks === undefined) return undefined;
+    entries.push([name, marks]);
+  }
+  return Object.freeze(Object.fromEntries(entries));
+}
+
 function blockFrom(input: unknown): Block | undefined {
   const id = field(input, 'id');
   const type = field(input, 'type');
@@ -56,17 +114,20 @@ function blockFrom(input: unknown): Block | undefined {
   const fields = field(input, 'fields');
   const listed = field(input, 'slots');
   const slots = listed === undefined ? undefined : slotsFrom(listed);
+  const given = field(input, 'marks');
+  const marks = given === undefined ? undefined : marksFrom(given);
   if (!isId(id) || typeof type !== 'string' || props === undefined || !isRecord(fields)) {
     return undefined;
   }
   if (listed !== undefined && slots === undefined) return undefined;
+  if (given !== undefined && marks === undefined) return undefined;
   const entries: [string, string][] = [];
   for (const [name, text] of Object.entries(fields)) {
     if (typeof text !== 'string') return undefined;
     entries.push([name, text]);
   }
   const block = { id, type, props, fields: Object.freeze(Object.fromEntries(entries)) };
-  return Object.freeze(slots === undefined ? block : { ...block, slots });
+  return Object.freeze({ ...block, ...(marks && { marks }), ...(slots && { slots }) });
 }
 
 function parentFrom(input: unknown): Parent | undefined {
@@ -93,8 +154,26 @@ function opFrom(input: unknown): Op | undefined {
       const fieldName = field(input, 'field');
       const offset = field(input, 'offset');
       const text = field(input, 'text');
+      const given = field(input, 'marks');
+      const marks = given === undefined ? undefined : listFrom(given, markFrom);
+      if (given !== undefined && marks === undefined) return undefined;
       return typeof fieldName === 'string' && typeof offset === 'number' && typeof text === 'string'
-        ? { kind, blockId, field: fieldName, offset, text }
+        ? { kind, blockId, field: fieldName, offset, text, ...(marks && { marks }) }
+        : undefined;
+    }
+    case 'markText': {
+      const fieldName = field(input, 'field');
+      const mark = field(input, 'mark');
+      const from = field(input, 'from');
+      const to = field(input, 'to');
+      const spans = listFrom(field(input, 'spans'), spanFrom);
+      return typeof fieldName === 'string' &&
+        typeof mark === 'string' &&
+        isMarkType(mark) &&
+        typeof from === 'number' &&
+        typeof to === 'number' &&
+        spans !== undefined
+        ? { kind, blockId, field: fieldName, mark, from, to, spans }
         : undefined;
     }
     case 'deleteText': {
@@ -251,10 +330,31 @@ export function plan(
   return { op, ...planned(view, op, registry, raw) };
 }
 
+function failing(op: Op, raw: boolean): Fail | undefined {
+  return raw ? undefined : (reason) => refuse(op, reason);
+}
+
+function marking(
+  registry: Registry,
+  component: Registered,
+  block: Block,
+  fields: Block['fields'],
+  marks: Marks,
+  fail: Fail | undefined,
+): Block {
+  let made = block;
+  for (const [name, list] of Object.entries(marks)) {
+    const text = Object.hasOwn(fields, name) ? fields[name] : '';
+    made = withMarks(made, name, marksFor(registry, component, name, text, list, fail));
+  }
+  return made;
+}
+
 function inserting(
   view: DocView,
   op: Extract<Op, { kind: 'insertBlock' }>,
   registry: Registry,
+  raw: boolean,
 ): { change: Change; inverse: Op } {
   const { block, parent } = op;
   if (view.blocks.get(block.id) !== undefined) refuse(op, 'id taken');
@@ -265,7 +365,8 @@ function inserting(
   const list = listIn(op, view, parent);
   if (parent !== null) fitsSlot(op, component);
   const next = putAt(op, list, op.index, block.id);
-  const made: Block = { id: block.id, type: block.type, props, fields, ...(slots && { slots }) };
+  const bare: Block = { id: block.id, type: block.type, props, fields, ...(slots && { slots }) };
+  const made = marking(registry, component, bare, fields, block.marks ?? {}, failing(op, raw));
   const { put, ids } = relisted(view, { parent }, next);
   return {
     change: { put: [made, ...put], ids, drop: [] },
@@ -279,10 +380,13 @@ function planned(
   registry: Registry,
   raw: boolean,
 ): { change: Change; inverse: Op } {
-  if (op.kind === 'insertBlock') return inserting(view, op, registry);
+  if (op.kind === 'insertBlock') return inserting(view, op, registry, raw);
   const { blockId } = op;
   const block = view.blocks.get(blockId) ?? refuse(op, 'unknown block');
   const component = componentOf(op, registry, block.type);
+  const fail = failing(op, raw);
+  const remarked = (into: Block, field: string, text: string, marks: readonly Mark[]) =>
+    withMarks(into, field, marksFor(registry, component, field, text, marks, fail));
   switch (op.kind) {
     case 'insertText': {
       const { field } = op;
@@ -290,8 +394,13 @@ function planned(
       const offset = offsetIn(op, text, op.offset);
       if (op.text === '') refuse(op, 'nothing to insert');
       const next = text.slice(0, offset) + op.text + text.slice(offset);
+      const added = marksFor(registry, component, field, op.text, op.marks ?? [], fail);
+      const marks = inserted(marksIn(block, field), offset, op.text.length, added);
       return {
-        change: { put: [withField(op, block, field, next)], drop: [] },
+        change: {
+          put: [remarked(withField(op, block, field, next), field, next, marks)],
+          drop: [],
+        },
         inverse: { kind: 'deleteText', blockId, field, from: offset, to: offset + op.text.length },
       };
     }
@@ -302,9 +411,50 @@ function planned(
       const to = offsetIn(op, text, op.to);
       if (from >= to) refuse(op, 'empty range');
       const next = text.slice(0, from) + text.slice(to);
+      const old = marksIn(block, field);
+      const cut = sliced(old, from, to);
+      const marks = deleted(old, from, to);
       return {
-        change: { put: [withField(op, block, field, next)], drop: [] },
-        inverse: { kind: 'insertText', blockId, field, offset: from, text: text.slice(from, to) },
+        change: {
+          put: [remarked(withField(op, block, field, next), field, next, marks)],
+          drop: [],
+        },
+        inverse: {
+          kind: 'insertText',
+          blockId,
+          field,
+          offset: from,
+          text: text.slice(from, to),
+          ...(cut.length > 0 && { marks: cut }),
+        },
+      };
+    }
+    case 'markText': {
+      const { field, mark } = op;
+      const text = textIn(op, block, component, field);
+      const from = offsetIn(op, text, op.from);
+      const to = offsetIn(op, text, op.to);
+      if (from >= to) refuse(op, 'empty range');
+      const spans = op.spans.filter((span) => {
+        const inside = span.from >= from && span.to <= to;
+        if (!inside) fail?.('span outside the range');
+        return inside;
+      });
+      const old = marksIn(block, field);
+      return {
+        change: {
+          put: [remarked(block, field, text, covered(old, mark, from, to, spans))],
+          drop: [],
+        },
+        inverse: {
+          kind: 'markText',
+          blockId,
+          field,
+          mark,
+          from,
+          to,
+          spans: coverage(old, mark, from, to),
+        },
       };
     }
     case 'splitBlock': {
@@ -321,16 +471,22 @@ function planned(
       moving(op, block.type, op.type, head, tail);
       const place = placed(op, view, blockId);
       if (place.parent !== null) fitsSlot(op, target);
-      const added: Block = { id: op.newId, type: op.type, props, fields: { [targetField]: tail } };
+      const fields = { [targetField]: tail };
+      const bare: Block = { id: op.newId, type: op.type, props, fields };
+      const old = marksIn(block, field);
+      const moved = { [targetField]: sliced(old, offset, text.length) };
+      const added = marking(registry, target, bare, fields, moved, fail);
+      const kept = remarked(withField(op, block, field, head), field, head, sliced(old, 0, offset));
       const list = place.list.toSpliced(place.index + 1, 0, op.newId);
       const { put, ids } = relisted(view, place, list);
       return {
-        change: { put: [withField(op, block, field, head), added, ...put], ids, drop: [] },
+        change: { put: [kept, added, ...put], ids, drop: [] },
         inverse: { kind: 'mergeBlocks', blockId: op.newId },
       };
     }
     case 'mergeBlocks': {
-      const text = textIn(op, block, component, soleField(op, component));
+      const own = soleField(op, component);
+      const text = textIn(op, block, component, own);
       const place = placed(op, view, blockId);
       const previousId = place.list[place.index - 1];
       const previous = previousId === undefined ? undefined : view.blocks.get(previousId);
@@ -339,6 +495,9 @@ function planned(
       const field = soleField(op, before);
       const head = textIn(op, previous, before, field);
       moving(op, block.type, previous.type, head, text);
+      const joined = [...marksIn(previous, field), ...shifted(marksIn(block, own), head.length)];
+      const merged = withField(op, previous, field, head + text);
+      const marks = marksFor(registry, before, field, head + text, joined, fail);
       const relist = relisted(
         view,
         place,
@@ -346,7 +505,7 @@ function planned(
       );
       return {
         change: {
-          put: [withField(op, previous, field, head + text), ...relist.put],
+          put: [withMarks(merged, field, marks), ...relist.put],
           ids: relist.ids,
           drop: [blockId],
         },
@@ -388,7 +547,8 @@ function planned(
       const slots = Object.fromEntries(
         names.map((name) => [name, Object.hasOwn(kept, name) ? kept[name] : []]),
       );
-      const made: Block = { id: blockId, type: op.type, props, fields };
+      const bare: Block = { id: blockId, type: op.type, props, fields };
+      const made = marking(registry, target, bare, fields, block.marks ?? {}, fail);
       const at = view.ids.indexOf(blockId) + 1;
       return {
         change: {

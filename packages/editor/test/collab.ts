@@ -3,12 +3,22 @@ import { sameJson } from '../src/core/model.ts';
 import { mapIn, plan } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
 import { viewOf } from '../src/core/tree.ts';
-import type { AnyComponent, CollabAdapter, Doc, Op, Parent, RemoteOp } from '../src/core/types.ts';
+import type {
+  AnyComponent,
+  CollabAdapter,
+  Doc,
+  Op,
+  Parent,
+  RemoteOp,
+  SafeHref,
+  Span,
+} from '../src/core/types.ts';
 import { counter } from './generate.ts';
 
 type Entry = { readonly client: number; readonly op: RemoteOp; readonly at: string };
 type Message = { readonly client: number; readonly entries: readonly Entry[] };
 type Registry = ReturnType<typeof registryOf>;
+type Marking = Extract<RemoteOp, { readonly kind: 'markText' }>;
 type Replica = { doc: Doc; readonly positions: Map<string, string>; readonly registry: Registry };
 export type Room = ReturnType<typeof room>;
 
@@ -20,13 +30,48 @@ function applied(doc: Doc, op: Op, registry: Registry): { doc: Doc; inverse: Op 
   return { doc: { ids: change.ids ?? doc.ids, blocks, sources: doc.sources }, inverse };
 }
 
+function clipped(spans: readonly Span[], from: number, to: number): Span[] {
+  return spans.flatMap((span) => {
+    const [start, end] = [Math.max(span.from, from), Math.min(span.to, to)];
+    return start < end ? [{ ...span, from: start, to: end }] : [];
+  });
+}
+
+function remarked(a: Entry, op: Marking, b: Entry, registry: Registry): Entry[] {
+  const other = b.op;
+  const here = 'field' in other && other.blockId === op.blockId && other.field === op.field;
+  if (other.kind === 'markText') {
+    const [from, to] = [Math.max(op.from, other.from), Math.min(op.to, other.to)];
+    if (b.client <= a.client || !here || other.mark !== op.mark || from >= to) return [a];
+    const kept = [...clipped(op.spans, op.from, from), ...clipped(op.spans, to, op.to)];
+    return [{ ...a, op: { ...op, spans: [...kept, ...clipped(other.spans, from, to)] } }];
+  }
+  if (other.kind !== 'insertText' && other.kind !== 'deleteText') return [a];
+  const { blockId, field } = op;
+  const map = (offset: number, bias: -1 | 1) =>
+    mapIn(registry, other, { blockId, field, offset }, bias)?.offset ?? offset;
+  const spans = op.spans.map((span) => ({
+    ...span,
+    from: map(span.from, 1),
+    to: map(span.to, -1),
+  }));
+  const range = (from: number, to: number): Entry[] =>
+    from < to ? [{ ...a, op: { ...op, from, to, spans: clipped(spans, from, to) } }] : [];
+  const [from, to] = [map(op.from, 1), map(op.to, -1)];
+  if (other.kind === 'insertText' && here && other.offset > op.from && other.offset < op.to) {
+    return [...range(from, other.offset), ...range(other.offset + other.text.length, to)];
+  }
+  return range(from, to);
+}
+
 function through(a: Entry, b: Entry, registry: Registry): Entry[] {
   const { op } = a;
-  if (op.kind !== 'insertText' && op.kind !== 'deleteText') return [a];
+  if (op.kind !== 'insertText' && op.kind !== 'deleteText' && op.kind !== 'markText') return [a];
   const { blockId, field } = op;
   if (b.op.kind === 'setType' && a.client !== b.client) {
     return mapIn(registry, b.op, { blockId, field, offset: 0 }) === undefined ? [] : [a];
   }
+  if (op.kind === 'markText') return remarked(a, op, b, registry);
   if (b.op.kind !== 'insertText' && b.op.kind !== 'deleteText') return [a];
   const map = (offset: number, bias: -1 | 1) =>
     mapIn(registry, b.op, { blockId, field, offset }, bias)?.offset ?? offset;
@@ -95,7 +140,7 @@ function absorb(replica: Replica, { op, at }: Entry): RemoteOp[] {
     out.push(each);
   };
   const block = 'blockId' in op ? replica.doc.blocks.get(op.blockId) : undefined;
-  if (op.kind === 'insertText' || op.kind === 'deleteText') {
+  if (op.kind === 'insertText' || op.kind === 'deleteText' || op.kind === 'markText') {
     if (block === undefined) out.push(op);
     else put(op);
   } else if (op.kind === 'insertBlock' || op.kind === 'moveBlock') {
@@ -130,8 +175,12 @@ function replicaOf(source: string | Doc, registry: Registry): Replica {
   return { doc, positions: new Map(ranked), registry };
 }
 
-export function room(source: string | Doc, components: readonly AnyComponent[]) {
-  const registry = registryOf(components);
+export function room(
+  source: string | Doc,
+  components: readonly AnyComponent[],
+  safeHref?: SafeHref,
+) {
+  const registry = { ...registryOf(components), safeHref };
   const replica = replicaOf(source, registry);
   const log: Entry[] = [];
   const inboxes: Message[][] = [];
@@ -145,6 +194,7 @@ export function room(source: string | Doc, components: readonly AnyComponent[]) 
       for (const inbox of inboxes) inbox.push({ client, entries: mapped });
     },
     markdown: () => save(replica.doc, registry),
+    doc: () => replica.doc,
   };
 }
 

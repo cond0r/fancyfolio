@@ -1,4 +1,4 @@
-import { escapedLines, noProps, textNodes, textOf } from './model.ts';
+import { escapedInline, inlineOf, noProps, phrasing } from './model.ts';
 import type { Component, NoProps } from './types.ts';
 
 export const paragraph: Component<'paragraph', NoProps, 'text'> = {
@@ -6,20 +6,21 @@ export const paragraph: Component<'paragraph', NoProps, 'text'> = {
   props: noProps,
   fields: ['text'],
   labels: { text: 'Paragraph' },
+  marks: ['text'],
   markdown: {
     match: 'paragraph',
     read(node) {
       if (node.type !== 'paragraph') return undefined;
-      const text = textOf(node);
-      return text === undefined ? undefined : { props: {}, fields: { text } };
+      const inline = inlineOf(node);
+      return inline && { props: {}, fields: { text: inline.text }, marks: { text: inline.marks } };
     },
-    write: (block) => ({ type: 'paragraph', children: textNodes(block.fields.text) }),
-    escaped(block) {
-      const lines = escapedLines(block.fields.text);
-      return lines.reduce((joined, line, index) => {
-        const blank = line === '' || lines[index - 1] === '';
-        return index === 0 ? line : `${joined}${blank ? '&#10;' : '\n'}${line}`;
-      }, '');
-    },
+    write: (block) => ({
+      type: 'paragraph',
+      children: phrasing(block.fields.text, block.marks?.text ?? []),
+    }),
+    escaped: (block) =>
+      escapedInline(block.fields.text, block.marks?.text ?? [], (lines, index) =>
+        lines[index] === '' || lines[index - 1] === '' ? '&#10;' : '\n',
+      ),
   },
 };

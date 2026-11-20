@@ -1,4 +1,4 @@
-import { escapedLines, hasKeys, schema, textNodes, textOf } from './model.ts';
+import { escapedInline, hasKeys, inlineOf, phrasing, schema } from './model.ts';
 import type { Component, HeadingLevel, HeadingProps } from './types.ts';
 
 function isLevel(level: unknown): level is HeadingLevel {
@@ -13,20 +13,27 @@ export const heading: Component<'heading', HeadingProps, 'text'> = {
   ),
   fields: ['text'],
   labels: { text: 'Heading' },
+  marks: ['text'],
   markdown: {
     match: 'heading',
     read(node) {
       if (node.type !== 'heading') return undefined;
-      const text = textOf(node);
-      return text === undefined ? undefined : { props: { level: node.depth }, fields: { text } };
+      const inline = inlineOf(node);
+      return (
+        inline && {
+          props: { level: node.depth },
+          fields: { text: inline.text },
+          marks: { text: inline.marks },
+        }
+      );
     },
     write: (block) => ({
       type: 'heading',
       depth: block.props.level,
-      children: textNodes(block.fields.text),
+      children: phrasing(block.fields.text, block.marks?.text ?? []),
     }),
     escaped(block) {
-      const text = escapedLines(block.fields.text).join('&#10;');
+      const text = escapedInline(block.fields.text, block.marks?.text ?? [], () => '&#10;');
       return `${'#'.repeat(block.props.level)}${text === '' ? '' : ` ${text}`}`;
     },
   },

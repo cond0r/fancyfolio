@@ -18,6 +18,7 @@ import {
   type Random,
   randomOp,
   randomText,
+  safeHref,
   seeded,
   seeds,
   snapshot,
@@ -68,6 +69,8 @@ function roundTrip(markdown: string): string {
   return output(loaded(markdown));
 }
 
+const linking = registryOf([], safeHref);
+
 const canonical = [
   '# Title\n\nA paragraph.\n',
   'Meet at 10:30, Status:done\n',
@@ -114,9 +117,15 @@ const unmodelled = [
   ['a code fence', '```\ncode\n```'],
   ['a rule', '---'],
   ['a definition', '[a]: https://example.test'],
-  ['emphasis', 'some *em*'],
   ['a hard break', 'a  \nb'],
-  ['inline code', 'a `b` c'],
+  ['an underline tag', 'a <u>b</u>'],
+  ['a link title', '[a](https://example.test "t")'],
+  ['a link reference', '[a][r]\n\n[r]: https://example.test'],
+  ['a javascript: link', '[a](javascript:alert(1))'],
+  ['a data: link', '[a](data:text/html,x)'],
+  ['a protocol-relative link', '[a](//evil.example)'],
+  ['an entity-obfuscated link', '[a](&#106;avascript:alert(1))'],
+  ['a whitespace-obfuscated link', '[a](<java\tscript:alert(1)>)'],
 ] as const;
 
 const variants = [
@@ -152,15 +161,26 @@ describe('markdown in and out', () => {
   );
 
   it.each(unmodelled)('loads %s as one raw block holding its source', (_name, body) => {
-    const blocks = snapshot(loaded(body));
+    const blocks = snapshot(load(body, newId, linking));
     const texts = blocks.filter((block) => block.type === 'raw').map((block) => block.fields.text);
     expect(texts.join('\n\n')).toBe(body);
-    expect(output(loaded(body))).toBe(body);
+    expect(save(load(body, newId, linking), linking)).toEqual({ ok: true, markdown: body });
+  });
+
+  it('loads a link as raw source when no safeHref is given', () => {
+    expect(shape(snapshot(loaded('[a](https://example.test)')))).toEqual([
+      raw('[a](https://example.test)'),
+    ]);
   });
 
   it('models a plain paragraph and a heading as text', () => {
     expect(shape(snapshot(loaded('# A *b*?\n\nPlain 10:30 \\* text\n## x')))).toEqual([
-      raw('# A *b*?'),
+      {
+        type: 'heading',
+        props: { level: 1 },
+        fields: { text: 'A b?' },
+        marks: { text: [{ type: 'italic', from: 2, to: 3 }] },
+      },
       para('Plain 10:30 * text'),
       { type: 'heading', props: { level: 2 }, fields: { text: 'x' } },
     ]);
@@ -242,6 +262,53 @@ describe('text blocks read back exactly', () => {
       const doc = docOf([{ ...kind, id: 'p', fields: { text } }]);
       const where = `seed ${seed} run ${run} ${JSON.stringify({ kind, text })}`;
       expect(shape(snapshot(loaded(output(doc)))), where).toEqual(shape(snapshot(doc)));
+    }
+  });
+});
+
+describe('inline marks', () => {
+  function written(markdown: string): string {
+    const doc = load(markdown, newId, linking);
+    expect(snapshot(doc).filter((block) => block.type === 'raw')).toEqual([]);
+    const result = save({ ...doc, sources: new Map() }, linking);
+    return result.ok ? result.markdown : JSON.stringify(result);
+  }
+
+  it.each([
+    ['each mark', '**bold** *italic* ~~strike~~ `code` [link](https://example.test)\n'],
+    ['nested marks', '**_both_** and **bold *inside***\n'],
+    ['overlapping marks', '**ab*cd****ef*\n'],
+    ['edge spaces', '&#x61;**&#x20;b&#x20;**&#x63;\n'],
+    ['a link holding marks', '[a **b** `c`](https://example.test)\n'],
+    ['a backtick in code', 'a ``b`c`` d\n'],
+    ['a marked heading', '## A *b* ~~c~~\n'],
+  ])('writes %s from the model byte for byte', (_name, body) => {
+    expect(written(body)).toBe(body);
+  });
+
+  it.each(seeds)('saves random marked text blocks so they reload equal (seed %i)', (seed) => {
+    const random = seeded(seed);
+    const types = ['bold', 'italic', 'strike', 'code', 'link'] as const;
+    for (let run = 0; run < 100; run += 1) {
+      const kind = random.pick(kinds.filter((each) => each.type !== 'raw'));
+      const text = randomText(random, 8);
+      const offsets = [0];
+      for (const char of text) offsets.push((offsets.at(-1) ?? 0) + char.length);
+      let doc = docOf([{ ...kind, id: 'p', fields: { text } }]);
+      for (let count = random.int(5); count > 0; count -= 1) {
+        const [a, b, mark] = [random.pick(offsets), random.pick(offsets), random.pick(types)];
+        const [from, to] = a < b ? [a, b] : [b, a];
+        if (from === to || (mark === 'code' && text.slice(from, to).includes('\n'))) continue;
+        const href = random.pick(['https://a.test', 'https://b.test/(x) y']);
+        const spans = [mark === 'link' ? { from, to, href } : { from, to }];
+        const op: Op = { kind: 'markText', blockId: 'p', field: 'text', mark, from, to, spans };
+        doc = apply(doc, op, linking).doc;
+      }
+      const result = save(doc, linking);
+      const where = `seed ${seed} run ${run} ${JSON.stringify(snapshot(doc))}`;
+      expect(result.ok, `${where} ${JSON.stringify(result)}`).toBe(true);
+      const reloaded = load(result.ok ? result.markdown : '', newId, linking);
+      expect(shape(snapshot(reloaded)), where).toEqual(shape(snapshot(doc)));
     }
   });
 });

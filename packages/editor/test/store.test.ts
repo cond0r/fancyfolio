@@ -479,6 +479,19 @@ describe('undo and redo', () => {
     expect(editor.doc().blocks.get('b0')).toEqual(typed);
   });
 
+  it('types bold into an empty document with pending bold', () => {
+    const editor = createEditor(
+      { ids: [], blocks: new Map(), sources: new Map() },
+      {
+        now: () => 0,
+        newId: counter(),
+      },
+    );
+    const marks = [{ type: 'bold', from: 0, to: 2 }] as const;
+    expect(editor.command('insertText', { text: 'ab', marks })).toBe(true);
+    expect(saved(editor)).toBe('**ab**\n');
+  });
+
   it('starts a new step when typing jumps, changes block or follows another op', () => {
     const editor = editorAt('ab\n\ncd\n');
     const [first, second] = editor.store.get(editor.ids) as [string, string];

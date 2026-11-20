@@ -1,5 +1,6 @@
 import type { Html, Nodes, Root, RootContent } from 'mdast';
 import { parseMarkdown, stringifyMarkdown } from '../dialect.ts';
+import { marksFor } from './marks.ts';
 import { docOf, isCanonicalText, isRaw, sameJson } from './model.ts';
 import { builtins, fieldsFor, propsFor } from './registry.ts';
 import type {
@@ -7,9 +8,13 @@ import type {
   Block,
   BlockId,
   Doc,
+  Fields,
+  Mark,
+  Marks,
   Part,
   Read,
   Reading,
+  Registered,
   Registry,
   SaveResult,
   Source,
@@ -24,6 +29,24 @@ function matchOf(node: RootContent): string {
   return node.type === 'leafDirective' || node.type === 'containerDirective'
     ? `${node.type}:${node.name}`
     : node.type;
+}
+
+function refused(reason: string): never {
+  throw new RangeError(reason);
+}
+
+function marksOf(
+  registry: Registry,
+  component: Registered,
+  fields: Fields,
+  read: { readonly [field: string]: readonly Mark[] | undefined } = {},
+): Marks | undefined {
+  const entries = Object.entries(read).flatMap(([field, marks = []]) => {
+    const text = Object.hasOwn(fields, field) ? fields[field] : '';
+    const kept = marksFor(registry, component, field, text, marks, refused);
+    return kept.length > 0 ? [[field, kept] as const] : [];
+  });
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function modelled(
@@ -41,7 +64,9 @@ function modelled(
     const props = propsFor(component, read.props);
     const fields = fieldsFor(component, read.fields);
     if (props === undefined || fields === undefined) return undefined;
-    if (names.length === 0) return { type: component.name, props, fields };
+    const marks = marksOf(registry, component, fields, read.marks);
+    const kind = { type: component.name, props, fields, ...(marks && { marks }) };
+    if (names.length === 0) return kind;
     const slots: [string, Reading[]][] = [];
     for (const name of names) {
       const nodes =
@@ -55,20 +80,23 @@ function modelled(
       }
       slots.push([name, children]);
     }
-    return { type: component.name, props, fields, slots: Object.fromEntries(slots) };
+    return { ...kind, slots: Object.fromEntries(slots) };
   } catch {
     return undefined;
   }
 }
 
-function blocksOf({ type, props, fields, slots }: Reading, nextId: () => BlockId): Block[] {
-  const block: Block = { id: nextId(), type, props, fields };
+function blockOf({ slots: _slots, ...read }: Reading, id: BlockId): Block {
+  return { id, ...read };
+}
+
+function blocksOf(read: Reading, nextId: () => BlockId): Block[] {
+  const block = blockOf(read, nextId());
+  const { slots } = read;
   if (slots === undefined) return [block];
   const children: Block[] = [];
   const listed = Object.entries(slots).map(([name, reads]) => {
-    const made = reads.map(
-      (read): Block => ({ id: nextId(), type: read.type, props: read.props, fields: read.fields }),
-    );
+    const made = reads.map((each) => blockOf(each, nextId()));
     children.push(...made);
     return [name, made.map((child) => child.id)];
   });
@@ -193,7 +221,8 @@ function matches(read: Read | undefined, block: Block, doc: Doc, registry: Regis
     read == null ||
     read.type !== block.type ||
     !sameJson(read.props, block.props) ||
-    !sameJson(read.fields, block.fields)
+    !sameJson(read.fields, block.fields) ||
+    !sameJson(read.marks ?? {}, block.marks ?? {})
   ) {
     return false;
   }
@@ -202,10 +231,7 @@ function matches(read: Read | undefined, block: Block, doc: Doc, registry: Regis
   return slots.every((slot) => {
     const reads = (
       read.slots !== undefined && Object.hasOwn(read.slots, slot) ? read.slots[slot] : []
-    ).filter(
-      ({ type, props, fields }) =>
-        !isBlank(written({ id: '', type, props, fields }, doc, registry)),
-    );
+    ).filter((each) => !isBlank(written(blockOf(each, ''), doc, registry)));
     const children = writtenChildren(block, slot, doc, registry);
     return (
       reads.length === children.length &&

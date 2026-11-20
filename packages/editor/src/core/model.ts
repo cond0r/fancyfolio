@@ -1,6 +1,20 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type { Heading, Paragraph, Text } from 'mdast';
-import type { Block, BlockId, Doc, Json, NoProps, Source } from './types.ts';
+import type { Heading, Paragraph, PhrasingContent, Root, Text } from 'mdast';
+import { stringifyMarkdown } from '../dialect.ts';
+import type {
+  Block,
+  BlockId,
+  Doc,
+  Inline,
+  Joint,
+  Json,
+  Leaf,
+  Mark,
+  MarkType,
+  NoProps,
+  Piece,
+  Source,
+} from './types.ts';
 
 export function isCanonicalText(text: string): boolean {
   return text.isWellFormed() && !/[\r\0]/.test(text);
@@ -87,18 +101,111 @@ export function textNodes(text: string): Text[] {
   return text === '' ? [] : [{ type: 'text', value: text }];
 }
 
+const wrapped = { strong: 'bold', emphasis: 'italic', delete: 'strike' } as const;
+
+export function inlineOf(node: Paragraph | Heading): Inline | undefined {
+  let text = '';
+  const marks: Mark[] = [];
+  const read = (children: readonly PhrasingContent[]): boolean =>
+    children.every((child) => {
+      const from = text.length;
+      if (child.type === 'text' || child.type === 'inlineCode') {
+        text += child.value;
+        if (child.type === 'inlineCode') marks.push({ type: 'code', from, to: text.length });
+        return true;
+      }
+      if (child.type === 'link') {
+        if (child.title != null || !read(child.children)) return false;
+        marks.push({ type: 'link', from, to: text.length, href: child.url });
+        return true;
+      }
+      if (child.type !== 'strong' && child.type !== 'emphasis' && child.type !== 'delete') {
+        return false;
+      }
+      if (!read(child.children)) return false;
+      marks.push({ type: wrapped[child.type], from, to: text.length });
+      return true;
+    });
+  return read(node.children) ? { text, marks } : undefined;
+}
+
+const nesting: readonly MarkType[] = ['link', 'bold', 'italic', 'strike', 'code'];
+
+function wrap(mark: Mark, value: string, children: PhrasingContent[]): PhrasingContent {
+  switch (mark.type) {
+    case 'link':
+      return { type: 'link', url: mark.href ?? '', children };
+    case 'bold':
+      return { type: 'strong', children };
+    case 'italic':
+      return { type: 'emphasis', children };
+    case 'strike':
+      return { type: 'delete', children };
+    case 'code':
+      return { type: 'inlineCode', value };
+  }
+}
+
+export function phrasing(
+  text: string,
+  marks: readonly Mark[],
+  leaf: Leaf = (from, to) => ({ type: 'text', value: text.slice(from, to) }),
+): PhrasingContent[] {
+  const cuts = [...new Set([0, text.length, ...marks.flatMap(({ from, to }) => [from, to])])];
+  const sorted = cuts.toSorted((a, b) => a - b);
+  const pieces = sorted.slice(1).map((to, index): Piece => ({ from: sorted[index] ?? to, to }));
+  const nested = (within: readonly Piece[], depth: number): PhrasingContent[] => {
+    const first = within[0];
+    const last = within.at(-1);
+    if (first === undefined || last === undefined) return [];
+    const type = nesting[depth];
+    if (type === undefined) return [leaf(first.from, last.to)];
+    const groups: { mark: Mark | undefined; pieces: Piece[] }[] = [];
+    for (const piece of within) {
+      const mark = marks.find(
+        (each) => each.type === type && each.from <= piece.from && piece.to <= each.to,
+      );
+      const group = groups.at(-1);
+      if (group !== undefined && group.mark === mark) group.pieces.push(piece);
+      else groups.push({ mark, pieces: [piece] });
+    }
+    return groups.flatMap(({ mark, pieces: run }) => {
+      const children = nested(run, depth + 1);
+      if (mark === undefined) return children;
+      const value = text.slice(run[0]?.from ?? 0, run.at(-1)?.to ?? 0);
+      return [wrap(mark, value, children)];
+    });
+  };
+  return nested(pieces, 0);
+}
+
 function reference(char: string): string {
   return `&#${char.charCodeAt(0)};`;
 }
 
-export function escapedLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((line) =>
-      line
-        .replace(/[!-/:-@[-`{-~]/g, '\\$&')
-        .replace(/^[\t ﻿]+|[\t ]+$/g, (edge) => [...edge].map(reference).join('')),
-    );
+function escapedUnits(text: string, joint: Joint): string[] {
+  const lines = text.split('\n');
+  return lines.flatMap((line, index) => {
+    const lead = line.length - line.replace(/^[\t \uFEFF]+/, '').length;
+    const trail = line.replace(/[\t ]+$/, '').length;
+    const units = line
+      .split('')
+      .map((unit, at) =>
+        at < lead || at >= trail ? reference(unit) : unit.replace(/[!-/:-@[-`{-~]/, '\\$&'),
+      );
+    return index === 0 ? units : [joint(lines, index), ...units];
+  });
+}
+
+export function escapedInline(text: string, marks: readonly Mark[], joint: Joint): string {
+  const units = escapedUnits(text, joint);
+  if (marks.length === 0) return units.join('');
+  const children = phrasing(text, marks, (from, to) => ({
+    type: 'html',
+    value: units.slice(from, to).join(''),
+  }));
+  const root: Root = { type: 'root', children: [{ type: 'paragraph', children }] };
+  return stringifyMarkdown(root).replace(/\n$/, '');
 }
 
 export function docOf(

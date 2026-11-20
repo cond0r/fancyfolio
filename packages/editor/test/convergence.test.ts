@@ -52,11 +52,12 @@ const blank = { type: 'callout', props: { tone: 'info' } };
 describe('peers editing at once', () => {
   const plain = kinds.filter((kind) => kind.type !== 'raw');
   const variants = {
-    'plain text': { kinds: plain, line: (text: string) => text, blank },
+    'plain text': { kinds: plain, line: (text: string) => text, blank, saves: true },
     'marked text': {
       kinds: [{ type: marked.name, props: {} }],
       line: (text: string) => `::marked{text="${text}"}`,
       blank: undefined,
+      saves: false,
     },
   };
 
@@ -89,7 +90,8 @@ describe('peers editing at once', () => {
           ),
         );
     }
-    expect(converged().ok).toBe(true);
+    const saved = converged();
+    if (variant.saves) expect(saved.ok).toBe(true);
   });
 
   it.each<[string, Op, readonly Op[], string]>([

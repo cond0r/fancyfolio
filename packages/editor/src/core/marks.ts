@@ -80,6 +80,23 @@ export function marksIn(block: Block, field: string): readonly Mark[] {
   return block.marks !== undefined && Object.hasOwn(block.marks, field) ? block.marks[field] : [];
 }
 
+const endInclusive: readonly MarkType[] = ['bold', 'italic', 'strike'];
+
+export function typedMarks(block: Block, field: string, offset: number, text: string): Mark[] {
+  const lines = text.split('\n');
+  return marksIn(block, field).flatMap(({ from, to, ...mark }) => {
+    const at = endInclusive.includes(mark.type) ? offset <= to : offset < to;
+    if (from >= offset || !at) return [];
+    if (mark.type !== 'code') return [{ ...mark, from: 0, to: text.length }];
+    let start = 0;
+    return lines.flatMap((line) => {
+      const span = { ...mark, from: start, to: start + line.length };
+      start += line.length + 1;
+      return line === '' ? [] : [span];
+    });
+  });
+}
+
 export function withMarks(block: Block, field: string, marks: readonly Mark[]): Block {
   const { marks: all, ...rest } = block;
   const others = Object.entries(all ?? {}).filter(([name]) => name !== field);

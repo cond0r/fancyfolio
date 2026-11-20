@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Atom, PrimitiveAtom, Store } from 'jotai/vanilla';
-import type { BlockContent, DefinitionContent, RootContent } from 'mdast';
+import type { BlockContent, DefinitionContent, PhrasingContent, RootContent } from 'mdast';
 
 export type BlockId = string;
 
@@ -29,6 +29,14 @@ export type Mark = Span & { readonly type: MarkType };
 export type Marks = { readonly [field: string]: readonly Mark[] };
 
 export type Fail = (reason: string) => never;
+
+export type Inline = { readonly text: string; readonly marks: readonly Mark[] };
+
+export type Piece = { readonly from: number; readonly to: number };
+
+export type Leaf = (from: number, to: number) => PhrasingContent;
+
+export type Joint = (lines: readonly string[], index: number) => string;
 
 export type Block = BlockKind & {
   readonly id: BlockId;

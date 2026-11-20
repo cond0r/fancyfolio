@@ -2,9 +2,9 @@ import { heading } from './heading.ts';
 import { isCanonicalText, isRecord, jsonOf } from './model.ts';
 import { paragraph } from './paragraph.ts';
 import { raw } from './raw.ts';
-import type { AnyComponent, Fields, Json, Registered, Registry } from './types.ts';
+import type { AnyComponent, Fields, Json, Registered, Registry, SafeHref } from './types.ts';
 
-export function registryOf(components: readonly AnyComponent[]): Registry {
+export function registryOf(components: readonly AnyComponent[], safeHref?: SafeHref): Registry {
   const named = new Map<string, Registered>([[raw.name, raw]]);
   const matches = new Map<string, AnyComponent>();
   const listed: readonly AnyComponent[] = [paragraph, heading, ...components];
@@ -20,7 +20,7 @@ export function registryOf(components: readonly AnyComponent[]): Registry {
     named.set(name, component);
     matches.set(markdown.match, component);
   }
-  return { components: named, matches };
+  return { components: named, matches, ...(safeHref && { safeHref }) };
 }
 
 export const builtins = registryOf([]);

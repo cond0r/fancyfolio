@@ -31,7 +31,7 @@ import type {
 const empty: Doc = { ids: [], blocks: new Map(), sources: new Map() };
 
 export function createEditor(source: string | Doc, options: EditorOptions): Editor {
-  const registry = { ...registryOf(options.components ?? []), safeHref: options.safeHref };
+  const registry = registryOf(options.components ?? [], options.safeHref);
   const store = createStore();
   const initial = typeof source === 'string' ? load(source, options.newId, registry) : empty;
   const ids = atom(initial.ids);

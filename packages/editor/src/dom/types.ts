@@ -26,8 +26,11 @@ export type Targets = {
 
 export type Overlay = {
   readonly set: (patch: Targets) => void;
+  readonly hover: (blockId: BlockId | undefined, x: number, y: number) => void;
   readonly flush: () => void;
 };
+
+export type Point = { readonly x: number; readonly y: number };
 
 export type Box = {
   readonly left: number;

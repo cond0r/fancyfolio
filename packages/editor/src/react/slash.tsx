@@ -79,15 +79,15 @@ function bindSlash(list: HTMLElement, editor: Editor, choices: readonly Entry[])
     const shown = current.allowed.filter((index) => matches(choices[index]?.label ?? '', at.query));
     const [first] = shown;
     if (first === undefined) return close();
+    for (const [index, item] of items.entries()) item.hidden = !shown.includes(index);
+    if (!list.matches(':popover-open')) list.showPopover();
     open = current;
     current.text = at.text;
     current.shown = shown;
-    for (const [index, item] of items.entries()) item.hidden = !shown.includes(index);
     at.field.setAttribute('role', 'combobox');
     at.field.setAttribute('aria-expanded', 'true');
     at.field.setAttribute('aria-controls', list.id);
     activate(current, shown.includes(current.active) ? current.active : first);
-    if (!list.matches(':popover-open')) list.showPopover();
     placeMenu(list, at.field.getBoundingClientRect());
   };
 
@@ -144,14 +144,19 @@ function bindSlash(list: HTMLElement, editor: Editor, choices: readonly Entry[])
 
   const controller = new AbortController();
   const options = { signal: controller.signal };
+  // Focus can land here while a popover is still hiding, where showPopover throws.
+  const afterFocus = () =>
+    setTimeout(() => {
+      if (!controller.signal.aborted) schedule();
+    });
   root.addEventListener('keydown', onKeyDown, { ...options, capture: true });
   const composition = (event: CompositionEvent) => {
     composing = event.type === 'compositionstart';
   };
   root.addEventListener('compositionstart', composition, options);
   root.addEventListener('compositionend', composition, options);
-  root.addEventListener('focusin', schedule, options);
-  root.addEventListener('focusout', schedule, options);
+  root.addEventListener('focusin', afterFocus, options);
+  root.addEventListener('focusout', afterFocus, options);
   list.addEventListener('pointerdown', (event) => event.preventDefault(), options);
   list.addEventListener('click', onClick, options);
   document.addEventListener('scroll', follow, { ...options, capture: true, passive: true });

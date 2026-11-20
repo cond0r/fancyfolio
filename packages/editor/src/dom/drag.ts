@@ -168,6 +168,11 @@ export function bindDrag(
     const drop = end();
     if (drop === undefined || !editor.command('moveBlockTo', drop)) return;
     place(root, store.get(editor.selection));
+    // A move to another parent remounts the block after this task's render, dropping its focus.
+    queueMicrotask(() => {
+      if (!root.contains(root.ownerDocument.activeElement))
+        place(root, store.get(editor.selection));
+    });
     const at = positionOf(view, drop.blockId, labelOf);
     const text = at === undefined ? '' : `Moved ${at.label} to ${at.position}`;
     cancelAnimationFrame(frame);

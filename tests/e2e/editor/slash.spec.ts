@@ -70,9 +70,16 @@ test('/met gives a metric; in a callout child /call lists nothing and Enter spli
 });
 
 test('Escape keeps / and the list shut for that text; /zzz and Enter split', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
   await open(page);
   await slash(page, '/');
   await expect(list(page)).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+/');
+  await expect(page.getByRole('menu').first()).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[role="listbox"]:popover-open')).toBeVisible();
+  expect(errors).toEqual([]);
   await page.keyboard.press('Escape');
   await expect(list(page)).toBeHidden();
   await expect(fields(page).nth(2)).toHaveText('/');

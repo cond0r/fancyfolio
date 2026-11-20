@@ -1,11 +1,70 @@
 import { placeOf } from '../core/tree.ts';
 import type { Block, BlockId, DocView, Editor } from '../core/types.ts';
-import type { Box, Overlay, Targets } from './types.ts';
+import type { Box, Overlay, Point, Targets } from './types.ts';
+
+const side = (p: Point, a: Point, b: Point) =>
+  (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+
+function inTriangle(p: Point, a: Point, b: Point, c: Point) {
+  const turns = [side(p, a, b), side(p, b, c), side(p, c, a)];
+  return turns.every((turn) => turn >= 0) || turns.every((turn) => turn <= 0);
+}
+
+function distance(p: Point, a: Point, b: Point) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1);
+  const t = Math.max(0, Math.min(1, along));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
+
+// Firefox and WebKit report whole-pixel pointers: a far apex's thin triangle needs slack.
+const slackPx = 2;
+
+const gap = (p: Point, rect: DOMRect) =>
+  Math.hypot(
+    Math.max(rect.left - p.x, 0, p.x - rect.right),
+    Math.max(rect.top - p.y, 0, p.y - rect.bottom),
+  );
+
+function heading(rect: DOMRect, from: Point, to: Point) {
+  const corners = [
+    { x: rect.left, y: rect.top },
+    { x: rect.right, y: rect.top },
+    { x: rect.right, y: rect.bottom },
+    { x: rect.left, y: rect.bottom },
+  ];
+  return (
+    from.x > rect.right &&
+    gap(to, rect) < gap(from, rect) &&
+    corners.some(
+      (corner, index) =>
+        inTriangle(to, from, corner, corners.at(index - 1) ?? corner) ||
+        distance(to, from, corner) <= slackPx,
+    )
+  );
+}
+
+const restMs = 80;
 
 export const blockElement = (root: HTMLElement, blockId: BlockId) =>
   [...root.querySelectorAll<HTMLElement>('[data-block-id]')].find(
     (block) => block.dataset.blockId === blockId,
   );
+
+function boxTop(view: Element) {
+  const style = getComputedStyle(view);
+  const edges = [
+    style.borderTopWidth,
+    style.borderRightWidth,
+    style.borderBottomWidth,
+    style.borderLeftWidth,
+  ];
+  const boxed =
+    edges.some((edge) => Number.parseFloat(edge) > 0) ||
+    style.backgroundColor !== 'rgba(0, 0, 0, 0)';
+  return boxed ? view.getBoundingClientRect().top + Number.parseFloat(style.paddingTop) : undefined;
+}
 
 export function positionOf(view: DocView, blockId: BlockId, labelOf: (block: Block) => string) {
   const block = view.blocks.get(blockId);
@@ -32,6 +91,11 @@ export function bindOverlay(
   const boxes = new Map<BlockId, Box>();
   let targets: Targets = {};
   let frame = 0;
+  let held: BlockId | undefined;
+  let apex: Point | undefined;
+  let pointer: Point | undefined;
+  let rest: ReturnType<typeof setTimeout> | undefined;
+  let rested = false;
 
   const outermost = (block: HTMLElement): HTMLElement => {
     const up = block.parentElement?.closest<HTMLElement>('[data-block-id]');
@@ -48,10 +112,11 @@ export function bindOverlay(
       (each) => each.closest('[data-block-id]') === block,
     );
     const first = field?.getClientRects()[0];
+    const view = block.firstElementChild ?? block;
     const top =
       first === undefined
-        ? (block.firstElementChild ?? block).getBoundingClientRect().top
-        : first.top + (first.height - chrome.offsetHeight) / 2;
+        ? view.getBoundingClientRect().top
+        : (boxTop(view) ?? first.top + (first.height - chrome.offsetHeight) / 2);
     const measured = {
       left: box.left - from.left,
       top: box.top - from.top,
@@ -64,11 +129,36 @@ export function bindOverlay(
     return measured;
   };
 
+  const towardChrome = () => {
+    if (apex === undefined || pointer === undefined || chrome.dataset.ffTarget !== held) {
+      return false;
+    }
+    return heading(chrome.getBoundingClientRect(), apex, pointer);
+  };
+
+  const intent = () => {
+    const { hovered } = targets;
+    clearTimeout(rest);
+    const moving = hovered !== undefined && held !== undefined && hovered !== held;
+    if (moving && !rested && towardChrome()) {
+      rest = setTimeout(() => {
+        rested = true;
+        request();
+      }, restMs);
+      return held;
+    }
+    rested = false;
+    held = hovered;
+    apex = pointer;
+    return held;
+  };
+
   const paint = () => {
     frame = 0;
     const live = (blockId: BlockId | undefined) =>
       blockId !== undefined && measure(blockId) !== undefined ? blockId : undefined;
     const aim = live(targets.aim?.blockId) === undefined ? undefined : targets.aim;
+    held = live(held);
     targets = {
       hovered: live(targets.hovered),
       selected: live(targets.selected),
@@ -76,7 +166,7 @@ export function bindOverlay(
       source: live(targets.source),
       aim,
     };
-    const target = targets.pinned ?? targets.source ?? targets.hovered ?? targets.selected;
+    const target = targets.pinned ?? targets.source ?? intent() ?? targets.selected;
     const box = target === undefined ? undefined : measure(target);
     const drop = aim === undefined ? undefined : measure(aim.blockId);
     const at = target === undefined ? undefined : positionOf(editor.view, target, labelOf);
@@ -128,6 +218,14 @@ export function bindOverlay(
       targets = { ...targets, ...patch };
       request();
     },
+    hover(blockId, x, y) {
+      pointer = { x, y };
+      if (blockId !== undefined) targets = { ...targets, hovered: blockId };
+      if (targets.hovered === held) {
+        clearTimeout(rest);
+        apex = pointer;
+      } else request();
+    },
     flush() {
       cancelAnimationFrame(frame);
       paint();
@@ -137,6 +235,7 @@ export function bindOverlay(
       resize.disconnect();
       mutation.disconnect();
       cancelAnimationFrame(frame);
+      clearTimeout(rest);
     },
   };
 }

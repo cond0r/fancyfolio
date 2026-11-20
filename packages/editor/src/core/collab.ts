@@ -1,4 +1,5 @@
 import { caretIn } from './commands.ts';
+import { marksIn, sliced } from './marks.ts';
 import { mapIn } from './ops.ts';
 import { placeOf } from './tree.ts';
 import type {
@@ -73,9 +74,11 @@ export function lowered(steps: readonly Planned[]): RemoteOp[] {
     if (op.kind !== 'mergeBlocks') return [op];
     if (inverse.kind !== 'splitBlock') throw new Error('a merge inverts to a split');
     const { blockId, field, offset } = inverse;
-    const text = putIn(change, blockId).fields[field].slice(offset);
-    const joined: RemoteOp[] =
-      text === '' ? [] : [{ kind: 'insertText', blockId, field, offset, text }];
+    const merged = putIn(change, blockId);
+    const text = merged.fields[field].slice(offset);
+    const marks = sliced(marksIn(merged, field), offset, offset + text.length);
+    const typed = { kind: 'insertText', blockId, field, offset, text } as const;
+    const joined: RemoteOp[] = text === '' ? [] : [marks.length > 0 ? { ...typed, marks } : typed];
     return [...joined, { kind: 'removeBlock', blockId: op.blockId }];
   });
 }

@@ -7,8 +7,10 @@ import type {
   BlockKind,
   Component,
   Doc,
+  Mark,
   NoProps,
   Op,
+  Span,
 } from '../src/core/types.ts';
 
 export type Random = { int(below: number): number; pick<T>(items: readonly T[]): T };
@@ -68,6 +70,17 @@ export const metric: Component<'metric', NoProps, 'value'> = {
   markdown: leafDirective({ name: 'metric', props: noProps, keys: [], attributes: ['value'] }),
 };
 
+export const marked: Component<'marked', NoProps, 'text'> = {
+  name: 'marked',
+  props: noProps,
+  fields: ['text'],
+  labels: { text: 'Text' },
+  marks: ['text'],
+  markdown: leafDirective({ name: 'marked', props: noProps, keys: [], attributes: ['text'] }),
+};
+
+export const safeHref = (href: string) => href.startsWith('https://');
+
 export const seeds = process.env.EDITOR_SEED
   ? [Number(process.env.EDITOR_SEED)]
   : Array.from({ length: 40 }, (_, i) => i + 1);
@@ -120,6 +133,10 @@ export const kinds: readonly BlockKind[] = [
   { type: 'raw', props: {} },
 ];
 
+export const markedKinds: readonly BlockKind[] = [...kinds, { type: marked.name, props: {} }];
+
+const markTypes = ['bold', 'italic', 'strike', 'code', 'link'] as const;
+
 export function randomText(random: Random, max = 4): string {
   return Array.from({ length: 1 + random.int(max) }, () => random.pick(pieces)).join('');
 }
@@ -135,6 +152,14 @@ function pair(random: Random, text: string): [number, number] {
   const a = random.pick(offsets);
   const b = random.pick(offsets);
   return a <= b ? [a, b] : [b, a];
+}
+
+function spanIn(random: Random, text: string, type: Mark['type']): Span | undefined {
+  const [from, to] = pair(random, text);
+  if (from === to || (type === 'code' && text.slice(from, to).includes('\n'))) return undefined;
+  return type === 'link'
+    ? { from, to, href: random.pick(['https://a.test', 'https://b.test']) }
+    : { from, to };
 }
 
 function movable(from: string, text: string, to: string, kept = ''): boolean {
@@ -173,17 +198,27 @@ export function randomOp(
   const text: string | undefined = block.fields.text;
   const holds = Object.values(block.slots ?? {}).some((ids) => ids.length > 0);
   const field = 'text';
+  const takes = (type: string) => type === marked.name;
+  const keeps = (type: string) => block.marks === undefined || takes(type);
   for (;;) {
     switch (random.int(structural ? 9 : 5)) {
-      case 0:
+      case 0: {
         if (text === undefined) break;
-        return {
-          kind: 'insertText',
-          blockId,
-          field,
-          offset: random.pick(boundaries(text)),
-          text: randomText(random),
-        };
+        if (takes(block.type) && random.int(2) === 0) {
+          const [from, to] = pair(random, text);
+          const mark = random.pick(markTypes);
+          const span = spanIn(random, text.slice(from, to), mark);
+          const spans = span ? [{ ...span, from: span.from + from, to: span.to + from }] : [];
+          if (from < to) return { kind: 'markText', blockId, field, mark, from, to, spans };
+          break;
+        }
+        const offset = random.pick(boundaries(text));
+        const typed = randomText(random);
+        const type = takes(block.type) ? random.pick(markTypes) : undefined;
+        const span = type && spanIn(random, typed, type);
+        const marks = type && span ? [{ type, ...span }] : [];
+        return { kind: 'insertText', blockId, field, offset, text: typed, ...(span && { marks }) };
+      }
       case 1: {
         if (text === undefined) break;
         const [from, to] = pair(random, text);
@@ -195,7 +230,9 @@ export function randomOp(
         const offset = random.pick(boundaries(text));
         const tail = text.slice(offset);
         const head = text.slice(0, offset);
-        const allowed = kindsAllowed.filter((kind) => movable(block.type, tail, kind.type, head));
+        const allowed = kindsAllowed.filter(
+          (kind) => movable(block.type, tail, kind.type, head) && keeps(kind.type),
+        );
         if (allowed.length > 0) {
           const { type, props } = random.pick(allowed);
           return { kind: 'splitBlock', blockId, field, offset, newId: newId(), type, props };
@@ -209,7 +246,8 @@ export function randomOp(
           previous !== undefined &&
           text !== undefined &&
           kept !== undefined &&
-          movable(block.type, text, previous.type, kept)
+          movable(block.type, text, previous.type, kept) &&
+          keeps(previous.type)
         ) {
           return { kind: 'mergeBlocks', blockId };
         }
@@ -217,7 +255,10 @@ export function randomOp(
       }
       case 4: {
         const allowed = [...kindsAllowed, ...(blank && text === '' ? [blank] : [])].filter(
-          (kind) => !isSameKind(kind, block) && movable(block.type, text ?? '', kind.type),
+          (kind) =>
+            !isSameKind(kind, block) &&
+            movable(block.type, text ?? '', kind.type) &&
+            keeps(kind.type),
         );
         if (allowed.length > 0 && !holds) {
           return { kind: 'setType', blockId, ...random.pick(allowed) };
@@ -256,10 +297,39 @@ export function docProblems(doc: Doc): string[] {
     for (const text of Object.values(block.fields)) {
       if (!text.isWellFormed() || /[\r\0]/.test(text)) problems.push(`bad text ${id}`);
     }
+    for (const [name, marks] of Object.entries(block.marks ?? {})) {
+      if (markProblems(block.fields[name], marks)) problems.push(`bad marks ${id}`);
+    }
     const level = block.type === 'heading' ? Reflect.get(Object(block.props), 'level') : 1;
     if (![1, 2, 3, 4, 5, 6].includes(level)) problems.push(`bad level ${id}`);
   }
   return problems;
+}
+
+function markProblems(text: string | undefined, marks: readonly Mark[]): boolean {
+  const inPair = (at: number) =>
+    /[\ud800-\udbff]/.test(text?.[at - 1] ?? '') && /[\udc00-\udfff]/.test(text?.[at] ?? '');
+  return (
+    text === undefined ||
+    marks.length === 0 ||
+    marks.some((mark, i) => {
+      const before = marks[i - 1];
+      const rank = (each: Mark) => markTypes.indexOf(each.type);
+      const joins = before?.type === mark.type && before.href === mark.href;
+      return (
+        mark.from < 0 ||
+        mark.from >= mark.to ||
+        mark.to > text.length ||
+        inPair(mark.from) ||
+        inPair(mark.to) ||
+        (mark.type === 'code' && text.slice(mark.from, mark.to).includes('\n')) ||
+        (mark.type === 'link') !== (mark.href !== undefined) ||
+        (before !== undefined && rank(before) > rank(mark)) ||
+        (before?.type === mark.type &&
+          (before.to > mark.from || (joins && before.to === mark.from)))
+      );
+    })
+  );
 }
 
 export function snapshot(doc: Doc): Block[] {

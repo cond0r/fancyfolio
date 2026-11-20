@@ -309,6 +309,9 @@ const defaults: DefaultHandlers = {
           : caret(blockId, field, 0),
     };
   },
+  toggleMark: none,
+  setCase: none,
+  setLink: none,
   undo: none,
   redo: none,
 };

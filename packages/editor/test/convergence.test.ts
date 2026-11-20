@@ -1,34 +1,39 @@
 import { describe, expect, it, vi } from 'vitest';
+import { docOf } from '../src/core/model.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Doc, Op, Presence, RemoteOp } from '../src/core/types.ts';
+import type { AnyComponent, Doc, Mark, Op, Presence, RemoteOp } from '../src/core/types.ts';
 import { join, room } from './collab.ts';
-import { callout, counter, kinds, randomOp, seeded, seeds } from './generate.ts';
+import { callout, counter, kinds, marked, randomOp, safeHref, seeded, seeds } from './generate.ts';
 
 const page = 'Before.\n\n:::callout{tone="info"}\nFirst\n\nSecond\n:::\n\nAfter.\n';
 const exclaimed: AnyComponent = {
   ...callout,
   transform: (op) => (op.kind === 'insertText' && op.text === '?' ? [{ ...op, text: '!' }] : []),
 };
-const components = [exclaimed];
+const components = [exclaimed, marked];
 const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
 function peers(count: number, source: string | Doc = page) {
   errors.mockClear();
-  const shared = room(source, components);
+  const shared = room(source, components, safeHref);
   const all = Array.from({ length: count }, (_, client) => {
     const { adapter: collab, deliver, sent } = join(shared);
     const newId = counter(`p${client}-`);
-    const editor = createEditor(shared.replica().doc, { now: () => 0, newId, components, collab });
+    const options = { now: () => 0, newId, components, collab, safeHref };
+    const editor = createEditor(shared.replica().doc, options);
     return { editor, deliver, sent };
   });
   const converged = () => {
     for (let moved = 1; moved > 0; ) moved = all.reduce((sum, peer) => sum + peer.deliver(), 0);
     const expected = shared.markdown();
-    for (const { editor } of all) expect(editor.markdown()).toEqual(expected);
+    for (const { editor } of all) {
+      expect(editor.markdown()).toEqual(expected);
+      expect(editor.doc().blocks).toEqual(shared.doc().blocks);
+    }
     expect(errors).not.toHaveBeenCalled();
     return expected;
   };
-  return { all, converged };
+  return { all, converged, shared };
 }
 
 const typing = { kind: 'insertText', field: 'text' } as const;
@@ -46,26 +51,46 @@ const blank = { type: 'callout', props: { tone: 'info' } };
 
 describe('peers editing at once', () => {
   const plain = kinds.filter((kind) => kind.type !== 'raw');
-
-  it.each(seeds.flatMap((seed) => [2, 3].map((count) => [seed, count])))(
-    'converge on the room document (seed %i, %i peers)',
-    (seed, count) => {
-      const random = seeded(seed);
-      const body = Array.from({ length: 2 + random.int(4) }, (_, i) => `Line ${i}`).join('\n\n');
-      const { all, converged } = peers(count, body);
-      const ids = all.map((_, client) => counter(`c${client}-`));
-      for (let step = 0; step < 60; step += 1) {
-        const client = random.int(count);
-        const { editor, deliver } = all[client];
-        if (random.int(3) === 0) deliver(random.int(3));
-        else
-          editor.dispatch(
-            randomOp(editor.doc(), random, ids[client], plain, true, undefined, blank),
-          );
-      }
-      expect(converged().ok).toBe(true);
+  const variants = {
+    'plain text': { kinds: plain, line: (text: string) => text, blank },
+    'marked text': {
+      kinds: [{ type: marked.name, props: {} }],
+      line: (text: string) => `::marked{text="${text}"}`,
+      blank: undefined,
     },
-  );
+  };
+
+  it.each(
+    seeds.flatMap((seed) =>
+      [2, 3].flatMap((count) =>
+        (['plain text', 'marked text'] as const).map((on) => [seed, count, on] as const),
+      ),
+    ),
+  )('converge on the room document (seed %i, %i peers, %s)', (seed, count, on) => {
+    const variant = variants[on];
+    const random = seeded(seed);
+    const body = Array.from({ length: 2 + random.int(4) }, (_, i) => variant.line(`Line ${i}`));
+    const { all, converged } = peers(count, body.join('\n\n'));
+    const ids = all.map((_, client) => counter(`c${client}-`));
+    for (let step = 0; step < 60; step += 1) {
+      const client = random.int(count);
+      const { editor, deliver } = all[client];
+      if (random.int(3) === 0) deliver(random.int(3));
+      else
+        editor.dispatch(
+          randomOp(
+            editor.doc(),
+            random,
+            ids[client],
+            variant.kinds,
+            true,
+            undefined,
+            variant.blank,
+          ),
+        );
+    }
+    expect(converged().ok).toBe(true);
+  });
 
   it.each<[string, Op, readonly Op[], string]>([
     [
@@ -117,6 +142,85 @@ describe('peers editing at once', () => {
     other.editor.dispatch(op);
     converged();
     expect(editor.store.get(editor.selection)).toEqual(expected);
+  });
+});
+
+describe('peers formatting at once', () => {
+  const bold = (from: number, to: number): Mark => ({ type: 'bold', from, to });
+  const notes = docOf([
+    {
+      id: 'm0',
+      type: 'marked',
+      props: {},
+      fields: { text: 'Bold words here' },
+      marks: { text: [bold(0, 4)] },
+    },
+    {
+      id: 'm1',
+      type: 'marked',
+      props: {},
+      fields: { text: 'tail' },
+      marks: { text: [{ type: 'italic', from: 0, to: 4 }] },
+    },
+  ]);
+  const on = { blockId: 'm0', field: 'text' } as const;
+  const marking = (mark: Mark['type'], from: number, to: number, spans = [{ from, to }]): Op => ({
+    kind: 'markText',
+    ...on,
+    mark,
+    from,
+    to,
+    spans,
+  });
+
+  it.each<[string, readonly Op[], readonly Op[]]>([
+    ['A bolds [2,7) while B types at 4', [marking('bold', 2, 7)], [type('m0', 4, 'xy')]],
+    [
+      'A deletes a bold range B extends',
+      [{ kind: 'deleteText', ...on, from: 0, to: 4 }],
+      [marking('bold', 0, 8)],
+    ],
+    [
+      'A splits a marked block while B formats its tail',
+      [{ kind: 'splitBlock', ...on, offset: 5, newId: 'n', type: 'marked', props: {} }],
+      [marking('italic', 6, 10)],
+    ],
+    [
+      'A merges a marked block and B keeps its marks',
+      [{ kind: 'mergeBlocks', blockId: 'm1' }],
+      [{ ...type('m1', 2, 'z'), marks: [bold(0, 1)] }],
+    ],
+    [
+      'both set one type over overlapping ranges',
+      [marking('bold', 2, 9, [])],
+      [marking('bold', 6, 12)],
+    ],
+  ])('converge when %s', (_name, mine, theirs) => {
+    for (const count of [2, 3]) {
+      const { all, converged } = peers(count, notes);
+      all[0].editor.dispatch(...mine);
+      all[1].editor.dispatch(...theirs);
+      converged();
+    }
+  });
+
+  it('keep the text and drop the marks a hostile peer sends', () => {
+    const { all, converged, shared } = peers(2, notes);
+    join(shared).adapter.send([
+      { ...type('m0', 0, 'a\nb'), marks: [{ type: 'code', from: 0, to: 3 }] },
+      {
+        ...type('m0', 0, 'x'),
+        marks: [{ type: 'link', from: 0, to: 1, href: 'javascript:alert(1)' }],
+      },
+    ]);
+    converged();
+    for (const { editor } of all) {
+      expect(editor.doc().blocks.get('m0')).toEqual({
+        ...notes.blocks.get('m0'),
+        fields: { text: 'xa\nbBold words here' },
+        marks: { text: [bold(4, 8)] },
+      });
+    }
   });
 });
 

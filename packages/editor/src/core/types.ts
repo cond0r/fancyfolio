@@ -20,9 +20,20 @@ export type BlockKind = { readonly type: string; readonly props: Json };
 
 export type Slots = { readonly [slot: string]: readonly BlockId[] };
 
+export type MarkType = 'bold' | 'italic' | 'strike' | 'code' | 'link';
+
+export type Span = { readonly from: number; readonly to: number; readonly href?: string };
+
+export type Mark = Span & { readonly type: MarkType };
+
+export type Marks = { readonly [field: string]: readonly Mark[] };
+
+export type Fail = (reason: string) => never;
+
 export type Block = BlockKind & {
   readonly id: BlockId;
   readonly fields: Fields;
+  readonly marks?: Marks;
   readonly slots?: Slots;
 };
 
@@ -31,6 +42,7 @@ export type TypedBlock<Props, Field extends string, Slot extends string = never>
   readonly type: string;
   readonly props: Props;
   readonly fields: { readonly [F in Field]: string };
+  readonly marks?: { readonly [F in Field]?: readonly Mark[] };
   readonly slots?: { readonly [S in Slot]: readonly BlockId[] };
 };
 
@@ -48,6 +60,7 @@ export type Codec<Props, Field extends string, Slot extends string = never> = {
     | {
         readonly props: Props;
         readonly fields: { readonly [F in Field]: string };
+        readonly marks?: { readonly [F in Field]?: readonly Mark[] };
         readonly slots?: SlotNodes<Slot>;
       }
     | undefined;
@@ -65,6 +78,7 @@ export type Component<
   readonly props: StandardSchemaV1<unknown, Props>;
   readonly fields: readonly Field[];
   readonly labels: { readonly [F in Field]: string };
+  readonly marks?: readonly Field[];
   readonly slots?: readonly Slot[];
   readonly markdown: Codec<Props, Field, Slot>;
   readonly commands?: Handlers;
@@ -110,9 +124,12 @@ export type Registered = Omit<AnyComponent, 'markdown'> & {
   readonly markdown?: AnyComponent['markdown'];
 };
 
+export type SafeHref = (href: string) => boolean;
+
 export type Registry = {
   readonly components: ReadonlyMap<string, Registered>;
   readonly matches: ReadonlyMap<string, AnyComponent>;
+  readonly safeHref?: SafeHref;
 };
 
 export type Source = {
@@ -163,6 +180,7 @@ export type Op =
       readonly field: string;
       readonly offset: number;
       readonly text: string;
+      readonly marks?: readonly Mark[];
     }
   | {
       readonly kind: 'deleteText';
@@ -170,6 +188,15 @@ export type Op =
       readonly field: string;
       readonly from: number;
       readonly to: number;
+    }
+  | {
+      readonly kind: 'markText';
+      readonly blockId: BlockId;
+      readonly field: string;
+      readonly mark: MarkType;
+      readonly from: number;
+      readonly to: number;
+      readonly spans: readonly Span[];
     }
   | {
       readonly kind: 'splitBlock';
@@ -230,7 +257,7 @@ export type Bare = {
 }[keyof Commands];
 
 export type Commands = {
-  readonly insertText: { readonly text: string };
+  readonly insertText: { readonly text: string; readonly marks?: readonly Mark[] };
   readonly insertBreak: NoArgs;
   readonly deleteBackward: NoArgs;
   readonly deleteForward: NoArgs;
@@ -243,6 +270,9 @@ export type Commands = {
   readonly duplicateBlock: { readonly blockId: BlockId };
   readonly insertBlockAfter: BlockKind & { readonly blockId: BlockId };
   readonly turnInto: BlockKind & { readonly blockId: BlockId; readonly replace: boolean };
+  readonly toggleMark: { readonly mark: MarkType };
+  readonly setCase: { readonly to: 'upper' | 'lower' | 'capitalize' };
+  readonly setLink: { readonly href: string | null };
   readonly undo: NoArgs;
   readonly redo: NoArgs;
 };
@@ -335,6 +365,7 @@ export type EditorOptions = {
   readonly newId: () => BlockId;
   readonly components?: readonly AnyComponent[];
   readonly collab?: CollabAdapter;
+  readonly safeHref?: SafeHref;
 } & Saving;
 
 export type SaveResult =
@@ -344,6 +375,7 @@ export type SaveResult =
 
 export type Reading = BlockKind & {
   readonly fields: Fields;
+  readonly marks?: Marks;
   readonly slots?: { readonly [slot: string]: readonly Reading[] };
 };
 

@@ -24,6 +24,7 @@ import {
   counter,
   docProblems,
   kinds,
+  marked,
   metric,
   randomOp,
   seeded,
@@ -442,6 +443,40 @@ describe('undo and redo', () => {
     expect(editor.redo()).toBe(true);
     expect(saved(editor)).toBe('Meet at 10:30\n');
     expect(editor.redo()).toBe(false);
+  });
+
+  it('makes three characters typed in bold one undo step, and redoes them bold', () => {
+    const editor = createEditor('::marked{text="ab"}\n', {
+      now: () => 0,
+      newId: counter(),
+      components: [marked],
+    });
+    const bold = [{ type: 'bold', from: 0, to: 1 }] as const;
+    for (const [offset, text] of [
+      [2, 'x'],
+      [3, 'y'],
+      [4, 'z'],
+    ] as const) {
+      editor.dispatch({
+        kind: 'insertText',
+        blockId: 'b0',
+        field: 'text',
+        offset,
+        text,
+        marks: bold,
+      });
+    }
+    const typed = editor.doc().blocks.get('b0');
+    expect(typed?.marks).toEqual({ text: [{ type: 'bold', from: 2, to: 5 }] });
+    expect(editor.undo()).toBe(true);
+    expect(editor.doc().blocks.get('b0')).toEqual({
+      ...typed,
+      fields: { text: 'ab' },
+      marks: undefined,
+    });
+    expect(editor.undo()).toBe(false);
+    expect(editor.redo()).toBe(true);
+    expect(editor.doc().blocks.get('b0')).toEqual(typed);
   });
 
   it('starts a new step when typing jumps, changes block or follows another op', () => {

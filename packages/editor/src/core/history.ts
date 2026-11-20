@@ -1,3 +1,4 @@
+import { shifted } from './marks.ts';
 import type { Entry, History, Step, Travel } from './types.ts';
 
 export const emptyHistory: History = { done: [], undone: [], sealed: true };
@@ -18,8 +19,9 @@ function continued(step: Step | undefined, entry: Entry, at: number): Step | und
   }
   const { blockId, field, offset } = last;
   const text = last.text + op.text;
+  const marks = [...(last.marks ?? []), ...shifted(op.marks ?? [], last.text.length)];
   return {
-    ops: [{ kind: 'insertText', blockId, field, offset, text }],
+    ops: [{ kind: 'insertText', blockId, field, offset, text, ...(marks.length > 0 && { marks }) }],
     inverses: [{ kind: 'deleteText', blockId, field, from: offset, to: offset + text.length }],
     before: step.before,
     after: entry.after,

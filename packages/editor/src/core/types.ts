@@ -285,6 +285,10 @@ export type Commands = {
   readonly redo: NoArgs;
 };
 
+export type Case = Commands['setCase']['to'];
+
+export type Run = { from: number; to: number; text: string; offsets: Map<number, number> };
+
 export type Result = { readonly ops: readonly Op[]; readonly selection?: Selection } | undefined;
 
 export type Shape = { readonly fields: readonly string[]; readonly slots: readonly string[] };

@@ -5,7 +5,7 @@ import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
 import type { AnyComponent, Editor, Handlers, Selection } from '../src/core/types.ts';
 import { join, room } from './collab.ts';
-import { callout, counter, metric } from './generate.ts';
+import { callout, counter, metric, safeHref } from './generate.ts';
 
 function editorAt(markdown: string, components: readonly AnyComponent[] = []): Editor {
   return createEditor(markdown, { now: () => 0, newId: counter(), components });
@@ -740,5 +740,131 @@ describe('block commands', () => {
       { text: 'First' },
       { text: 'Second' },
     ]);
+  });
+});
+
+describe('mark commands', () => {
+  function markedAt(markdown: string): Editor {
+    return createEditor(markdown, { now: () => 0, newId: counter(), safeHref });
+  }
+
+  it.each<[string, string, Selection, ...Parameters<Editor['can']>, string]>([
+    [
+      'bolds a partly bold range whole',
+      'a **bc** d\n',
+      caret('b0', 0, 4),
+      'toggleMark',
+      { mark: 'bold' },
+      '**a bc** d\n',
+    ],
+    [
+      'unbolds an all bold range',
+      'a **bc** d\n',
+      caret('b0', 2, 4),
+      'toggleMark',
+      { mark: 'bold' },
+      'a bc d\n',
+    ],
+    [
+      'uppercases and keeps the marks',
+      '**groß** *und* klein\n',
+      caret('b0', 0, 14),
+      'setCase',
+      { to: 'upper' },
+      '**GROSS** *UND* KLEIN\n',
+    ],
+    [
+      'lowercases and keeps the marks',
+      '**API** Docs\n',
+      caret('b0', 0, 8),
+      'setCase',
+      { to: 'lower' },
+      '**api** docs\n',
+    ],
+    [
+      'capitalizes words and keeps the marks',
+      'the **API** docs\n',
+      caret('b0', 0, 12),
+      'setCase',
+      { to: 'capitalize' },
+      'The **API** Docs\n',
+    ],
+    [
+      'links a range',
+      'see docs\n',
+      caret('b0', 4, 8),
+      'setLink',
+      { href: 'https://example.test' },
+      'see [docs](https://example.test)\n',
+    ],
+    [
+      'unlinks a range',
+      'see [docs](https://example.test)\n',
+      caret('b0', 4, 8),
+      'setLink',
+      { href: null },
+      'see docs\n',
+    ],
+    [
+      'types bold at the end of a bold mark',
+      '**ab** c\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x' },
+      '**abx** c\n',
+    ],
+    [
+      'types plain at the end of a code mark',
+      '`ab` c\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x' },
+      '`ab`x c\n',
+    ],
+    [
+      'pastes a line break into code without code on it',
+      'x `cd` y\n',
+      caret('b0', 3),
+      'insertText',
+      { text: 'a\nb' },
+      'x `ca`\n`bd` y\n',
+    ],
+  ])('%s in one undo step', (_name, source, selection, name, args, markdown) => {
+    const editor = markedAt(source);
+    select(editor, selection);
+    expect(editor.command(name, args)).toBe(true);
+    expect(saved(editor)).toBe(markdown);
+    expect(editor.undo()).toBe(true);
+    expect(saved(editor)).toBe(source);
+  });
+
+  it.each<[string, string, Selection, ...Parameters<Editor['can']>]>([
+    ['code over a line break', 'a\nb\n', caret('b0', 0, 3), 'toggleMark', { mark: 'code' }],
+    [
+      'a link safeHref refuses',
+      'see docs\n',
+      caret('b0', 4, 8),
+      'setLink',
+      { href: 'javascript:alert(1)' },
+    ],
+  ])('refuses %s and changes nothing', (_name, source, selection, name, args) => {
+    const editor = markedAt(source);
+    select(editor, selection);
+    expect(editor.command(name, args)).toBe(false);
+    expect(saved(editor)).toBe(source);
+  });
+
+  it('changes the case only over the characters that change', () => {
+    const source = 'API docs here\n';
+    const { adapter, sent } = join(room(source, []));
+    const editor = createEditor(source, { now: () => 0, newId: counter(), collab: adapter });
+    select(editor, caret('b0', 0, 13));
+    expect(editor.command('setCase', { to: 'capitalize' })).toBe(true);
+    const at = (offset: number, text: string) => [
+      { kind: 'deleteText', blockId: 'b0', field: 'text', from: offset, to: offset + 1 },
+      { kind: 'insertText', blockId: 'b0', field: 'text', offset, text },
+    ];
+    expect(sent).toEqual([[...at(9, 'H'), ...at(4, 'D')]]);
+    expect(editor.store.get(editor.selection)).toEqual(caret('b0', 0, 13));
   });
 });

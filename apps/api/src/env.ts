@@ -66,4 +66,10 @@ export const apiEnv = v.pipe(
   ),
 );
 
+export const seedOwnerEnv = v.object({
+  SEED_EMAIL: v.pipe(v.string(), v.email(), v.toLowerCase(), v.maxLength(emailLength)),
+  SEED_NAME: v.string(),
+  SEED_PASSWORD: v.string(),
+});
+
 export const env = parseEnv(apiEnv, process.env);

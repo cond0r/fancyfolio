@@ -16,7 +16,8 @@
     "build": "pnpm -r --if-present run build",
     "e2e": "playwright test",
     "db:migrate": "node packages/db/scripts/migrate.ts",
-    "db:roles": "node packages/db/scripts/db-roles.ts"
+    "db:roles": "node packages/db/scripts/db-roles.ts",
+    "db:seed:owner": "node apps/api/scripts/seed-owner.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

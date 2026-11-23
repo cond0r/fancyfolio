@@ -14,3 +14,5 @@ overrides:
 auditConfig:
   ignoreGhsas:
     - GHSA-fc5q-39xc-vjpf
+catalog:
+  better-auth: 1.7.7

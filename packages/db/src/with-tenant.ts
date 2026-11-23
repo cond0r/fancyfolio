@@ -35,7 +35,7 @@ export type TenantDatabase = {
 
 export type TenantPool = { pool: Pool; logger?: Logger };
 
-const tenantLimits = {
+export const tenantLimits = {
   connectionTimeoutMillis: 5000,
   query_timeout: 7000,
   keepAlive: true,

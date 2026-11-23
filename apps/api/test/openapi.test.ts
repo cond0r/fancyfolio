@@ -101,7 +101,14 @@ describe('GET /api/openapi.json', () => {
     });
     const text = await withCredentials.text();
     expect(text).toBe(anonymous);
-    for (const leak of ['unused-password-Z7', 'postgres://', '127.0.0.1', 's1-K2', 't1-K3']) {
+    for (const leak of [
+      'unused-password-Z7',
+      'unused-auth-secret-Z7',
+      'postgres://',
+      '127.0.0.1',
+      's1-K2',
+      't1-K3',
+    ]) {
       expect(text).not.toContain(leak);
     }
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {

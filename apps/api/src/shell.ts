@@ -35,7 +35,7 @@ export function notFound(c: Context<Env>) {
   return c.json({ error: 'Not found', requestId: c.get('requestId') } satisfies ErrorBody, 404);
 }
 
-export function refused(c: Context<Env>, status: 400 | 409) {
+export function refused(c: Context<Env>, status: 400 | 409 | 413) {
   return c.json(
     { error: statusText[status], requestId: c.get('requestId') } satisfies ErrorBody,
     status,
@@ -114,6 +114,7 @@ const statusText = {
   400: 'Bad request',
   404: 'Not found',
   409: 'Conflict',
+  413: 'Payload too large',
   500: 'Internal error',
 } as const;
 

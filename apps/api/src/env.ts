@@ -1,3 +1,4 @@
+import { parseEnv } from '@fancyfolio/contracts';
 import * as v from 'valibot';
 
 export const localEnv = v.object({
@@ -17,3 +18,43 @@ export const liveblocksEnv = v.object({
   LIVEBLOCKS_BASE_URL: v.optional(v.pipe(v.string(), v.url())),
   VERCEL_ENV: v.optional(v.picklist(['development', 'preview', 'production'])),
 });
+
+export const CLIENT_IP_HEADERS = [
+  'x-forwarded-for',
+  'x-real-ip',
+  'x-vercel-forwarded-for',
+] as const;
+
+export const emailLength = 254;
+
+export const apiEnv = v.pipe(
+  v.object({
+    AUTH_DATABASE_URL: v.pipe(v.string(), v.url(), v.regex(/^postgres(ql)?:\/\//)),
+    BETTER_AUTH_SECRET: v.pipe(v.string(), v.regex(/^[\x21-\x7e]{32,}$/)),
+    BETTER_AUTH_URL: v.pipe(
+      v.string(),
+      v.regex(/^(https:\/\/[a-z0-9.-]+|http:\/\/(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$/),
+    ),
+    CLIENT_IP_HEADER: v.picklist(CLIENT_IP_HEADERS),
+    SIGNUP_ALLOWLIST: v.pipe(
+      v.optional(v.string(), ''),
+      v.transform((list) =>
+        list
+          .split(',')
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => email !== ''),
+      ),
+      v.array(v.pipe(v.string(), v.email(), v.maxLength(emailLength))),
+    ),
+    VERCEL_ENV: liveblocksEnv.entries.VERCEL_ENV,
+  }),
+  v.forward(
+    v.check(
+      ({ BETTER_AUTH_URL, VERCEL_ENV }) =>
+        VERCEL_ENV !== 'production' || BETTER_AUTH_URL.startsWith('https://'),
+    ),
+    ['BETTER_AUTH_URL'],
+  ),
+);
+
+export const env = parseEnv(apiEnv, process.env);

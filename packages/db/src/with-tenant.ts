@@ -43,17 +43,22 @@ export const tenantLimits = {
 
 export function tenantDatabase(url: string, options: { max?: number } = {}): TenantDatabase {
   const db = { pool: connect(url, { ...tenantLimits, max: options.max }) };
-  let roleCheck: Promise<void> | undefined;
+  const checkRole = roleGuard(db, 'withTenant');
   return {
     withTenant: async (context, fn) => {
-      roleCheck ??= refuseBypassingRole(db).catch((error: unknown) => {
-        roleCheck = undefined;
-        throw error;
-      });
-      await roleCheck;
+      await checkRole();
       return withTenant(db, context, fn);
     },
   };
+}
+
+export function roleGuard(db: TenantPool, user: string): () => Promise<void> {
+  let roleCheck: Promise<void> | undefined;
+  return () =>
+    (roleCheck ??= refuseBypassingRole(db, user).catch((error: unknown) => {
+      roleCheck = undefined;
+      throw error;
+    }));
 }
 
 async function transaction<T>(
@@ -102,7 +107,7 @@ async function transaction<T>(
   }
 }
 
-async function refuseBypassingRole(db: TenantPool): Promise<void> {
+async function refuseBypassingRole(db: TenantPool, user: string): Promise<void> {
   const bypass = await transaction(db, sql`set transaction read only`, async (tx) => {
     await tx.execute(sql`select set_config('statement_timeout', '5s', true)`);
     const {
@@ -113,7 +118,7 @@ async function refuseBypassingRole(db: TenantPool): Promise<void> {
     return role?.bypass;
   });
   if (bypass !== false) {
-    throw new Error('withTenant refuses a database role with SUPERUSER or BYPASSRLS');
+    throw new Error(`${user} refuses a database role with SUPERUSER or BYPASSRLS`);
   }
 }
 

@@ -1,3 +1,4 @@
+import { format } from 'node:util';
 import { LIMITS } from '@fancyfolio/contracts';
 import { sql } from 'drizzle-orm';
 import { drizzle, NodePgSession } from 'drizzle-orm/node-postgres';
@@ -238,6 +239,26 @@ describe('sign-up', () => {
     });
     expect(res.status).toBe(500);
     expect(await usersWith('jo.auth@example.test')).toBe(0);
+    vi.restoreAllMocks();
+  });
+});
+
+describe.runIf(inject('db').mode === 'local')('an auth database role that bypasses RLS', () => {
+  it('is refused at first use without printing its URL', async () => {
+    const { ownerUrl } = inject('db');
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.resetModules();
+    vi.stubEnv('AUTH_DATABASE_URL', ownerUrl);
+    const { default: ownerApi } = await import('../../src/index.ts');
+    const res = await call(ownerApi, '/api/auth/sign-in/email', {
+      headers: { 'x-real-ip': '198.51.100.90' },
+      body: { email: 'fay.auth@example.test', password },
+    });
+    expect(res.status).toBe(500);
+    const output = [await res.text(), ...printed.mock.calls.map((args) => format(...args))].join();
+    for (const part of [ownerUrl, decodeURIComponent(new URL(ownerUrl).password)].filter(Boolean)) {
+      expect(output).not.toContain(part);
+    }
     vi.restoreAllMocks();
   });
 });

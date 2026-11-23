@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
@@ -11,23 +13,41 @@ vi.stubEnv('DATABASE_URL', appUrl);
 vi.stubEnv('AUTH_DATABASE_URL', authUrl);
 vi.stubEnv('SIGNUP_ALLOWLIST', 'ines.signup@example.test, Kenji.Signup@Example.test');
 const { default: api } = await import('../../src/index.ts');
-const { auth } = await import('../../src/auth.ts');
+const { auth, createAuth } = await import('../../src/auth.ts');
+const { env } = await import('../../src/env.ts');
 
 const pool = connect(authUrl);
 const query = rows(drizzle(pool));
 let ip = 0;
 
-function post(path: string, body: Record<string, string>) {
+type Send = (path: string, init: RequestInit) => Response | Promise<Response>;
+const viaApi: Send = (path, init) => api.request(path, init);
+
+function post(path: string, body: Record<string, string>, send = viaApi) {
   ip += 1;
-  return api.request(path, {
+  return send(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-forwarded-for': `192.0.2.${100 + ip}` },
     body: JSON.stringify(body),
   });
 }
 
-function signUp(email: string, secret = password) {
-  return post('/api/auth/sign-up/email', { name: 'Fixture Person', email, password: secret });
+function signUp(email: string, secret = password, send = viaApi) {
+  return post('/api/auth/sign-up/email', { name: 'Fixture Person', email, password: secret }, send);
+}
+
+const seedScript = fileURLToPath(new URL('../../scripts/seed-owner.ts', import.meta.url));
+
+vi.stubEnv('SEED_EMAIL', 'Owner.Signup@example.test');
+vi.stubEnv('SEED_NAME', 'Fixture Owner');
+
+function seedOwner(secret: string) {
+  const env = { ...process.env, SEED_PASSWORD: secret };
+  return new Promise((resolve) => {
+    execFile(process.execPath, [seedScript], { timeout: 20_000, env }, (error, stdout, stderr) => {
+      resolve({ status: error?.code ?? 0, output: `${stdout}${stderr}` });
+    });
+  });
 }
 
 function signIn(email: string, secret = password) {
@@ -79,11 +99,17 @@ describe('invite-only sign-up', () => {
     expect((await res.json()).user.email).toBe('ines.signup@example.test');
   });
 
-  it('answers an email outside the allowlist exactly like an invited one and creates nothing', async () => {
-    const body = await expectGenericAnswer(await signUp('mallory.signup@example.test'));
-    expect(body.user.email).toBe('mallory.signup@example.test');
-    expect(await usersNamed('mallory.signup@example.test')).toBe(0);
-    expect((await signIn('mallory.signup@example.test')).status).toBe(401);
+  const closed = createAuth([]);
+  const viaClosed: Send = (path, init) =>
+    closed.handler(new Request(new URL(path, env.BETTER_AUTH_URL), init));
+  it.each([
+    ['an email outside the allowlist', 'mallory.signup@example.test', viaApi],
+    ['any email while the allowlist is empty', 'nadia.signup@example.test', viaClosed],
+  ])('answers %s exactly like an invited one and creates nothing', async (_, email, send) => {
+    const body = await expectGenericAnswer(await signUp(email, password, send));
+    expect(body.user.email).toBe(email);
+    expect(await usersNamed(email)).toBe(0);
+    expect((await signIn(email)).status).toBe(401);
   });
 
   it('answers a second sign-up of a registered email alike and keeps the first password', async () => {
@@ -136,5 +162,36 @@ describe('invite-only sign-up', () => {
       'verifyPassword',
     ]);
     expect((await post('/api/auth/sign-in/social', { provider: 'github' })).status).toBe(404);
+  });
+});
+
+describe('owner seed', () => {
+  it('prints a failed write without its query or params, then creates a user who signs in and refuses to touch that user again', async () => {
+    await drizzle(pool).transaction(async (tx) => {
+      await tx.execute(sql`lock table accounts in share mode`);
+      const blocked = seedOwner(password);
+      await vi.waitFor(async () => {
+        const cancelled = await query(sql`select pg_cancel_backend(pid) from pg_stat_activity
+          where wait_event_type = 'Lock' and query ilike '%accounts%'`);
+        expect(cancelled).toEqual([{ pg_cancel_backend: true }]);
+      }, 15_000);
+      expect(await blocked).toEqual({
+        status: 1,
+        output: 'Seed failed: Error.\n',
+      });
+    });
+    expect(await seedOwner(password)).toEqual({
+      status: 0,
+      output: 'Seeded owner.signup@example.test.\n',
+    });
+    expect((await signIn('owner.signup@example.test')).status).toBe(200);
+
+    expect(await seedOwner('another-password-9')).toEqual({
+      status: 1,
+      output: 'Refused: a user with that email already exists.\n',
+    });
+    expect(await usersNamed('owner.signup@example.test')).toBe(1);
+    expect((await signIn('owner.signup@example.test', 'another-password-9')).status).toBe(401);
+    expect((await signIn('owner.signup@example.test')).status).toBe(200);
   });
 });

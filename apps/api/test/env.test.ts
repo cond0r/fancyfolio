@@ -2,7 +2,7 @@ import { inspect } from 'node:util';
 import { parseEnv } from '@fancyfolio/contracts';
 import * as v from 'valibot';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiEnv, databaseEnv, localEnv } from '../src/env.ts';
+import { apiEnv, databaseEnv, localEnv, seedOwnerEnv } from '../src/env.ts';
 
 const required = {
   AUTH_DATABASE_URL: 'postgres://ff_auth:pw@pooler.example.test:6543/postgres',
@@ -104,12 +104,16 @@ describe('parseEnv', () => {
     ).toEqual(['ines.okafor@example.test', 'kenji@example.test']);
   });
 
-  it('refuses a SIGNUP_ALLOWLIST email over 254 characters', () => {
+  it.each([
+    ['SIGNUP_ALLOWLIST', 'SIGNUP_ALLOWLIST.0', apiEnv],
+    ['SEED_EMAIL', 'SEED_EMAIL', seedOwnerEnv],
+  ])('refuses a %s email over 254 characters, naming %s', (name, issue, schema) => {
+    const source = { ...required, SEED_NAME: 'Fixture Owner', SEED_PASSWORD: 'pw-secret-K3' };
     const email = (length: number) => `${'x'.repeat(length - 13)}@example.test`;
-    expect(() => parseEnv(apiEnv, { ...required, SIGNUP_ALLOWLIST: email(254) })).not.toThrow();
-    expect(
-      refusal(() => parseEnv(apiEnv, { ...required, SIGNUP_ALLOWLIST: email(255) })).message,
-    ).toBe('Invalid environment: SIGNUP_ALLOWLIST.0 (malformed)');
+    expect(() => parseEnv(schema, { ...source, [name]: email(254) })).not.toThrow();
+    expect(refusal(() => parseEnv(schema, { ...source, [name]: email(255) })).message).toBe(
+      `Invalid environment: ${issue} (malformed)`,
+    );
   });
 
   it('names a missing required variable', () => {

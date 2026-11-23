@@ -20,6 +20,7 @@ const emails = [
   'gus.auth@example.test',
   'hal.auth@example.test',
   'ida.auth@example.test',
+  'jay.auth@example.test',
 ];
 vi.stubEnv('DATABASE_URL', appUrl);
 vi.stubEnv('AUTH_DATABASE_URL', authUrl);
@@ -36,6 +37,7 @@ const { auth: realIpAuth } = await import('../../src/auth.ts');
 
 const pool = connect(authUrl);
 const query = rows(drizzle(pool));
+const { internalAdapter, password: hasher } = await realIpAuth.$context;
 
 type Call = { ip?: string; cookie?: string; origin?: string; headers?: Record<string, string> };
 
@@ -109,7 +111,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await query(sql`delete from users where email like '%.auth@example.test'`);
-  await query(sql`delete from rate_limits where key like '198.51.100.%'`);
+  await query(sql`
+    delete from rate_limits
+    where key like '198.51.100.%' or key like '2001:0db8:%' or key like '%.auth@example.test|%'
+      or key like '%|/change-password'
+  `);
   await pool.end();
 });
 
@@ -130,18 +136,84 @@ describe('Better Auth rate limits, kept in the database per client IP', () => {
     );
   });
 
-  it('refuses the eleventh sign-in from one IP within a minute while another IP still signs in', async () => {
+  it('refuses the eleventh sign-in within a minute from one IPv6 /48 or for one email', async () => {
     for (let attempt = 0; attempt < 10; attempt++) {
-      const res = await signIn('fay.auth@example.test', '198.51.100.20', {
+      const byIp = await signIn(`probe${attempt}.auth@example.test`, `2001:db8:20:${attempt}::1`);
+      expect(byIp.status).toBe(401);
+      const byEmail = await signIn('jay.auth@example.test', `198.51.100.${100 + attempt}`, {
+        secret: 'wrong-password-1',
+      });
+      expect(byEmail.status).toBe(401);
+    }
+    expect((await signIn('fay.auth@example.test', '2001:db8:20:ff::1')).status).toBe(429);
+    expect((await signIn('fay.auth@example.test', '2001:db8:21::1')).status).toBe(200);
+    expect((await signIn('JAY.auth@example.test', '198.51.100.110')).status).toBe(429);
+    expect(await rateLimitRows()).toEqual(
+      expect.arrayContaining([
+        { key: '2001:0db8:0020:0000:0000:0000:0000:0000|/sign-in/email', count: 10 },
+        { key: 'jay.auth@example.test|/sign-in/email', count: 10 },
+      ]),
+    );
+  });
+
+  it("lets only that email's signed device cookie past a full per-email limit", async () => {
+    const device = 'better-auth.trusted_device';
+    const cookieOf = async (email: string, ip: string) => {
+      const res = await signIn(email, ip);
+      expect(res.status).toBe(200);
+      return sessionCookie(res, device).split(';')[0];
+    };
+    const owner = await cookieOf('ed.auth@example.test', '198.51.100.120');
+    const other = await cookieOf('di.auth@example.test', '198.51.100.121');
+    for (let attempt = 0; attempt < 9; attempt++) {
+      const res = await signIn('ed.auth@example.test', `198.51.100.${130 + attempt}`, {
         secret: 'wrong-password-1',
       });
       expect(res.status).toBe(401);
     }
-    expect((await signIn('fay.auth@example.test', '198.51.100.20')).status).toBe(429);
-    expect((await signIn('fay.auth@example.test', '198.51.100.21')).status).toBe(200);
-    expect(await rateLimitRows()).toEqual(
-      expect.arrayContaining([{ key: '198.51.100.20|/sign-in/email', count: 10 }]),
-    );
+    for (const [ip, cookie] of [
+      ['198.51.100.140', undefined],
+      ['198.51.100.141', other],
+      ['198.51.100.142', other.replace('di.auth', 'ed.auth')],
+    ] as const) {
+      expect((await signIn('ed.auth@example.test', ip, { cookie, origin: appOrigin })).status).toBe(
+        429,
+      );
+    }
+    const trusted = await signIn('ed.auth@example.test', '198.51.100.143', {
+      cookie: owner,
+      origin: appOrigin,
+    });
+    expect(trusted.status).toBe(200);
+    expect(sessionCookie(trusted, device)).toMatch(/; Max-Age=2592000; /);
+  });
+
+  it('refuses the eleventh change-password within a minute for one user from any IP, and one whose session read fails, before the password check', async () => {
+    const cookie = sessionCookie(await signIn('hal.auth@example.test', '198.51.100.150'));
+    const verify = vi.spyOn(hasher, 'verify');
+    vi.spyOn(internalAdapter, 'findSession').mockRejectedValueOnce(new Error('read failed'));
+    const unread = await call(realIpApi, '/api/auth/change-password', {
+      headers: { 'x-real-ip': '198.51.100.149' },
+      cookie: cookie.split(';')[0],
+      origin: appOrigin,
+      body: { currentPassword: password, newPassword: password },
+    });
+    expect(unread.status).toBe(401);
+    expect(verify).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    const change = (ip: string, currentPassword: string) =>
+      call(api, '/api/auth/change-password', {
+        ip,
+        cookie: cookie.split(';')[0],
+        origin: appOrigin,
+        body: { currentPassword, newPassword: password },
+      });
+    for (let attempt = 0; attempt < 10; attempt++)
+      expect((await change(`198.51.100.${151 + attempt}`, 'wrong-password-1')).status).toBe(400);
+    expect((await change('2001:db8:30::1', password)).status).toBe(429);
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60_000 });
+    expect((await change('2001:db8:31::1', password)).status).toBe(200);
+    vi.useRealTimers();
   });
 
   it.each([
@@ -174,6 +246,8 @@ describe('Better Auth rate limits, kept in the database per client IP', () => {
     for (const path of [
       '/api/auth/probe-path-1',
       '/api/auth/sign-in/email/2',
+      '/api/auth/callback/probe-1',
+      '/api/auth/reset-password/probe-1',
       '/api/auth/verify-password',
     ]) {
       const res = await call(api, path, {
@@ -284,15 +358,25 @@ describe('sessions', () => {
     expect(await query(sql`select ip_address from sessions where token = ${token}`)).toEqual([
       { ip_address: '198.51.100.40' },
     ]);
-    const out = await call(api, '/api/auth/sign-out', {
+    const changed = await call(api, '/api/auth/change-password', {
       ip: '198.51.100.40',
       cookie: cookie.split(';')[0],
+      origin: appOrigin,
+      body: { currentPassword: password, newPassword: password, revokeOtherSessions: true },
+    });
+    expect(changed.status).toBe(200);
+    const renewed = sessionCookie(changed);
+    const renewedToken = renewed.slice(renewed.indexOf('=') + 1).split('.')[0];
+    expect(await changed.text()).not.toContain(renewedToken);
+    const out = await call(api, '/api/auth/sign-out', {
+      ip: '198.51.100.40',
+      cookie: renewed.split(';')[0],
       origin: appOrigin,
       body: {},
     });
     expect(out.status).toBe(200);
-    expect(await sessionUser(cookie, '198.51.100.40')).toBeNull();
-    expect(await query(sql`select 1 from sessions where token = ${token}`)).toEqual([]);
+    expect(await sessionUser(renewed, '198.51.100.40')).toBeNull();
+    expect(await query(sql`select 1 from sessions where token = ${renewedToken}`)).toEqual([]);
     const reads = sent.mock.calls.map(([q]) => q.sql).filter((t) => t.includes(' from "users"'));
     expect(reads).not.toEqual([]);
     for (const text of reads) expect(text).toContain(' left join lateral ');
@@ -307,6 +391,9 @@ describe('sessions', () => {
     expect(res.status).toBe(200);
     expect(sessionCookie(res, '__Secure-better-auth.session_token')).toMatch(
       /^__Secure-better-auth\.session_token=[^;]+; Max-Age=604800; Path=\/; HttpOnly; Secure; SameSite=Lax$/,
+    );
+    expect(sessionCookie(res, '__Secure-better-auth.trusted_device')).toMatch(
+      /^__Secure-better-auth\.trusted_device=hal\.auth%40example\.test\.[^;]+; Max-Age=2592000; Path=\/; HttpOnly; Secure; SameSite=Lax$/,
     );
   });
 

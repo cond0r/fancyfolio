@@ -12,7 +12,7 @@ const authRoutes = new Hono<Env>().use(
   bodyLimit({ maxSize: 8 * 1024, onError: (c) => refused(c, 413) }),
 );
 for (const { path } of Object.values(auth.api)) {
-  if (path !== undefined && path !== auth.api.verifyPassword.path)
+  if (path !== undefined && !path.includes(':') && path !== auth.api.verifyPassword.path)
     authRoutes.all(path, ipGuard, (c) => auth.handler(c.req.raw));
 }
 

@@ -15,6 +15,7 @@
     "@fancyfolio/db": "workspace:*",
     "@liveblocks/node": "3.25.0",
     "@valibot/to-json-schema": "^1.8.0",
+    "@vercel/functions": "3.6.1",
     "better-auth": "catalog:",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.19",

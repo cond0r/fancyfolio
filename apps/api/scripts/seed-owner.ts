@@ -1,6 +1,7 @@
 import { parseEnv } from '@fancyfolio/contracts';
 import { createAuth } from '../src/auth.ts';
 import { seedOwnerEnv } from '../src/env.ts';
+import { errorCode } from '../src/shell.ts';
 
 const { SEED_EMAIL, SEED_NAME, SEED_PASSWORD } = parseEnv(seedOwnerEnv, process.env);
 const auth = createAuth([SEED_EMAIL]);
@@ -15,7 +16,9 @@ async function seed(): Promise<boolean> {
 }
 
 const seeded = await seed().catch((error: unknown) => {
-  console.error(`Seed failed: ${error instanceof Error ? error.name : typeof error}.`);
+  const code = errorCode(error);
+  const name = error instanceof Error ? error.name : typeof error;
+  console.error(`Seed failed: ${name}${code === undefined ? '' : ` (${code})`}.`);
   process.exit(1);
 });
 

@@ -42,7 +42,7 @@ export function refused(c: Context<Env>, status: 400 | 409 | 413) {
   );
 }
 
-function errorCode(error: unknown): string | undefined {
+export function errorCode(error: unknown): string | undefined {
   let current = error;
   for (let depth = 0; depth < 5 && typeof current === 'object' && current !== null; depth++) {
     if ('code' in current && typeof current.code === 'string') return current.code;

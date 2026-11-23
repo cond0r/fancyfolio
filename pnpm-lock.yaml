@@ -211,6 +211,9 @@ importers:
       '@valibot/to-json-schema':
         specifier: ^1.8.0
         version: 1.8.0(valibot@1.5.0(typescript@7.0.2))
+      '@vercel/functions':
+        specifier: 3.6.1
+        version: 3.6.1
       better-auth:
         specifier: 'catalog:'
         version: 1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.6)(pg@8.23.1))(next@16.4.6(@playwright/test@1.64.1)(@types/node@24.19.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
@@ -1892,6 +1895,19 @@ packages:
     resolution: {integrity: sha512-a0M+uwCuQZEPAo65NYkFSJ14O5c213KoSZmPdoCfuFvUhfULi4T2Z6Tpjv6lTVMW9RoLm74RpRAjNEa43KcN+g==}
     peerDependencies:
       valibot: ^1.5.0
+
+  '@vercel/functions@3.6.1':
+    resolution: {integrity: sha512-xz+zZvj/XE6KDHZ8kYNO25Axpjng/kTJd/87SwONa6hzlq94K69OdqH1ZC/CehbtwWknpeyHqUHmpnfoaCbLZQ==}
+    engines: {node: '>= 20'}
+    peerDependencies:
+      '@aws-sdk/credential-provider-web-identity': '*'
+    peerDependenciesMeta:
+      '@aws-sdk/credential-provider-web-identity':
+        optional: true
+
+  '@vercel/oidc@3.5.0':
+    resolution: {integrity: sha512-jo7GgeJx2YMkjg9A28pFM5p88n5SnSHvDeNlf9898bRWiG9jPxwedj/gn/2XTw4UOTyQ50uHlrTGSlf/XU5tgw==}
+    engines: {node: '>= 20'}
 
   '@vitest/mocker@5.0.4':
     resolution: {integrity: sha512-tqAlrYWce4iUxhr3ncNohejtCTOcHeE8XWrSNZY3OhPoDn01yeGv+gnaBy64ATp7o6pb03eIbBAjzmibpc9vIQ==}
@@ -4244,6 +4260,12 @@ snapshots:
   '@valibot/to-json-schema@1.8.0(valibot@1.5.0(typescript@7.0.2))':
     dependencies:
       valibot: 1.5.0(typescript@7.0.2)
+
+  '@vercel/functions@3.6.1':
+    dependencies:
+      '@vercel/oidc': 3.5.0
+
+  '@vercel/oidc@3.5.0': {}
 
   '@vitest/mocker@5.0.4(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))':
     dependencies:

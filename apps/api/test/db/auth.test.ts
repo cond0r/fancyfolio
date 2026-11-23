@@ -37,7 +37,7 @@ const { auth: realIpAuth } = await import('../../src/auth.ts');
 
 const pool = connect(authUrl);
 const query = rows(drizzle(pool));
-const { internalAdapter, password: hasher } = await realIpAuth.$context;
+const { adapter, internalAdapter, logger, password: hasher } = await realIpAuth.$context;
 
 type Call = { ip?: string; cookie?: string; origin?: string; headers?: Record<string, string> };
 
@@ -199,6 +199,7 @@ describe('Better Auth rate limits, kept in the database per client IP', () => {
       body: { currentPassword: password, newPassword: password },
     });
     expect(unread.status).toBe(401);
+    expect(await unread.json()).toEqual({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
     expect(verify).not.toHaveBeenCalled();
     vi.restoreAllMocks();
     const change = (ip: string, currentPassword: string) =>
@@ -211,9 +212,11 @@ describe('Better Auth rate limits, kept in the database per client IP', () => {
     for (let attempt = 0; attempt < 10; attempt++)
       expect((await change(`198.51.100.${151 + attempt}`, 'wrong-password-1')).status).toBe(400);
     expect((await change('2001:db8:30::1', password)).status).toBe(429);
-    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60_000 });
-    expect((await change('2001:db8:31::1', password)).status).toBe(200);
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 2 * 86_400_000 });
+    const refreshed = await change('2001:db8:31::1', password);
     vi.useRealTimers();
+    expect(refreshed.status).toBe(200);
+    expect(sessionCookie(refreshed)).toMatch(/; Max-Age=604800; /);
   });
 
   it.each([
@@ -284,6 +287,83 @@ describe('Better Auth rate limits, kept in the database per client IP', () => {
     expect(await rateLimitRows()).toEqual(before);
   });
 
+  it('writes no key for an over-long email and prunes rows past the longest window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60_000 });
+    const now = Date.now();
+    await query(sql`
+      insert into rate_limits (key, count, last_request) values
+        ('198.51.100.94|/sign-up/email', 1, ${now - 3_601_000}),
+        ('198.51.100.95|/sign-up/email', 1, ${now - 3_500_000})
+    `);
+    const overLong = `${'x'.repeat(240)}.auth@example.test`;
+    const unknown = await signIn('kim.auth@example.test', '198.51.100.93');
+    const long = await signIn(overLong, '198.51.100.93');
+    expect(long.status).toBe(401);
+    expect(await long.json()).toEqual(await unknown.json());
+    await vi.waitFor(async () => {
+      const left = (await rateLimitRows()).map(({ key }) => key);
+      expect(left).not.toContain('198.51.100.94|/sign-up/email');
+    });
+    const keys = (await rateLimitRows()).map(({ key }) => key);
+    expect(keys).toContain('kim.auth@example.test|/sign-in/email');
+    expect(keys).not.toContain(`${overLong}|/sign-in/email`);
+    expect(keys).toContain('198.51.100.95|/sign-up/email');
+    vi.useRealTimers();
+  });
+
+  it('plans the prune delete on the last_request index', async () => {
+    const rollback = new Error('rollback');
+    const now = Date.now();
+    let plan: Record<string, unknown>[] = [];
+    await expect(
+      drizzle(pool).transaction(async (tx) => {
+        await tx.execute(sql`
+          insert into rate_limits (key, count, last_request)
+          select '198.51.100.97|' || n, 1, ${now}::bigint - n * 60000
+          from generate_series(1, 200) as n
+        `);
+        await tx.execute(sql`set local enable_seqscan = off`);
+        plan = await rows(tx)(
+          sql`explain delete from rate_limits where last_request < ${now - 3_600_000}`,
+        );
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    expect(plan.map((line) => line['QUERY PLAN']).join('\n')).toContain(
+      'rate_limits_last_request_idx',
+    );
+  });
+
+  it('answers a new email before its prune settles, hands the prune to waitUntil once per window and logs a failed prune as name and code', async () => {
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
+    vi.stubGlobal(Symbol.for('@vercel/request-context'), { get: () => ({ waitUntil }) });
+    const prune = Promise.withResolvers<never>();
+    const pruned = vi.spyOn(adapter, 'deleteMany').mockReturnValueOnce(prune.promise);
+    const signInNew = (email: string, ip = '198.51.100.96') =>
+      call(realIpApi, '/api/auth/sign-in/email', {
+        headers: { 'x-real-ip': ip },
+        body: { email, password },
+      });
+    expect((await signInNew('lee.auth@example.test')).status).toBe(401);
+    expect(pruned).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledOnce();
+    prune.reject(Object.assign(new Error('prune of lee.auth@example.test'), { code: '57014' }));
+    await waitUntil.mock.calls[0][0];
+    const line = JSON.stringify({ auth: 'error', error: 'Error', code: '57014' });
+    expect(printed).toHaveBeenCalledWith(line);
+    const output = printed.mock.calls.map((args) => format(...args)).join('\n');
+    expect(output).not.toContain('lee.auth');
+    expect((await signInNew('mo.auth@example.test')).status).toBe(401);
+    expect(pruned).toHaveBeenCalledOnce();
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60_000 });
+    expect((await signInNew('nia.auth@example.test', '198.51.100.98')).status).toBe(401);
+    expect(pruned).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('reads only the configured client IP header, in the guard and the limiter', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const body = { email: 'ida.auth@example.test', password };
@@ -305,14 +385,92 @@ describe('Better Auth rate limits, kept in the database per client IP', () => {
 describe('sign-up', () => {
   it('creates no user when its credential account cannot be stored', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const internal = (await realIpAuth.$context).internalAdapter;
-    vi.spyOn(internal, 'linkAccount').mockRejectedValueOnce(new Error('storage failed'));
+    vi.spyOn(internalAdapter, 'linkAccount').mockRejectedValueOnce(new Error('storage failed'));
     const res = await call(realIpApi, '/api/auth/sign-up/email', {
       headers: { 'x-real-ip': '198.51.100.82' },
       body: { name: 'Fixture Person', email: 'jo.auth@example.test', password },
     });
     expect(res.status).toBe(500);
     expect(await usersWith('jo.auth@example.test')).toBe(0);
+    vi.restoreAllMocks();
+  });
+});
+
+describe('a failed auth query', () => {
+  let failed: unknown;
+  function failing<T>(query: Promise<T>): Promise<T> {
+    return query.catch((error: unknown) => {
+      failed = error;
+      throw error;
+    });
+  }
+
+  it.each([
+    [
+      'an account insert, with its password hash',
+      500,
+      '23503',
+      async () => {
+        const { linkAccount } = internalAdapter;
+        vi.spyOn(internalAdapter, 'linkAccount').mockImplementationOnce((account) =>
+          failing(linkAccount({ ...account, userId: crypto.randomUUID() })),
+        );
+        return call(realIpApi, '/api/auth/sign-up/email', {
+          headers: { 'x-real-ip': '198.51.100.83' },
+          body: { name: 'Fixture Person', email: 'jo.auth@example.test', password },
+        });
+      },
+    ],
+    [
+      'a session insert, with its token and client IP',
+      500,
+      '23503',
+      async () => {
+        const { createSession } = internalAdapter;
+        vi.spyOn(internalAdapter, 'createSession').mockImplementationOnce((_, ...rest) =>
+          failing(createSession(crypto.randomUUID(), ...rest)),
+        );
+        return call(realIpApi, '/api/auth/sign-in/email', {
+          headers: { 'x-real-ip': '198.51.100.84' },
+          body: { email: 'ida.auth@example.test', password },
+        });
+      },
+    ],
+    [
+      'a session lookup on sign-out, with its token',
+      200,
+      '22021',
+      async () => {
+        const signedIn = await call(realIpApi, '/api/auth/sign-in/email', {
+          headers: { 'x-real-ip': '198.51.100.85' },
+          body: { email: 'ida.auth@example.test', password },
+        });
+        const { findSession } = internalAdapter;
+        vi.spyOn(internalAdapter, 'findSession').mockImplementationOnce((token) =>
+          failing(findSession(`${token}\0`)),
+        );
+        return call(realIpApi, '/api/auth/sign-out', {
+          headers: { 'x-real-ip': '198.51.100.85' },
+          cookie: sessionCookie(signedIn).split(';')[0],
+          origin: appOrigin,
+          body: {},
+        });
+      },
+    ],
+  ])('logs %s as its error name and code only', async (_, status, code, send) => {
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await send()).status).toBe(status);
+    const output = printed.mock.calls.map((args) => format(...args)).join('\n');
+    expect(output).toContain(`"code":"${code}"`);
+    const params =
+      failed instanceof Error && 'params' in failed && Array.isArray(failed.params)
+        ? failed.params
+        : [];
+    const secrets = params
+      .flatMap((param) => (typeof param === 'string' ? param.split('\0') : []))
+      .filter(Boolean);
+    expect(secrets).not.toEqual([]);
+    for (const secret of secrets) expect(output).not.toContain(secret);
     vi.restoreAllMocks();
   });
 });
@@ -411,6 +569,7 @@ describe('sessions', () => {
   });
 
   it('answers a wrong password and an unknown email alike', async () => {
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
     const wrong = await signIn('ida.auth@example.test', '198.51.100.43', {
       secret: 'wrong-password-1',
     });
@@ -418,6 +577,30 @@ describe('sessions', () => {
     expect(wrong.status).toBe(401);
     expect(unknown.status).toBe(401);
     expect(await unknown.json()).toEqual(await wrong.json());
+    for (const message of ['Invalid password', 'User not found']) {
+      expect(printed).toHaveBeenCalledWith(JSON.stringify({ auth: 'warn', message }));
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('prints a known Better Auth warning without its args and any other message as its level only', () => {
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
+    logger.warn('Invalid password', 'ida.auth@example.test');
+    logger.warn('Invalid origin: https://ida.auth.example.test');
+    logger.error('Blocked cross-site navigation login attempt (CSRF protection)', {
+      referer: 'https://evil.example.test',
+    });
+    expect(printed.mock.calls).toEqual([
+      [JSON.stringify({ auth: 'warn', message: 'Invalid password' })],
+      [JSON.stringify({ auth: 'warn' })],
+      [
+        JSON.stringify({
+          auth: 'error',
+          message: 'Blocked cross-site navigation login attempt (CSRF protection)',
+        }),
+      ],
+    ]);
+    vi.restoreAllMocks();
   });
 });
 

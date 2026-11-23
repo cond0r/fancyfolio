@@ -1,12 +1,20 @@
-import type { GenericEndpointContext } from '@better-auth/core';
+import type { AuthContext, GenericEndpointContext } from '@better-auth/core';
 import { isHttpsUrl, LIMITS } from '@fancyfolio/contracts';
 import { authAdapter, authSchemaOptions } from '@fancyfolio/db';
-import { betterAuth, type DBAdapter } from 'better-auth';
+import { waitUntil } from '@vercel/functions';
+import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import * as v from 'valibot';
-import { env } from './env.ts';
+import { emailLength, env } from './env.ts';
+import { errorCode } from './shell.ts';
 
 const signInRule = { window: 60, max: 10 };
+const rateLimitRules = {
+  '/sign-up/email': { window: 3600, max: 5 },
+  '/sign-in/email': signInRule,
+  '/change-password': { window: 10, max: 3 },
+};
+const longestWindow = Math.max(...Object.values(rateLimitRules).map(({ window }) => window));
 const trustedDevice = 'trusted_device';
 const trustedDeviceMaxAge = 30 * 24 * 60 * 60;
 const displayName = v.pipe(v.string(), v.maxLength(LIMITS.displayName));
@@ -15,7 +23,9 @@ const profileBodies = new Map<string, v.GenericSchema>([
   ['/sign-up/email', v.object({ name: displayName, image })],
   ['/update-user', v.object({ name: v.optional(displayName), image })],
 ]);
-const signInBody = v.object({ email: v.pipe(v.string(), v.email(), v.toLowerCase()) });
+const signInBody = v.object({
+  email: v.pipe(v.string(), v.email(), v.toLowerCase(), v.maxLength(emailLength)),
+});
 const withoutToken = v.pipe(
   v.looseObject({ token: v.string() }),
   v.transform(({ token, ...rest }) => rest),
@@ -26,8 +36,19 @@ const tokenBodies = new Map<string, v.GenericSchema<unknown, object>>([
   ['/list-sessions', v.array(withoutToken)],
   ['/change-password', withoutToken],
 ]);
+const knownMessages = new Set([
+  'User not found',
+  'Password not found',
+  'Invalid password',
+  'Blocked cross-site navigation login attempt (CSRF protection)',
+  '[better-auth] Warning: your BETTER_AUTH_SECRET appears low-entropy. Use a randomly generated secret for production.',
+]);
+let prunedAt = -Infinity;
 
-async function underAccountLimit(adapter: DBAdapter, key: string): Promise<boolean> {
+async function underAccountLimit(
+  { adapter, logger, runInBackground }: AuthContext,
+  key: string,
+): Promise<boolean> {
   const model = 'rateLimit';
   const byKey = [{ field: 'key', value: key }];
   const now = Date.now();
@@ -58,11 +79,22 @@ async function underAccountLimit(adapter: DBAdapter, key: string): Promise<boole
     if (row === null) {
       try {
         await adapter.create({ model, data: { key, count: 1, lastRequest: now } });
-        return true;
       } catch (error) {
         if ((await adapter.findOne({ model, where: byKey })) === null) throw error;
         continue;
       }
+      if (now - prunedAt >= signInRule.window * 1000) {
+        prunedAt = now;
+        runInBackground(
+          adapter
+            .deleteMany({
+              model,
+              where: [{ field: 'lastRequest', operator: 'lt', value: now - longestWindow * 1000 }],
+            })
+            .catch((error: unknown) => logger.error('rate-limit prune failed', error)),
+        );
+      }
+      return true;
     }
     if (row.count >= signInRule.max && row.lastRequest > windowStart) return false;
   }
@@ -70,8 +102,9 @@ async function underAccountLimit(adapter: DBAdapter, key: string): Promise<boole
 
 async function accountKey(ctx: GenericEndpointContext): Promise<string | undefined> {
   if (ctx.path === '/change-password') {
-    const session = await getSessionFromCtx(ctx);
-    if (session === null) throw new APIError('UNAUTHORIZED', { message: 'Unauthorized' });
+    const session = await getSessionFromCtx(ctx, { disableRefresh: true });
+    if (session === null)
+      throw APIError.from('UNAUTHORIZED', { message: 'Unauthorized', code: 'UNAUTHORIZED' });
     return `${session.user.id}|${ctx.path}`;
   }
   if (ctx.path !== '/sign-in/email') return undefined;
@@ -94,13 +127,22 @@ export function createAuth(signupAllowlist: readonly string[]) {
     rateLimit: {
       ...authSchemaOptions.rateLimit,
       enabled: true,
-      customRules: {
-        '/sign-up/email': { window: 3600, max: 5 },
-        '/sign-in/email': signInRule,
-        '/change-password': { window: 10, max: 3 },
-        '**': false,
+      customRules: { ...rateLimitRules, '**': false },
+    },
+    logger: {
+      log(level, message, ...args: unknown[]) {
+        const error = args.find((arg) => arg instanceof Error);
+        console.error(
+          JSON.stringify({
+            auth: level,
+            message: knownMessages.has(message) ? message : undefined,
+            error: error?.name,
+            code: errorCode(error),
+          }),
+        );
       },
     },
+    onAPIError: { throw: true },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         const profileBody = profileBodies.get(ctx.path);
@@ -108,7 +150,7 @@ export function createAuth(signupAllowlist: readonly string[]) {
           throw new APIError('BAD_REQUEST', { message: 'Bad request' });
         }
         const key = await accountKey(ctx);
-        if (key !== undefined && !(await underAccountLimit(ctx.context.adapter, key))) {
+        if (key !== undefined && !(await underAccountLimit(ctx.context, key))) {
           throw new APIError('TOO_MANY_REQUESTS', {
             message: 'Too many requests. Please try again later.',
           });
@@ -142,6 +184,7 @@ export function createAuth(signupAllowlist: readonly string[]) {
       ...authSchemaOptions.advanced,
       ipAddress: { ipAddressHeaders: [env.CLIENT_IP_HEADER], ipv6Subnet: 48 },
       disableOriginCheck: false,
+      backgroundTasks: { handler: waitUntil },
     },
   });
 }

@@ -22,6 +22,7 @@ const emails = [
 ];
 vi.stubEnv('DATABASE_URL', appUrl);
 vi.stubEnv('AUTH_DATABASE_URL', authUrl);
+vi.stubEnv('SIGNUP_ALLOWLIST', [...emails, 'zed.auth@example.test', 'jo.auth@example.test'].join());
 const { default: api } = await import('../../src/index.ts');
 vi.resetModules();
 vi.stubEnv('BETTER_AUTH_URL', 'https://fancyfolio.test');

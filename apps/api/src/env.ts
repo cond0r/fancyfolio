@@ -1,4 +1,4 @@
-import { parseEnv } from '@fancyfolio/contracts';
+import { parseDatabaseUrl, parseEnv } from '@fancyfolio/contracts';
 import * as v from 'valibot';
 
 export const localEnv = v.object({
@@ -19,6 +19,15 @@ export const liveblocksEnv = v.object({
   VERCEL_ENV: v.optional(v.picklist(['development', 'preview', 'production'])),
 });
 
+function isDatabaseUrl(url: string): boolean {
+  try {
+    parseDatabaseUrl(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const CLIENT_IP_HEADERS = [
   'x-forwarded-for',
   'x-real-ip',
@@ -29,7 +38,7 @@ export const emailLength = 254;
 
 export const apiEnv = v.pipe(
   v.object({
-    AUTH_DATABASE_URL: v.pipe(v.string(), v.url(), v.regex(/^postgres(ql)?:\/\//)),
+    AUTH_DATABASE_URL: v.pipe(v.string(), v.check(isDatabaseUrl)),
     BETTER_AUTH_SECRET: v.pipe(v.string(), v.regex(/^[\x21-\x7e]{32,}$/)),
     BETTER_AUTH_URL: v.pipe(
       v.string(),

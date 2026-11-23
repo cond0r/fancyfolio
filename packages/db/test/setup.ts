@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEnv } from '@fancyfolio/contracts';
+import { parseDatabaseUrl, parseEnv } from '@fancyfolio/contracts';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -8,7 +8,7 @@ import type { Pool } from 'pg';
 import * as v from 'valibot';
 import type { TestProject } from 'vitest/node';
 import { roleEnv, setRolePasswords } from '../scripts/roles.ts';
-import { connect, loopbackHosts, parseDatabaseUrl } from '../src/client.ts';
+import { connect, loopbackHosts } from '../src/client.ts';
 import { authTables } from './auth-tables.ts';
 import { latestMigration } from './journal.ts';
 

@@ -63,6 +63,7 @@ describe('parseEnv', () => {
 
   it.each([
     ['AUTH_DATABASE_URL', 'https://ff_auth:pw-secret-K3@db.example.test/x'],
+    ['AUTH_DATABASE_URL', 'postgres://ff_auth:pw-secret-K3@db.example.test/x?sslmode=require'],
     ['BETTER_AUTH_SECRET', 'pw-secret-K3-too-short'],
     ['BETTER_AUTH_SECRET', 'pw-secret-K3 with a space 0123456789abcdef'],
     ['BETTER_AUTH_URL', 'http://app.example.test'],

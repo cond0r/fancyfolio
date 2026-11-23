@@ -232,7 +232,7 @@ describe('owner seed', () => {
       }, 15_000);
       expect(await blocked).toEqual({
         status: 1,
-        output: 'Seed failed: Error.\n',
+        output: 'Seed failed: Error (57014).\n',
       });
     });
     expect(await seedOwner(password)).toEqual({

@@ -1,0 +1,140 @@
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
+import { connect } from '../../../../packages/db/src/client.ts';
+import { requireWritable, rows } from '../../../../packages/db/test/fixtures.ts';
+import type {} from '../../../../packages/db/test/setup.ts';
+
+const { appUrl, authUrl } = inject('db');
+const password = 'correct-horse-battery-7';
+vi.stubEnv('DATABASE_URL', appUrl);
+vi.stubEnv('AUTH_DATABASE_URL', authUrl);
+vi.stubEnv('SIGNUP_ALLOWLIST', 'ines.signup@example.test, Kenji.Signup@Example.test');
+const { default: api } = await import('../../src/index.ts');
+const { auth } = await import('../../src/auth.ts');
+
+const pool = connect(authUrl);
+const query = rows(drizzle(pool));
+let ip = 0;
+
+function post(path: string, body: Record<string, string>) {
+  ip += 1;
+  return api.request(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': `192.0.2.${100 + ip}` },
+    body: JSON.stringify(body),
+  });
+}
+
+function signUp(email: string, secret = password) {
+  return post('/api/auth/sign-up/email', { name: 'Fixture Person', email, password: secret });
+}
+
+function signIn(email: string, secret = password) {
+  return post('/api/auth/sign-in/email', { email, password: secret });
+}
+
+async function usersNamed(email: string): Promise<number> {
+  const [{ users }] = await query(
+    sql`select count(*)::int as users from users where email = ${email}`,
+  );
+  return Number(users);
+}
+
+async function expectGenericAnswer(res: Response) {
+  expect(res.status).toBe(200);
+  expect(res.headers.getSetCookie()).toEqual([]);
+  const body = await res.json();
+  expect(body.token).toBeNull();
+  expect(Object.keys(body.user).sort()).toEqual([
+    'createdAt',
+    'email',
+    'emailVerified',
+    'id',
+    'image',
+    'name',
+    'updatedAt',
+  ]);
+  return body;
+}
+
+beforeAll(() => {
+  requireWritable();
+});
+
+afterAll(async () => {
+  await query(sql`delete from users where email like '%.signup@example.test'`);
+  await query(sql`delete from rate_limits where key like '192.0.2.%'`);
+  await pool.end();
+});
+
+describe('invite-only sign-up', () => {
+  it('creates an invited user, matched case-insensitively and stored lower case, without signing them in', async () => {
+    await expectGenericAnswer(await signUp('ines.signup@example.test'));
+    await expectGenericAnswer(await signUp('KENJI.signup@example.TEST'));
+    expect(await usersNamed('ines.signup@example.test')).toBe(1);
+    expect(await usersNamed('kenji.signup@example.test')).toBe(1);
+    const res = await signIn('ines.signup@example.test');
+    expect(res.status).toBe(200);
+    expect((await res.json()).user.email).toBe('ines.signup@example.test');
+  });
+
+  it('answers an email outside the allowlist exactly like an invited one and creates nothing', async () => {
+    const body = await expectGenericAnswer(await signUp('mallory.signup@example.test'));
+    expect(body.user.email).toBe('mallory.signup@example.test');
+    expect(await usersNamed('mallory.signup@example.test')).toBe(0);
+    expect((await signIn('mallory.signup@example.test')).status).toBe(401);
+  });
+
+  it('answers a second sign-up of a registered email alike and keeps the first password', async () => {
+    await expectGenericAnswer(await signUp('ines.signup@example.test', 'another-password-9'));
+    expect(await usersNamed('ines.signup@example.test')).toBe(1);
+    expect((await signIn('ines.signup@example.test', 'another-password-9')).status).toBe(401);
+    expect((await signIn('ines.signup@example.test')).status).toBe(200);
+  });
+
+  it('holds on the server-side sign-up path too', async () => {
+    const result = await auth.api.signUpEmail({
+      body: { name: 'Fixture Person', email: 'trent.signup@example.test', password },
+    });
+    expect(result.token).toBeNull();
+    expect(await usersNamed('trent.signup@example.test')).toBe(0);
+  });
+
+  it('offers no other way to create a user: a fixed endpoint list and no social provider', async () => {
+    expect(Object.keys(auth.api).sort()).toEqual([
+      'accountInfo',
+      'callbackOAuth',
+      'changeEmail',
+      'changePassword',
+      'deleteUser',
+      'deleteUserCallback',
+      'error',
+      'getAccessToken',
+      'getSession',
+      'linkSocialAccount',
+      'listSessions',
+      'listUserAccounts',
+      'ok',
+      'refreshToken',
+      'requestPasswordReset',
+      'requestPasswordResetCallback',
+      'resetPassword',
+      'revokeOtherSessions',
+      'revokeSession',
+      'revokeSessions',
+      'sendVerificationEmail',
+      'setPassword',
+      'signInEmail',
+      'signInSocial',
+      'signOut',
+      'signUpEmail',
+      'unlinkAccount',
+      'updateSession',
+      'updateUser',
+      'verifyEmail',
+      'verifyPassword',
+    ]);
+    expect((await post('/api/auth/sign-in/social', { provider: 'github' })).status).toBe(404);
+  });
+});

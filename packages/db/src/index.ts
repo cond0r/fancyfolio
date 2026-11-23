@@ -1,3 +1,4 @@
+export { authAdapter, authSchemaOptions } from './auth.ts';
 export * from './schema/content.ts';
 export * from './schema/tenants.ts';
 export {

@@ -1,5 +1,12 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 
+const authEnv = {
+  AUTH_DATABASE_URL: 'postgres://ff_auth:unused-password-Z7@127.0.0.1:1/fancyfolio',
+  BETTER_AUTH_SECRET: 'unused-auth-secret-Z7-0123456789abcdef',
+  BETTER_AUTH_URL: 'http://localhost:3200',
+  CLIENT_IP_HEADER: 'x-forwarded-for',
+};
+
 export default defineConfig({
   test: {
     testTimeout: 30_000,
@@ -15,6 +22,7 @@ export default defineConfig({
           env: {
             DATABASE_URL: 'postgres://ff_app:unused-password-Z7@127.0.0.1:1/fancyfolio',
             ROOT_DOMAIN: 'fancyfolio.test',
+            ...authEnv,
           },
         },
       },
@@ -27,7 +35,7 @@ export default defineConfig({
           include: ['test/**/*.test.ts', '../../apps/api/test/db/**/*.test.ts'],
           globalSetup: ['test/setup.ts'],
           fileParallelism: false,
-          env: { ROOT_DOMAIN: 'fancyfolio.test' },
+          env: { ROOT_DOMAIN: 'fancyfolio.test', ...authEnv },
         },
       },
     ],

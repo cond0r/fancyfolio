@@ -38,6 +38,8 @@ const sourceExtensions = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs'];
 
 const entry = (project: Project) =>
   join(root, project, project === 'apps/web' ? 'next.config.ts' : 'src/index.ts');
+const unimported = (project: Project) =>
+  join(root, project, project === 'apps/web' ? 'next.config.ts' : 'test/predicates.test.ts');
 
 function crossings(project: Project, files: string[]) {
   const inPackage = new RegExp(`/node_modules/(?:@types/)?(?:${boundaries[project].join('|')})/`);
@@ -127,7 +129,7 @@ function filesWithFixture(project: Project, path: string, source: (toRoot: strin
   const fixture = writeSource(tree, path, source);
   const files = listFiles(project, sourceFiles(tree));
   expect(files).toContain(fixture);
-  expect(files).not.toContain(entry(project));
+  expect(files).not.toContain(unimported(project));
   return files;
 }
 

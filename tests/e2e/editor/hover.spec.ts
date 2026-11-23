@@ -29,7 +29,7 @@ async function glide(page: Page, from: Point, to: Point) {
 
 async function open(page: Page) {
   await page.goto('/playground');
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
   await page.waitForLoadState('networkidle');
 }
 
@@ -58,7 +58,7 @@ for (const width of [1280, 390]) {
       await fields(page).nth(7).click();
       await page.keyboard.press('End');
       await page.keyboard.press('Enter');
-      await expect(fields(page)).toHaveCount(9);
+      await expect(fields(page)).toHaveCount(10);
       const read = await sampler(page, chrome);
       for (const [from, to, hop] of [
         [1, 2, false],
@@ -99,7 +99,7 @@ for (const width of [1280, 390]) {
       }
       await page.keyboard.type('x');
       await expect(handle(page)).toBeVisible();
-      await expect(handle(page)).toHaveAccessibleName('Text options, 5 of 7');
+      await expect(handle(page)).toHaveAccessibleName('Text options, 5 of 8');
       expect(await translate(page)).toBe(start);
     });
 
@@ -134,7 +134,7 @@ for (const width of [1280, 390]) {
       expect(nested.x + nested.width).toBeLessThanOrEqual(aside.x);
       await page.mouse.move(2, child.y);
       await page.mouse.move(aside.x - 10, child.y);
-      await expect(handle(page)).toHaveAccessibleName('Callout options, 7 of 7');
+      await expect(handle(page)).toHaveAccessibleName('Callout options, 7 of 8');
       const outer = await boxOf(handle(page));
       columns.push(nested.x, (await boxOf(page.locator(chrome))).x);
       expect(Math.max(...columns) - Math.min(...columns)).toBeLessThan(1);
@@ -158,18 +158,17 @@ for (const width of [1280, 390]) {
 
     test('deleting the hovered last block hides the chrome', async ({ page }) => {
       await open(page);
-      const asides = page.locator('[data-ff-editor] aside');
-      const aside = await boxOf(asides);
-      await page.mouse.move(aside.x + 40, aside.y + 4);
+      const last = await boxOf(fields(page).last());
+      await page.mouse.move(last.x + 40, last.y + 4);
       await handle(page).click();
       await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).click();
-      await expect(asides).toHaveCount(2);
-      const copy = await boxOf(asides.nth(1));
+      await expect(fields(page)).toHaveCount(10);
+      const copy = await boxOf(fields(page).last());
       await page.mouse.move(2, 2);
       await page.mouse.move(copy.x + 40, copy.y + 4);
-      await expect(handle(page)).toHaveAccessibleName('Callout options, 8 of 8');
+      await expect(handle(page)).toHaveAccessibleName('Text options, 9 of 9');
       await page.keyboard.press('ControlOrMeta+z');
-      await expect(fields(page)).toHaveCount(8);
+      await expect(fields(page)).toHaveCount(9);
       await expect(handle(page)).toBeHidden();
     });
 
@@ -198,9 +197,9 @@ for (const width of [1280, 390]) {
       await open(page);
       const read = await sampler(page, chrome);
       for (const [view, name, reach, corner, aim] of [
-        ['aside', 'Callout options, 7 of 7', 1, 1, '[data-ff-handle]'],
-        ['aside', 'Callout options, 7 of 7', 1, 0, '[data-ff-grip]'],
-        ['figure', 'Metric options, 6 of 7', 1, 1, '[data-ff-handle]'],
+        ['aside', 'Callout options, 7 of 8', 1, 1, '[data-ff-handle]'],
+        ['aside', 'Callout options, 7 of 8', 1, 0, '[data-ff-grip]'],
+        ['figure', 'Metric options, 6 of 8', 1, 1, '[data-ff-handle]'],
         ['aside', 'Text options, 1 of 1 in Callout', 0.2, 1, '[data-ff-grip]'],
       ] as const) {
         const card = await boxOf(page.locator(`[data-ff-editor] ${view}`));

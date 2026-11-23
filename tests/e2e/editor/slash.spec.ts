@@ -8,7 +8,7 @@ const blockAt = (page: Page, index: number) =>
 
 async function open(page: Page) {
   await page.goto('/playground');
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
   await page.waitForLoadState('networkidle');
 }
 
@@ -64,7 +64,7 @@ test('/met gives a metric; in a callout child /call lists nothing and Enter spli
   await slash(page, '/call', 9);
   await expect(list(page)).toBeHidden();
   await page.keyboard.press('Enter');
-  await expect(fields(page)).toHaveCount(12);
+  await expect(fields(page)).toHaveCount(13);
   await expect(fields(page).nth(10)).toHaveText('/call');
   await expect(fields(page).nth(11)).toHaveText('');
 });
@@ -88,7 +88,7 @@ test('Escape keeps / and the list shut for that text; /zzz and Enter split', asy
   await expect(list(page)).toBeHidden();
   await page.keyboard.type('zzz');
   await page.keyboard.press('Enter');
-  await expect(fields(page)).toHaveCount(10);
+  await expect(fields(page)).toHaveCount(11);
   await expect(fields(page).nth(2)).toHaveText('/zzz');
 });
 

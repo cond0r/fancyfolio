@@ -41,7 +41,7 @@ test('Enter in an empty last callout child moves the caret out of the callout', 
   await page.keyboard.press('Enter');
   await expect(callout(page)).toHaveText([note]);
   await page.keyboard.type('Outside');
-  await expect(fields(page).last()).toHaveText('Outside');
+  await expect(fields(page).nth(8)).toHaveText('Outside');
   await expect(callout(page)).toHaveText([note]);
 });
 
@@ -54,7 +54,7 @@ test('emptying the callout leaves one empty paragraph in it', async ({ page }) =
   await page.keyboard.press('Enter');
   await expect(callout(page)).toHaveText(['']);
   await page.keyboard.type('Outside');
-  await expect(fields(page).last()).toHaveText('Outside');
+  await expect(fields(page).nth(8)).toHaveText('Outside');
   await expect(callout(page)).toHaveText(['']);
 });
 

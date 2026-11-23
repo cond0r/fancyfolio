@@ -1,4 +1,4 @@
-import type { BlockId, Commands } from '../core/types.ts';
+import type { BlockId, Commands, Mark, TextSelection } from '../core/types.ts';
 
 export type Drop = Commands['moveBlockTo'];
 
@@ -40,3 +40,5 @@ export type Box = {
   readonly handle: number;
   readonly column: number;
 };
+
+export type Shown = { readonly at: TextSelection; readonly marks: readonly Mark[] };

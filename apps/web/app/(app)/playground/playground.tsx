@@ -1,5 +1,6 @@
 'use client';
 
+import { isLinkUrl } from '@fancyfolio/contracts';
 import '@fancyfolio/editor/chrome.css';
 import type { OnSave } from '@fancyfolio/editor/types';
 import dynamic from 'next/dynamic';
@@ -40,18 +41,27 @@ const Editor = dynamic(
 export function Playground({ body }: { readonly body: string }) {
   const commits = useRef<HTMLOutputElement>(null);
   const onRender = useCallback((id: string) => commits.current?.append(`${id} `), []);
+  const saved = useRef<HTMLOutputElement>(null);
   const latest = useRef(1);
-  const onSave = useCallback<OnSave>(async (_markdown, version) => {
+  const onSave = useCallback<OnSave>(async (markdown, version) => {
     if (version !== String(latest.current)) return { ok: false, reason: 'stale' };
     latest.current += 1;
+    if (saved.current !== null) saved.current.textContent = markdown;
     return { ok: true, version: String(latest.current) };
   }, []);
   return (
     <>
       <div className="pl-16 md:pl-2 [&_h1]:mb-6 [&_h1]:text-4xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:font-mono [&_figure]:mt-3 [&_figure_p]:mt-3 [&_aside]:mt-0 [&_aside]:pt-4">
-        <Editor markdown={body} version="1" onSave={onSave} onRender={onRender} />
+        <Editor
+          markdown={body}
+          version="1"
+          onSave={onSave}
+          onRender={onRender}
+          safeHref={isLinkUrl}
+        />
       </div>
       <output ref={commits} hidden data-testid="commits" />
+      <output ref={saved} hidden data-testid="saved" />
     </>
   );
 }

@@ -14,7 +14,7 @@ const field = (page: Page, index: number) => blockOf(fields(page).nth(index));
 
 async function open(page: Page) {
   await page.goto('/playground');
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
   await page.waitForLoadState('networkidle');
 }
 
@@ -121,7 +121,7 @@ test('a block drags into a callout, between callouts and out of one', async ({ p
   await drag(page, blockOf(calloutFields(page, 1)), field(page, 0), 'before');
   await expect(fields(page).first()).toHaveText(texts[7] ?? '');
   await expect(calloutFields(page, 1)).toHaveText(['']);
-  await expect(live).toHaveText('Moved Text to 1 of 8');
+  await expect(live).toHaveText('Moved Text to 1 of 9');
   await page.keyboard.press('ControlOrMeta+z');
   await expect(calloutFields(page, 1)).toHaveText([texts[7] ?? '']);
 });
@@ -379,8 +379,10 @@ for (const width of [1280, 390]) {
       await grab(page, field(page, 1));
       await page.mouse.move(box.x + 8, box.y + box.height - 6, { steps: 5 });
       await spans(page, callout);
-      await page.mouse.move(box.x + 8, box.y + box.height + 40, { steps: 5 });
-      await spans(page, callout);
+      const end = blockOf(fields(page).last());
+      const past = await boxOf(end);
+      await page.mouse.move(past.x + 8, past.y + past.height + 40, { steps: 5 });
+      await spans(page, end);
       await page.mouse.up();
       await expect(fields(page).last()).toHaveText(texts[2] ?? '');
       const first = await boxOf(field(page, 0));

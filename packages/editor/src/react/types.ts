@@ -9,6 +9,7 @@ import type {
   Json,
   NoProps,
   Registered,
+  SafeHref,
   Saving,
   TypedBlock,
 } from '../core/types.ts';
@@ -65,6 +66,7 @@ export type EditorProps = {
   readonly markdown: string;
   readonly onRender?: (blockId: BlockId) => void;
   readonly renderBlockChrome?: RenderBlockChrome;
+  readonly safeHref?: SafeHref;
 } & Saving;
 
 export type ViewMap = ReadonlyMap<string, ComponentType<ViewProps<Block>>>;

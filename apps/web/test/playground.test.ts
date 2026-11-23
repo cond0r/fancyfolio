@@ -1,3 +1,4 @@
+import { isLinkUrl } from '@fancyfolio/contracts';
 import { createEditor } from '@fancyfolio/editor';
 import { createReactEditor } from '@fancyfolio/editor/react';
 import type { Editor, EditorProps } from '@fancyfolio/editor/types';
@@ -100,7 +101,9 @@ describe('the playground editor', () => {
 
   it('exposes every field as a textbox named by its component label', () => {
     const Editor = createReactEditor({ components, views: { callout: Callout, metric: Metric } });
-    const markup = renderToStaticMarkup(createElement(Editor, { markdown: body }));
+    const markup = renderToStaticMarkup(
+      createElement(Editor, { markdown: body, safeHref: isLinkUrl }),
+    );
     const fields = [...markup.matchAll(/<span[^>]*data-field[^>]*>/g)].map(([tag]) => tag);
     expect(fields.map((tag) => /aria-label="([^"]*)"/.exec(tag)?.[1])).toEqual([
       'Heading',
@@ -110,6 +113,7 @@ describe('the playground editor', () => {
       'Paragraph',
       'Metric value',
       'Metric label',
+      'Paragraph',
       'Paragraph',
     ]);
     expect(fields.every((tag) => tag.includes('role="textbox"'))).toBe(true);
@@ -137,7 +141,12 @@ describe('the playground fixture', () => {
 
   function editorOf(markdown: string): Editor {
     let count = 0;
-    return createEditor(markdown, { now: () => 0, newId: () => `b${count++}`, components });
+    return createEditor(markdown, {
+      now: () => 0,
+      newId: () => `b${count++}`,
+      components,
+      safeHref: isLinkUrl,
+    });
   }
 
   function saved(editor: Editor): string {
@@ -158,7 +167,8 @@ describe('the playground fixture', () => {
   it('reloads an emptied callout with its one empty paragraph and saves it unchanged', () => {
     const editor = editorOf(body);
     const { ids, blocks } = editor.doc();
-    const [child = ''] = blocks.get(ids.at(-1) ?? '')?.slots?.body ?? [];
+    const box = ids.find((id) => blocks.get(id)?.type === 'callout') ?? '';
+    const [child = ''] = blocks.get(box)?.slots?.body ?? [];
     const text = blocks.get(child)?.fields.text ?? '';
     editor.dispatch({
       kind: 'deleteText',

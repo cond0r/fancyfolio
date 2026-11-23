@@ -13,4 +13,6 @@ Three steps remained.
 :::callout{tone="info"}
 The shop and its numbers are invented.
 :::
+
+Next come **faster** search, *saved* carts, ~~gift wrap~~, a \`size\` filter and [store hours](https://example.com).
 `;

@@ -16,7 +16,7 @@ const blockAt = (page: Page, index: number) =>
 
 async function open(page: Page) {
   await page.goto('/playground');
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
   await page.waitForLoadState('networkidle');
 }
 
@@ -50,9 +50,9 @@ test('one handle follows the pointer into a callout and deletes a child', async 
   await caretAt(page, 7, 0);
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
-  await expect(fields(page)).toHaveCount(9);
+  await expect(fields(page)).toHaveCount(10);
   for (const [index, name] of [
-    [1, 'Text options, 2 of 7'],
+    [1, 'Text options, 2 of 8'],
     [7, 'Text options, 1 of 2 in Callout'],
   ] as const) {
     await fields(page).nth(index).hover();
@@ -66,7 +66,7 @@ test('one handle follows the pointer into a callout and deletes a child', async 
   await expect(handle(page)).toHaveCount(1);
   await handle(page).click();
   await remove(page).click();
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
   await expect(fields(page).nth(7)).toHaveText('');
   await menuOf(page, 7);
   await remove(page).click();
@@ -112,9 +112,9 @@ test('Ctrl+/ opens the menu on its first item; Escape returns the caret; Delete 
   await page.keyboard.press('ControlOrMeta+/');
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
-  await expect(fields(page)).toHaveCount(7);
-  await page.keyboard.press('ControlOrMeta+z');
   await expect(fields(page)).toHaveCount(8);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(fields(page)).toHaveCount(9);
   await expect(fields(page).nth(2)).toHaveText('ItsX checkout took nine steps.');
 });
 
@@ -183,10 +183,10 @@ test('Duplicate adds a copy below; Ctrl+Z removes it', async ({ page }) => {
   await open(page);
   await menuOf(page, 2);
   await action(page, 'Duplicate').click();
-  await expect(fields(page)).toHaveCount(9);
+  await expect(fields(page)).toHaveCount(10);
   await expect(fields(page).nth(3)).toHaveText('Its checkout took nine steps.');
   await page.keyboard.press('ControlOrMeta+z');
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
 });
 
 test('Move down and up restore the order; Move up stops at the top, leaves a callout', async ({
@@ -243,7 +243,7 @@ test('"+" inserts an empty metric below, the caret and its placeholder in the va
   await expect(action(page, 'Callout')).toHaveAttribute('aria-disabled', 'true');
   await page.keyboard.press('Escape');
   await menuOf(page, 4, plus(page));
-  await expect(plus(page)).toHaveAccessibleName('Insert below Text, 5 of 7');
+  await expect(plus(page)).toHaveAccessibleName('Insert below Text, 5 of 8');
   await action(page, 'Metric').click();
   const value = page.locator('[data-ff-editor] figure [data-field]').first();
   await expect(value).toBeFocused();
@@ -325,7 +325,7 @@ test.describe('on a 375 px touch screen', () => {
     await expect(field).toBeFocused();
     await expect(field).toHaveCSS('outline-style', 'none');
     await expect(handle(page)).toBeVisible();
-    await expect(handle(page)).toHaveAccessibleName('Text options, 2 of 7');
+    await expect(handle(page)).toHaveAccessibleName('Text options, 2 of 8');
     for (const button of [handle(page), plus(page)]) {
       const rect = await button.boundingBox();
       expect(rect?.x).toBeGreaterThanOrEqual(0);
@@ -357,7 +357,7 @@ test.describe('on a 375 px touch screen', () => {
     await page.keyboard.press('Escape');
     await expect(field).toBeFocused();
     await page.keyboard.press('Tab');
-    await expect(handle(page)).toHaveAccessibleName('Text options, 3 of 7');
+    await expect(handle(page)).toHaveAccessibleName('Text options, 3 of 8');
     await fields(page).nth(2).blur();
     await fields(page).nth(2).hover();
     await expect(handle(page)).toBeHidden();

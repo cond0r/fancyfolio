@@ -10,6 +10,7 @@ const body = [
   '3 steps',
   'Checkout length',
   'The shop and its numbers are invented.',
+  'Next come faster search, saved carts, gift wrap, a size filter and store hours.',
 ];
 
 const fields = (page: Page) => page.locator('[data-ff-editor] [data-field]');

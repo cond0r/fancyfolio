@@ -7,7 +7,7 @@ const selected = (page: Page) => page.evaluate(() => document.getSelection()?.to
 
 async function open(page: Page) {
   await page.goto('/playground');
-  await expect(fields(page)).toHaveCount(8);
+  await expect(fields(page)).toHaveCount(9);
   await page.waitForLoadState('networkidle');
 }
 

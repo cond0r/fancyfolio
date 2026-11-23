@@ -11,6 +11,7 @@ import { bindEditor } from '../dom/field.ts';
 import { Block } from './block.tsx';
 import { Chrome } from './chrome.tsx';
 import { Slash } from './slash.tsx';
+import { Toolbar } from './toolbar.tsx';
 import type {
   AnyViews,
   EditorProps,
@@ -67,12 +68,19 @@ export function createReactEditor({
 }): ComponentType<EditorProps> {
   const all: ViewMap = new Map(Object.entries({ ...builtins, ...views }));
   const registered = registryOf(components).components;
-  return function ReactEditor({ markdown, onRender, renderBlockChrome, ...saving }: EditorProps) {
+  return function ReactEditor({
+    markdown,
+    onRender,
+    renderBlockChrome,
+    safeHref,
+    ...saving
+  }: EditorProps) {
     const [editor] = useState(() =>
       createEditor(markdown, {
         now: Date.now,
         newId: () => crypto.randomUUID(),
         components,
+        safeHref,
         ...saving,
       }),
     );
@@ -102,6 +110,7 @@ export function createReactEditor({
         <Status editor={editor} />
         <span data-ff-live="" aria-live="polite" />
         <Slash editor={editor} insert={insert} />
+        <Toolbar editor={editor} />
       </div>
     );
   };

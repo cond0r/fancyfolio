@@ -35,11 +35,12 @@ export function notFound(c: Context<Env>) {
   return c.json({ error: 'Not found', requestId: c.get('requestId') } satisfies ErrorBody, 404);
 }
 
-export function refused(c: Context<Env>, status: 400 | 409 | 413) {
-  return c.json(
-    { error: statusText[status], requestId: c.get('requestId') } satisfies ErrorBody,
-    status,
-  );
+export function refuse<E extends Env>(
+  c: Context<E>,
+  status: 400 | 401 | 403 | 409 | 413,
+  message: string = statusText[status],
+) {
+  return c.json({ error: message, requestId: c.get('requestId') } satisfies ErrorBody, status);
 }
 
 export function errorCode(error: unknown): string | undefined {
@@ -97,14 +98,14 @@ export function pathParams<Schema extends v.GenericSchema>(schema: Schema) {
 
 export function jsonBody<Schema extends v.GenericSchema>(schema: Schema) {
   const parsed = validator('json', schema, (result, c: Context<Env>) => {
-    if (!result.success) return refused(c, 400);
+    if (!result.success) return refuse(c, 400);
   });
   const readable: MiddlewareHandler<Env> = async (c, next) => {
     const isJson = await c.req.json().then(
       () => true,
       () => false,
     );
-    return isJson ? parsed(c, next) : refused(c, 400);
+    return isJson ? parsed(c, next) : refuse(c, 400);
   };
   return Object.assign(readable, parsed);
 }
@@ -112,6 +113,8 @@ export function jsonBody<Schema extends v.GenericSchema>(schema: Schema) {
 const statusText = {
   200: 'OK',
   400: 'Bad request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
   404: 'Not found',
   409: 'Conflict',
   413: 'Payload too large',

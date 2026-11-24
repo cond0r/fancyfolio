@@ -14,5 +14,5 @@ Three steps remained.
 The shop and its numbers are invented.
 :::
 
-Next come **faster** ==search==, *saved* carts, ~~gift wrap~~, a \`size\` filter and [store hours](https://example.com).
+Next come **faster** ==search==, *saved* :color[carts]{tone="blue"}, ~~gift wrap~~, a \`size\` filter and [store hours](https://example.com).
 `;

@@ -315,6 +315,34 @@
   color: inherit;
 }
 
+:where([data-ff-editor] [data-ff-color="red"]) {
+  color: var(--ff-color-red);
+}
+
+:where([data-ff-editor] [data-ff-color="orange"]) {
+  color: var(--ff-color-orange);
+}
+
+:where([data-ff-editor] [data-ff-color="green"]) {
+  color: var(--ff-color-green);
+}
+
+:where([data-ff-editor] [data-ff-color="blue"]) {
+  color: var(--ff-color-blue);
+}
+
+:where([data-ff-editor] [data-ff-color="purple"]) {
+  color: var(--ff-color-purple);
+}
+
+:where([data-ff-swatch]) {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: currentColor;
+}
+
 :where([data-ff-editor] [data-field] [data-ff-link]) {
   color: var(--ff-accent);
   text-decoration: underline;
@@ -355,6 +383,16 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+:where([data-ff-tools] > button:has([data-ff-swatch])) {
+  align-content: center;
+  line-height: 16px;
+}
+
+:where([data-ff-tools] [data-ff-swatch]) {
+  height: 3px;
+  border-radius: 1px;
 }
 
 :where([data-ff-tools] > button:hover) {

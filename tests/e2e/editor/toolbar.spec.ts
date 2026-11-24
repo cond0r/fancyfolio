@@ -7,9 +7,10 @@ const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Text formatti
 const tool = (page: Page, name: string) => toolbar(page).getByRole('button', { name, exact: true });
 const selected = (page: Page) => page.evaluate(() => document.getSelection()?.toString());
 const url = (page: Page) => page.getByRole('textbox', { name: 'Link URL' });
+const tone = (page: Page, name: string) => page.getByRole('menuitemradio', { name, exact: true });
 const sentence = 'Its checkout took nine steps.';
 const marked =
-  'Next come **faster** ==search==, *saved* carts, ~~gift wrap~~, a `size` filter and [store hours](https://example.com).';
+  'Next come **faster** ==search==, *saved* :color[carts]{tone="blue"}, ~~gift wrap~~, a `size` filter and [store hours](https://example.com).';
 
 async function open(page: Page) {
   await page.goto('/playground');
@@ -74,6 +75,7 @@ for (const width of [1280, 390]) {
         await expect(toolbar(page)).toBeVisible();
         expect(await placement(page)).toBe('above');
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+        await expect(toolbar(page).getByRole('button')).toHaveCount(8);
         for (const button of await toolbar(page).getByRole('button').all()) {
           const size = await button.boundingBox();
           expect(Math.min(size?.width ?? 0, size?.height ?? 0)).toBeGreaterThanOrEqual(24);
@@ -219,6 +221,61 @@ for (const width of [1280, 390]) {
       await expect(tool(page, 'Highlight')).toHaveAttribute('aria-pressed', 'true');
     });
 
+    test('the colour menu colours the selection, follows it and clears it', async ({ page }) => {
+      await open(page);
+      const field = fields(page).nth(2);
+      const menu = page.getByRole('menu', { name: 'Text colour' });
+      const checked = menu.locator('[aria-checked="true"]');
+      const blue = field.locator('[data-ff-color="blue"]');
+      await select(page, 0, 26, 36);
+      for (const name of ['Change case', 'Text colour']) {
+        await tool(page, name).click();
+        await expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
+        const box = await page.getByRole('menu', { name }).boundingBox();
+        if (box === null) throw new Error('the menu has no box');
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+      await select(page, 2, 4, 12);
+      await tool(page, 'Text colour').click();
+      await expect(checked).toHaveCount(0);
+      await tone(page, 'Blue').click();
+      await expect(blue).toHaveText('checkout');
+      await expect(field).toBeFocused();
+      expect(await selected(page)).toBe('checkout');
+      const [shown, token] = await blue.evaluate((span) => {
+        const probe = document.body.appendChild(document.createElement('span'));
+        probe.style.color = 'var(--ff-color-blue)';
+        const both = [getComputedStyle(span).color, getComputedStyle(probe).color];
+        probe.remove();
+        return both;
+      });
+      expect(shown).toBe(token);
+      await page.keyboard.press('ControlOrMeta+s');
+      await expect(page.getByTestId('saved')).toContainText(
+        'Its :color[checkout]{tone="blue"} took nine steps.',
+      );
+      await tool(page, 'Text colour').click();
+      await expect(tone(page, 'Blue')).toHaveAttribute('aria-checked', 'true');
+      await expect(checked).toHaveCount(1);
+      await select(page, 2, 0, 12);
+      await expect(menu).toBeHidden();
+      await tool(page, 'Text colour').click();
+      await expect(checked).toHaveCount(0);
+      await tone(page, 'Red').click();
+      await expect(field.locator('[data-ff-color="red"]')).toHaveText('Its checkout');
+      await tool(page, 'Text colour').click();
+      await expect(tone(page, 'Red')).toHaveAttribute('aria-checked', 'true');
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(blue).toHaveText('checkout');
+      await expect(checked).toHaveCount(0);
+      await select(page, 2, 4, 12);
+      await tool(page, 'Text colour').click();
+      await tone(page, 'Default').click();
+      await expect(field.locator('[data-ff-color]')).toHaveCount(0);
+    });
+
     test('a case keeps the marks and undoes in one step', async ({ page }) => {
       await open(page);
       const field = fields(page).nth(2);
@@ -293,6 +350,7 @@ for (const width of [1280, 390]) {
         ['ArrowRight', 'Italic'],
         ['ArrowRight', 'Strikethrough'],
         ['ArrowRight', 'Highlight'],
+        ['ArrowRight', 'Text colour'],
         ['ArrowRight', 'Code'],
         ['Home', 'Bold'],
         ['ArrowLeft', 'Change case'],
@@ -313,9 +371,38 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole('menuitem', { name: 'lowercase' })).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(tool(page, 'Change case')).toBeFocused();
-      for (const control of await toolbar(page).getByRole('button').all()) {
+      for (const key of ['ArrowLeft', 'ArrowLeft', 'ArrowLeft', 'Enter'])
+        await page.keyboard.press(key);
+      await expect(tone(page, 'Default')).toBeFocused();
+      for (const [key, name] of [
+        ['ArrowUp', 'Purple'],
+        ['Home', 'Default'],
+        ['End', 'Purple'],
+        ['ArrowDown', 'Default'],
+        ['ArrowDown', 'Red'],
+        ['ArrowDown', 'Orange'],
+        ['ArrowDown', 'Green'],
+      ] as const) {
+        await page.keyboard.press(key);
+        await expect(tone(page, name)).toBeFocused();
+      }
+      await page.keyboard.press('Enter');
+      await expect(field.locator('[data-ff-color="green"]')).toHaveText('checkout');
+      await expect(field).toBeFocused();
+      expect(await selected(page)).toBe('checkout');
+      await expect(toolbar(page)).toBeVisible();
+      await page.keyboard.press('Alt+F10');
+      await expect(tool(page, 'Text colour')).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(tone(page, 'Green')).toBeFocused();
+      for (const control of [
+        ...(await toolbar(page).getByRole('button').all()),
+        ...(await toolbar(page).getByRole('menuitemradio').all()),
+      ]) {
         await expect(control).toHaveAccessibleName(/\S/);
       }
+      await page.keyboard.press('Escape');
+      await expect(tool(page, 'Text colour')).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(field).toBeFocused();
       expect(await selected(page)).toBe('checkout');

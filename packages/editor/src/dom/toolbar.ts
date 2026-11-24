@@ -1,5 +1,6 @@
 import { coverage, isMarkType, marksIn } from '../core/marks.ts';
 import type { BlockId, Case, Editor, Mark, MarkType, TextSelection } from '../core/types.ts';
+import { isColor } from '../dialect.ts';
 import { placeMenu } from './chrome.ts';
 import { fieldElement, fieldOf, place, readSelection, sameSelection } from './selection.ts';
 import type { Shown } from './types.ts';
@@ -18,6 +19,12 @@ function stepTo(count: number, at: number, key: string, back: string, forth: str
 function covers(marks: readonly Mark[], type: MarkType, { from, to }: TextSelection): boolean {
   const spans = coverage(marks, type, from, to);
   return spans.reduce((sum, span) => sum + span.to - span.from, 0) === to - from;
+}
+
+function colorOver(marks: readonly Mark[], at: TextSelection): string | undefined {
+  const [first, ...rest] = coverage(marks, 'color', at.from, at.to);
+  const one = first !== undefined && rest.every((span) => span.color === first.color);
+  return one && covers(marks, 'color', at) ? first.color : undefined;
 }
 
 function must<E extends Element>(element: E | null): E {
@@ -42,6 +49,8 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
     },
   );
   const menuOf = (node: Node | null) => menus.find(({ menu }) => menu.contains(node));
+  const tones = [...bar.querySelectorAll<HTMLElement>('[data-ff-tone]')];
+  const shade = bar.querySelector<HTMLElement>('[data-ff-tools] [data-ff-swatch]');
   const linker = must(bar.querySelector<HTMLButtonElement>('[data-ff-linker]'));
   const form = must(bar.querySelector('form'));
   const input = must(form.querySelector('input'));
@@ -54,6 +63,7 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
   let roving = 0;
   let watched: { readonly blockId: BlockId; readonly stop: () => void } | undefined;
   let linking: { readonly at: TextSelection; readonly range: Range } | undefined;
+  let menuAt: TextSelection | undefined;
 
   const shownAt = (at: TextSelection): Shown | undefined => {
     const atom = editor.blocks.get(at.blockId);
@@ -115,11 +125,18 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
       button.setAttribute('aria-disabled', String(!editor.can('toggleMark', { mark })));
     }
     linker.setAttribute('aria-pressed', String(covers(shown.marks, 'link', shown.at)));
+    const color = colorOver(shown.marks, shown.at);
+    for (const item of tones)
+      item.setAttribute('aria-checked', String(item.dataset.ffTone === color));
+    if (color === undefined) shade?.removeAttribute('data-ff-color');
+    else shade?.setAttribute('data-ff-color', color);
     bar.hidden = false;
     if (!bar.matches(':popover-open')) bar.showPopover();
     placeBar(range);
     for (const { menu, opener } of menus) {
-      if (menu.matches(':popover-open')) placeMenu(menu, opener.getBoundingClientRect());
+      if (!menu.matches(':popover-open')) continue;
+      if (menuAt !== undefined && !sameSelection(menuAt, shown.at)) menu.hidePopover();
+      else placeMenu(menu, opener.getBoundingClientRect());
     }
   };
 
@@ -207,7 +224,7 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
         open.opener.focus();
       } else back();
     } else if (focus instanceof HTMLElement && open !== undefined) {
-      const items = [...open.menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+      const items = [...open.menu.querySelectorAll<HTMLElement>('[role^="menuitem"]')];
       const to = stepTo(items.length, items.indexOf(focus), event.key, 'ArrowUp', 'ArrowDown');
       if (to === undefined) return;
       items[to]?.focus();
@@ -225,6 +242,11 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
     if (button === linker) return openForm();
     if (button === unlink) {
       editor.command('setLink', { href: null });
+      return back();
+    }
+    const tone = button.dataset.ffTone;
+    if (tone !== undefined) {
+      editor.command('setColor', { color: isColor(tone) ? tone : null });
       return back();
     }
     const mark = button.dataset.ffMark;
@@ -272,10 +294,13 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
   form.addEventListener('submit', onSubmit, options);
   for (const { menu, opener } of menus) {
     const onMenuToggle = (event: ToggleEvent) => {
+      const at = store.get(editor.selection);
+      menuAt = event.newState === 'open' && at.kind === 'text' ? at : undefined;
       if (event.newState !== 'open') return;
       placeMenu(menu, opener.getBoundingClientRect());
-      if (document.activeElement === opener)
-        menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+      if (document.activeElement !== opener) return;
+      const checked = menu.querySelector<HTMLElement>('[aria-checked="true"]');
+      (checked ?? menu.querySelector<HTMLElement>('[role^="menuitem"]'))?.focus();
     };
     menu.addEventListener('toggle', onMenuToggle, options);
   }

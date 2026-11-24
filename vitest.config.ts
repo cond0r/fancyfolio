@@ -26,7 +26,14 @@ export default defineConfig({
           },
         },
       },
-      { test: { name: 'editor', root: 'packages/editor', include: ['test/**/*.test.ts'] } },
+      {
+        test: {
+          name: 'editor',
+          root: 'packages/editor',
+          include: ['test/**/*.test.ts'],
+          css: { include: [/palette\.css/] },
+        },
+      },
       { test: { name: 'web', root: 'apps/web', include: ['test/**/*.test.ts'] } },
       {
         test: {

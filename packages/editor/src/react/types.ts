@@ -7,6 +7,7 @@ import type {
   Editor,
   HeadingProps,
   Json,
+  MarkType,
   NoProps,
   Registered,
   SafeHref,
@@ -112,4 +113,10 @@ export type FieldProps = {
   readonly blockId: BlockId;
   readonly field: string;
   readonly label: string | undefined;
+};
+
+export type Toggle = {
+  readonly mark: Exclude<MarkType, 'link' | 'color'>;
+  readonly label: string;
+  readonly keys: string;
 };

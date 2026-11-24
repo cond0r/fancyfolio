@@ -1,4 +1,7 @@
+/// <reference types="vite/client" />
 import * as editor from '@fancyfolio/editor';
+import { colors } from '@fancyfolio/editor/dialect';
+import palette from '@fancyfolio/editor/palette.css?raw';
 import type {
   Block,
   BlockId,
@@ -62,5 +65,9 @@ describe('the package root', () => {
       Source?,
     ] = [];
     expect(exported).toEqual([]);
+  });
+
+  it('exports ./palette.css with a token for every palette colour', () => {
+    for (const name of Object.keys(colors)) expect(palette).toContain(`--ff-color-${name}:`);
   });
 });

@@ -29,6 +29,8 @@ describe('GET /api/openapi.json', () => {
       'ErrorBody',
       'SiteBundle',
       'CaseStudy',
+      'Tenant',
+      'Me',
     ]);
     const bundle = document.paths['/api/v1/sites/{key}'].get.responses;
     expect(bundle['200'].content['application/json'].schema).toEqual({

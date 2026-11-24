@@ -10,7 +10,7 @@ import { Liveblocks, LiveblocksError, type PlainLsonObject } from '@liveblocks/n
 import { Hono } from 'hono';
 import * as v from 'valibot';
 import { liveblocksEnv } from '../env.ts';
-import { type Env, jsonBody, notFound, refused, responds } from '../shell.ts';
+import { type Env, jsonBody, notFound, refuse, responds } from '../shell.ts';
 
 const PROVIDER_TIMEOUT_MS = 5_000;
 
@@ -72,5 +72,5 @@ export const rooms = new Hono<Env>()
         throw error;
       },
     );
-    return seeded ? c.json({ room }) : refused(c, 409);
+    return seeded ? c.json({ room }) : refuse(c, 409);
   });

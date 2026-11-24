@@ -4,12 +4,13 @@ import { openAPIRouteHandler } from 'hono-openapi';
 import { auth } from './auth.ts';
 import { ipGuard } from './middleware/ip-guard.ts';
 import { health } from './routes/health.ts';
+import { me } from './routes/me.ts';
 import { rooms } from './routes/rooms.ts';
 import { sites } from './routes/sites.ts';
-import { appHostOnly, type Env, encodedPath, notFound, onError, refused, shell } from './shell.ts';
+import { appHostOnly, type Env, encodedPath, notFound, onError, refuse, shell } from './shell.ts';
 
 const authRoutes = new Hono<Env>().use(
-  bodyLimit({ maxSize: 8 * 1024, onError: (c) => refused(c, 413) }),
+  bodyLimit({ maxSize: 8 * 1024, onError: (c) => refuse(c, 413) }),
 );
 for (const { path } of Object.values(auth.api)) {
   if (path !== undefined && !path.includes(':') && path !== auth.api.verifyPassword.path)
@@ -25,7 +26,8 @@ const app = new Hono<Env>({ getPath: encodedPath })
   .route('/auth', authRoutes)
   .route('/health', health)
   .route('/v1/sites', sites)
-  .route('/v1/rooms', rooms);
+  .route('/v1/rooms', rooms)
+  .route('/v1/me', me);
 
 app.get(
   '/openapi.json',

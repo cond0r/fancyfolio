@@ -146,6 +146,29 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         ],
         "type": "object",
       },
+      "Me": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Tenant",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "email",
+          "tenant",
+        ],
+        "type": "object",
+      },
       "SiteBundle": {
         "additionalProperties": false,
         "properties": {
@@ -383,6 +406,22 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         ],
         "type": "object",
       },
+      "Tenant": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+          },
+          "subdomain": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "subdomain",
+        ],
+        "type": "object",
+      },
     },
   },
   "info": {
@@ -405,6 +444,43 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
               },
             },
             "description": "OK",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+    "/api/v1/me": {
+      "get": {
+        "operationId": "getApiV1Me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
           },
           "500": {
             "content": {

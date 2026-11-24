@@ -69,9 +69,16 @@ function spanFrom(input: unknown): Span | undefined {
   const from = field(input, 'from');
   const to = field(input, 'to');
   const href = field(input, 'href');
+  const color = field(input, 'color');
   if (typeof from !== 'number' || typeof to !== 'number') return undefined;
-  if (href === undefined) return Object.freeze({ from, to });
-  return typeof href === 'string' ? Object.freeze({ from, to, href }) : undefined;
+  if (href !== undefined && typeof href !== 'string') return undefined;
+  if (color !== undefined && typeof color !== 'string') return undefined;
+  return Object.freeze({
+    from,
+    to,
+    ...(href !== undefined && { href }),
+    ...(color !== undefined && { color }),
+  });
 }
 
 function listFrom<T>(

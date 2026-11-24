@@ -9,7 +9,7 @@ import { load, save } from '../src/core/markdown.ts';
 import { docOf, hasKeys, noProps, schema } from '../src/core/model.ts';
 import { apply } from '../src/core/ops.ts';
 import { registryOf } from '../src/core/registry.ts';
-import type { Block, Component, Doc, NoProps, Op } from '../src/core/types.ts';
+import type { Block, Component, Doc, Mark, NoProps, Op } from '../src/core/types.ts';
 import { parseMarkdown, remarkDialect, remarkDirectiveAllowlist } from '../src/dialect.ts';
 import {
   counter,
@@ -74,6 +74,8 @@ const linking = registryOf([], safeHref);
 const canonical = [
   '# Title\n\nA paragraph.\n',
   'Meet at 10:30, Status:done\n',
+  'a = b and x=1\n',
+  'A :note[x] stays text\n',
   '## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n',
   'First line\nsecond line\n',
   'Escaped \\* star, \\_under\\_ and \\[brackets]\n',
@@ -126,6 +128,13 @@ const unmodelled = [
   ['a protocol-relative link', '[a](//evil.example)'],
   ['an entity-obfuscated link', '[a](&#106;avascript:alert(1))'],
   ['a whitespace-obfuscated link', '[a](<java\tscript:alert(1)>)'],
+  ['a colour without a tone', ':color[x]'],
+  ['an off-palette colour', ':color[x]{tone="pink"}'],
+  ['a prototype tone', ':color[x]{tone="__proto__"}'],
+  ['a colour with a style', ':color[x]{tone="red" style="x"}'],
+  ['a colour with a handler', ':color[x]{tone="red" onclick="x"}'],
+  ['a colour class', ':color[x]{.red}'],
+  ['a colour inside a colour', ':color[a :color[b]{tone="blue"}]{tone="red"}'],
 ] as const;
 
 const variants = [
@@ -282,13 +291,52 @@ describe('inline marks', () => {
     ['a link holding marks', '[a **b** `c`](https://example.test)\n'],
     ['a backtick in code', 'a ``b`c`` d\n'],
     ['a marked heading', '## A *b* ~~c~~\n'],
+    ['a highlight', 'a ==x==\n'],
+    ['code inside a highlight', '==a `b`==\n'],
+    ['a colour', 'a :color[y]{tone="red"}\n'],
+    ['a colour around bold in a link', '[:color[a **b**]{tone="red"}](https://example.test)\n'],
+    ['a highlight inside a colour', ':color[a ==b==]{tone="blue"}\n'],
+    ['balanced and escaped brackets in coloured code', ':color[`[a] \\]`]{tone="red"}\n'],
   ])('writes %s from the model byte for byte', (_name, body) => {
     expect(written(body)).toBe(body);
   });
 
+  const highlight = (from: number, to: number): Mark => ({ type: 'highlight', from, to });
+  const red = (from: number, to: number): Mark => ({ type: 'color', from, to, color: 'red' });
+
+  it.each<[string, string, readonly Mark[], string]>([
+    ['highlighted =x', '=x', [highlight(0, 2)], '==\\=x==\n'],
+    ['highlighted x=', 'x=', [highlight(0, 2)], '==x\\===\n'],
+    ['b then highlighted =c', 'b=c', [highlight(1, 3)], '&#x62;==\\=c==\n'],
+    ['a == b', 'a == b', [], 'a \\=\\= b\n'],
+    ['==x== typed as text', '==x==', [], '\\=\\=x\\=\\=\n'],
+    ['Status: then a red done', 'Status:done', [red(7, 11)], 'Status\\::color[done]{tone="red"}\n'],
+    ['a: before a colour', 'a:b', [red(2, 3)], 'a\\::color[b]{tone="red"}\n'],
+    ['a::b', 'a::b', [], 'a::b\n'],
+    ['a colour typed as text', ':color[x]{tone="red"}', [], '\\:color\\[x]{tone="red"}\n'],
+    [
+      'a colour over code 32 brackets deep',
+      `${'['.repeat(32)}${']'.repeat(32)}`,
+      [{ type: 'code', from: 0, to: 64 }, red(0, 64)],
+      `:color[\`${'['.repeat(32)}${']'.repeat(32)}\`]{tone="red"}\n`,
+    ],
+    [
+      'a colour over 999 escaped brackets',
+      '['.repeat(999),
+      [red(0, 999)],
+      `:color[${'\\['.repeat(999)}]{tone="red"}\n`,
+    ],
+  ])('writes %s so it reloads equal', (_name, text, marks, markdown) => {
+    const doc = docOf([
+      { ...para(text), id: 'p', ...(marks.length > 0 && { marks: { text: marks } }) },
+    ]);
+    expect(save(doc, linking)).toEqual({ ok: true, markdown });
+    expect(shape(snapshot(load(markdown, newId, linking)))).toEqual(shape(snapshot(doc)));
+  });
+
   it.each(seeds)('saves random marked text blocks so they reload equal (seed %i)', (seed) => {
     const random = seeded(seed);
-    const types = ['bold', 'italic', 'strike', 'code', 'link'] as const;
+    const types = ['bold', 'italic', 'strike', 'code', 'link', 'highlight', 'color'] as const;
     for (let run = 0; run < 100; run += 1) {
       const kind = random.pick(kinds.filter((each) => each.type !== 'raw'));
       const text = randomText(random, 8);
@@ -300,9 +348,20 @@ describe('inline marks', () => {
         const [from, to] = a < b ? [a, b] : [b, a];
         if (from === to || (mark === 'code' && text.slice(from, to).includes('\n'))) continue;
         const href = random.pick(['https://a.test', 'https://b.test/(x) y']);
-        const spans = [mark === 'link' ? { from, to, href } : { from, to }];
+        const color = random.pick(['red', 'blue'] as const);
+        const spans = [
+          mark === 'link'
+            ? { from, to, href }
+            : mark === 'color'
+              ? { from, to, color }
+              : { from, to },
+        ];
         const op: Op = { kind: 'markText', blockId: 'p', field: 'text', mark, from, to, spans };
-        doc = apply(doc, op, linking).doc;
+        try {
+          doc = apply(doc, op, linking).doc;
+        } catch (error) {
+          if (!(error instanceof RangeError)) throw error;
+        }
       }
       const result = save(doc, linking);
       const where = `seed ${seed} run ${run} ${JSON.stringify(snapshot(doc))}`;

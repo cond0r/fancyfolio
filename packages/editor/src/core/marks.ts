@@ -1,3 +1,4 @@
+import { isColor } from '../dialect.ts';
 import type { Block, Fail, Mark, MarkType, Registered, Registry, Span } from './types.ts';
 
 const order: readonly string[] = [
@@ -6,6 +7,8 @@ const order: readonly string[] = [
   'strike',
   'code',
   'link',
+  'highlight',
+  'color',
 ] satisfies readonly MarkType[];
 
 export function isMarkType(type: string): type is MarkType {
@@ -36,23 +39,62 @@ function problem(mark: Mark, text: string, registry: Registry): string | undefin
   if (from >= to) return 'empty mark';
   if (splitsPair(text, from) || splitsPair(text, to)) return 'mark inside a surrogate pair';
   if (mark.type === 'code' && text.slice(from, to).includes('\n')) return 'code over a line break';
+  if (mark.type !== 'color' && mark.color !== undefined) return 'colour on a non-colour mark';
+  if (mark.type === 'color' && !isColor(mark.color)) return 'colour off the palette';
   if (mark.type !== 'link') return mark.href === undefined ? undefined : 'href on a non-link mark';
   if (mark.href === undefined || registry.safeHref?.(mark.href) !== true) return 'unsafe link';
   return undefined;
 }
 
-function canonical(marks: readonly Mark[], fail?: Fail): Mark[] {
+const escapable = /[[\\\]]/;
+const maxLabelDepth = 32;
+const maxLabelEscapes = 999;
+
+function closesLabel(text: string, marks: readonly Mark[], color: Mark): boolean {
+  const cuts = new Set([color.from, color.to]);
+  for (const { from, to } of marks) {
+    for (const at of [from, to]) if (at > color.from && at < color.to) cuts.add(at);
+  }
+  const sorted = [...cuts].toSorted((a, b) => a - b);
+  let depth = 0;
+  let escapes = 0;
+  for (const [index, from] of sorted.slice(0, -1).entries()) {
+    const to = sorted[index + 1] ?? from;
+    if (marks.some((mark) => mark.type === 'link' && (mark.from === from || mark.to === from))) {
+      if (depth !== 0) return true;
+      escapes = 0;
+    }
+    const code = marks.some((mark) => mark.type === 'code' && mark.from <= from && to <= mark.to);
+    for (let at = from; at < to; at += 1) {
+      const char = text[at] ?? '';
+      if (!code) escapes += escapable.test(char) ? 1 : 0;
+      else if (char === '\\' && at + 1 < to && escapable.test(text[at + 1] ?? '')) {
+        escapes += 1;
+        at += 1;
+      } else if (char === '[') depth += 1;
+      else if (char === ']') depth -= 1;
+      if (depth < 0 || depth > maxLabelDepth || escapes > maxLabelEscapes) return true;
+    }
+  }
+  return depth !== 0;
+}
+
+function canonical(text: string, marks: readonly Mark[], fail?: Fail): Mark[] {
   const sorted = marks.toSorted((a, b) => rank(a) - rank(b) || a.from - b.from || a.to - b.to);
   const out: Mark[] = [];
   for (const mark of sorted) {
     const last = out.at(-1);
     if (last === undefined || last.type !== mark.type || mark.from > last.to) out.push(mark);
-    else if (last.href === mark.href)
+    else if (last.href === mark.href && last.color === mark.color)
       out[out.length - 1] = { ...last, to: Math.max(last.to, mark.to) };
     else if (mark.from === last.to) out.push(mark);
-    else fail?.('links overlap');
+    else fail?.(mark.type === 'link' ? 'links overlap' : 'colours overlap');
   }
-  return out;
+  return out.filter((mark) => {
+    const breaks = mark.type === 'color' && closesLabel(text, out, mark);
+    if (breaks) fail?.('a colour label the parser cannot close');
+    return !breaks;
+  });
 }
 
 export function marksFor(
@@ -73,14 +115,14 @@ export function marksFor(
     if (reason !== undefined) fail?.(reason);
     return reason === undefined;
   });
-  return canonical(kept, fail);
+  return canonical(text, kept, fail);
 }
 
 export function marksIn(block: Block, field: string): readonly Mark[] {
   return block.marks !== undefined && Object.hasOwn(block.marks, field) ? block.marks[field] : [];
 }
 
-const endInclusive: readonly MarkType[] = ['bold', 'italic', 'strike'];
+const endInclusive: readonly MarkType[] = ['bold', 'italic', 'strike', 'highlight', 'color'];
 
 export function typedMarks(block: Block, field: string, offset: number, text: string): Mark[] {
   const lines = text.split('\n');

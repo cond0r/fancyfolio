@@ -4,7 +4,7 @@ import { bindToolbar } from '../dom/toolbar.ts';
 import { Icon, iconPaths } from './icons.tsx';
 
 const toggles: readonly {
-  readonly mark: Exclude<MarkType, 'link'>;
+  readonly mark: Exclude<MarkType, 'link' | 'highlight' | 'color'>;
   readonly label: string;
   readonly keys: string;
 }[] = [

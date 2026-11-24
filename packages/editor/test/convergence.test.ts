@@ -208,19 +208,53 @@ describe('peers formatting at once', () => {
 
   it('keep the text and drop the marks a hostile peer sends', () => {
     const { all, converged, shared } = peers(2, notes);
+    const deep = `${'['.repeat(33)}${']'.repeat(33)}`;
     join(shared).adapter.send([
       { ...type('m0', 0, 'a\nb'), marks: [{ type: 'code', from: 0, to: 3 }] },
       {
         ...type('m0', 0, 'x'),
         marks: [{ type: 'link', from: 0, to: 1, href: 'javascript:alert(1)' }],
       },
+      {
+        kind: 'markText',
+        ...on,
+        mark: 'color',
+        from: 0,
+        to: 4,
+        spans: [{ from: 0, to: 4, color: '__proto__' }],
+      },
+      { ...type('m0', 0, 'y'), marks: [{ ...bold(0, 1), color: 'red' }] },
+      {
+        ...type('m0', 0, 'z]'),
+        marks: [
+          { type: 'code', from: 0, to: 2 },
+          { type: 'color', from: 0, to: 2, color: 'red' },
+        ],
+      },
+      {
+        ...type('m0', 0, `${deep} `),
+        marks: [
+          { type: 'code', from: 0, to: 66 },
+          { type: 'color', from: 0, to: 66, color: 'red' },
+        ],
+      },
+      {
+        ...type('m0', 0, '\\['.repeat(500)),
+        marks: [{ type: 'color', from: 0, to: 1000, color: 'red' }],
+      },
     ]);
     converged();
     for (const { editor } of all) {
       expect(editor.doc().blocks.get('m0')).toEqual({
         ...notes.blocks.get('m0'),
-        fields: { text: 'xa\nbBold words here' },
-        marks: { text: [bold(4, 8)] },
+        fields: { text: `${'\\['.repeat(500)}${deep} z]yxa\nbBold words here` },
+        marks: {
+          text: [
+            bold(1074, 1078),
+            { type: 'code', from: 1000, to: 1066 },
+            { type: 'code', from: 1067, to: 1069 },
+          ],
+        },
       });
     }
   });

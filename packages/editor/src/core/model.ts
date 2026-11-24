@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Heading, Paragraph, PhrasingContent, Root, Text } from 'mdast';
-import { stringifyMarkdown } from '../dialect.ts';
+import { colorOf, stringifyMarkdown } from '../dialect.ts';
 import type {
   Block,
   BlockId,
@@ -101,7 +101,12 @@ export function textNodes(text: string): Text[] {
   return text === '' ? [] : [{ type: 'text', value: text }];
 }
 
-const wrapped = { strong: 'bold', emphasis: 'italic', delete: 'strike' } as const;
+const wrapped = {
+  strong: 'bold',
+  emphasis: 'italic',
+  delete: 'strike',
+  highlight: 'highlight',
+} as const;
 
 export function inlineOf(node: Paragraph | Heading): Inline | undefined {
   let text = '';
@@ -119,7 +124,18 @@ export function inlineOf(node: Paragraph | Heading): Inline | undefined {
         marks.push({ type: 'link', from, to: text.length, href: child.url });
         return true;
       }
-      if (child.type !== 'strong' && child.type !== 'emphasis' && child.type !== 'delete') {
+      if (child.type === 'textDirective') {
+        const color = colorOf(child);
+        if (color === undefined || !read(child.children)) return false;
+        marks.push({ type: 'color', from, to: text.length, color });
+        return true;
+      }
+      if (
+        child.type !== 'strong' &&
+        child.type !== 'emphasis' &&
+        child.type !== 'delete' &&
+        child.type !== 'highlight'
+      ) {
         return false;
       }
       if (!read(child.children)) return false;
@@ -129,7 +145,15 @@ export function inlineOf(node: Paragraph | Heading): Inline | undefined {
   return read(node.children) ? { text, marks } : undefined;
 }
 
-const nesting: readonly MarkType[] = ['link', 'bold', 'italic', 'strike', 'code'];
+const nesting: readonly MarkType[] = [
+  'link',
+  'color',
+  'bold',
+  'italic',
+  'strike',
+  'highlight',
+  'code',
+];
 
 function wrap(mark: Mark, value: string, children: PhrasingContent[]): PhrasingContent {
   switch (mark.type) {
@@ -141,6 +165,10 @@ function wrap(mark: Mark, value: string, children: PhrasingContent[]): PhrasingC
       return { type: 'emphasis', children };
     case 'strike':
       return { type: 'delete', children };
+    case 'highlight':
+      return { type: 'highlight', children };
+    case 'color':
+      return { type: 'textDirective', name: 'color', attributes: { tone: mark.color }, children };
     case 'code':
       return { type: 'inlineCode', value };
   }

@@ -142,6 +142,7 @@ describe('every route the API serves', () => {
         'GET /api/v1/sites/{key}',
         'GET /api/v1/sites/{key}/case-studies/{slug}',
         'GET /api/v1/me',
+        'POST /api/v1/tenants',
       ]),
     );
     const documented = Object.entries(paths).flatMap(([path, item]) =>
@@ -154,6 +155,7 @@ describe('every route the API serves', () => {
     for (const { route, responses } of documented) {
       const statuses: Record<string, string[]> = {
         'GET /api/v1/me': ['200', '401', '500'],
+        'POST /api/v1/tenants': ['201', '400', '401', '409', '429', '500'],
         'POST /api/v1/rooms/auth': ['200', '400', '404', '500'],
         'POST /api/v1/rooms/seed': ['200', '400', '404', '409', '500'],
       };

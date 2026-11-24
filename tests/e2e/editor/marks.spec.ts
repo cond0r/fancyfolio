@@ -54,6 +54,7 @@ for (const width of [1280, 390]) {
         ['ControlOrMeta+b', 'strong'],
         ['ControlOrMeta+i', 'em'],
         ['ControlOrMeta+Shift+x', 's'],
+        ['ControlOrMeta+Shift+h', 'mark'],
         ['ControlOrMeta+e', 'code'],
       ] as const) {
         await commits.evaluate((output) => output.replaceChildren());

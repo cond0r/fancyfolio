@@ -7,7 +7,8 @@
     "./dialect": "./src/dialect.ts",
     "./types": "./src/types.ts",
     "./react": "./src/react/editor.tsx",
-    "./chrome.css": "./src/chrome.css"
+    "./chrome.css": "./src/chrome.css",
+    "./palette.css": "./src/palette.css"
   },
   "scripts": {
     "typecheck": "tsc -p ."

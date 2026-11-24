@@ -1,3 +1,5 @@
+@import "./palette.css";
+
 :where([data-ff-editor]) {
   --ff-surface: #fff;
   --ff-text: #171717;
@@ -306,6 +308,11 @@
   background: var(--ff-hover);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9em;
+}
+
+:where([data-ff-editor] [data-field] mark) {
+  background: var(--ff-mark);
+  color: inherit;
 }
 
 :where([data-ff-editor] [data-field] [data-ff-link]) {

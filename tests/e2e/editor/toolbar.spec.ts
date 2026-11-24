@@ -9,7 +9,7 @@ const selected = (page: Page) => page.evaluate(() => document.getSelection()?.to
 const url = (page: Page) => page.getByRole('textbox', { name: 'Link URL' });
 const sentence = 'Its checkout took nine steps.';
 const marked =
-  'Next come **faster** search, *saved* carts, ~~gift wrap~~, a `size` filter and [store hours](https://example.com).';
+  'Next come **faster** ==search==, *saved* carts, ~~gift wrap~~, a `size` filter and [store hours](https://example.com).';
 
 async function open(page: Page) {
   await page.goto('/playground');
@@ -149,6 +149,7 @@ for (const width of [1280, 390]) {
         ['Bold', 'strong'],
         ['Italic', 'em'],
         ['Strikethrough', 's'],
+        ['Highlight', 'mark'],
         ['Code', 'code'],
         ['Link', '[data-ff-link]'],
       ] as const) {
@@ -191,6 +192,31 @@ for (const width of [1280, 390]) {
       await expect(page.getByTestId('saved')).toContainText(
         '**Its** *checkout* ~~took~~ `nine` [steps](https://example.com).',
       );
+    });
+
+    test('Highlight marks the selection in place, Mod+Shift+H removes it and undo restores it', async ({
+      page,
+    }) => {
+      await open(page);
+      const field = fields(page).nth(2);
+      const id = await blockOf(field).getAttribute('data-block-id');
+      const commits = page.getByTestId('commits');
+      await select(page, 2, 4, 12);
+      await expect(toolbar(page)).toBeVisible();
+      await commits.evaluate((output) => output.replaceChildren());
+      await tool(page, 'Highlight').click();
+      await expect(field.locator('mark')).toHaveText('checkout');
+      await expect(field).toBeFocused();
+      expect(await selected(page)).toBe('checkout');
+      await expect(tool(page, 'Highlight')).toHaveAttribute('aria-pressed', 'true');
+      await frame(page);
+      expect(new Set((await commits.textContent())?.trim().split(/\s+/))).toEqual(new Set([id]));
+      await page.keyboard.press('ControlOrMeta+Shift+h');
+      await expect(field.locator('mark')).toHaveCount(0);
+      await expect(tool(page, 'Highlight')).toHaveAttribute('aria-pressed', 'false');
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(field.locator('mark')).toHaveText('checkout');
+      await expect(tool(page, 'Highlight')).toHaveAttribute('aria-pressed', 'true');
     });
 
     test('a case keeps the marks and undoes in one step', async ({ page }) => {
@@ -265,7 +291,10 @@ for (const width of [1280, 390]) {
       for (const [key, name] of [
         ['', 'Bold'],
         ['ArrowRight', 'Italic'],
-        ['ArrowLeft', 'Bold'],
+        ['ArrowRight', 'Strikethrough'],
+        ['ArrowRight', 'Highlight'],
+        ['ArrowRight', 'Code'],
+        ['Home', 'Bold'],
         ['ArrowLeft', 'Change case'],
         ['ArrowRight', 'Bold'],
         ['End', 'Change case'],

@@ -4,13 +4,14 @@ import { bindToolbar } from '../dom/toolbar.ts';
 import { Icon, iconPaths } from './icons.tsx';
 
 const toggles: readonly {
-  readonly mark: Exclude<MarkType, 'link' | 'highlight' | 'color'>;
+  readonly mark: Exclude<MarkType, 'link' | 'color'>;
   readonly label: string;
   readonly keys: string;
 }[] = [
   { mark: 'bold', label: 'Bold', keys: 'Control+B Meta+B' },
   { mark: 'italic', label: 'Italic', keys: 'Control+I Meta+I' },
   { mark: 'strike', label: 'Strikethrough', keys: 'Control+Shift+X Meta+Shift+X' },
+  { mark: 'highlight', label: 'Highlight', keys: 'Control+Shift+H Meta+Shift+H' },
   { mark: 'code', label: 'Code', keys: 'Control+E Meta+E' },
 ];
 

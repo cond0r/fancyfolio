@@ -53,6 +53,11 @@ const keys = new Map<string, MarkType>([
   ['e', 'code'],
 ]);
 
+const shiftedKeys = new Map<string, MarkType>([
+  ['x', 'strike'],
+  ['h', 'highlight'],
+]);
+
 const nesting: readonly MarkType[] = [
   'link',
   'color',
@@ -84,7 +89,7 @@ function textIn(editor: Editor, blockId: BlockId, name: string): string {
 
 function markKey(event: KeyboardEvent): MarkType | undefined {
   const key = event.key.toLowerCase();
-  return event.shiftKey ? (key === 'x' ? 'strike' : undefined) : keys.get(key);
+  return (event.shiftKey ? shiftedKeys : keys).get(key);
 }
 
 function pendingMarks(

@@ -31,6 +31,7 @@ describe('GET /api/openapi.json', () => {
       'CaseStudy',
       'Tenant',
       'Me',
+      'CreateTenant',
     ]);
     const bundle = document.paths['/api/v1/sites/{key}'].get.responses;
     expect(bundle['200'].content['application/json'].schema).toEqual({
@@ -61,7 +62,9 @@ describe('GET /api/openapi.json', () => {
           'Lower-case letters and digits in hyphen-separated groups, at most 64 characters',
       },
     ]);
-    const sites = Object.keys(document.paths).filter((path) => !path.startsWith('/api/v1/rooms/'));
+    const sites = Object.keys(document.paths).filter(
+      (path) => !path.startsWith('/api/v1/rooms/') && path !== '/api/v1/tenants',
+    );
     expect(JSON.stringify(sites.map((path) => document.paths[path]))).not.toContain('"400"');
   });
 

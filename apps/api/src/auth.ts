@@ -1,4 +1,4 @@
-import type { AuthContext, GenericEndpointContext } from '@better-auth/core';
+import type { AuthContext, BetterAuthOptions, GenericEndpointContext } from '@better-auth/core';
 import { isHttpsUrl, LIMITS } from '@fancyfolio/contracts';
 import { authAdapter, authSchemaOptions } from '@fancyfolio/db';
 import { waitUntil } from '@vercel/functions';
@@ -45,8 +45,8 @@ const knownMessages = new Set([
 ]);
 let prunedAt = -Infinity;
 
-async function underAccountLimit(
-  { adapter, logger, runInBackground }: AuthContext,
+export async function underAccountLimit<Options extends BetterAuthOptions>(
+  { adapter, logger, runInBackground }: AuthContext<Options>,
   key: string,
 ): Promise<boolean> {
   const model = 'rateLimit';

@@ -1,5 +1,6 @@
 import { type ErrorBody, errorBody, hostEnv, parseEnv, parseHost } from '@fancyfolio/contracts';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { describeRoute, resolver, validator } from 'hono-openapi';
 import * as v from 'valibot';
 
@@ -37,7 +38,7 @@ export function notFound(c: Context<Env>) {
 
 export function refuse<E extends Env>(
   c: Context<E>,
-  status: 400 | 401 | 403 | 409 | 413,
+  status: Refusal,
   message: string = statusText[status],
 ) {
   return c.json({ error: message, requestId: c.get('requestId') } satisfies ErrorBody, status);
@@ -88,7 +89,10 @@ function internalError(thrown: unknown, c: Context<Env>) {
   return c.json({ error: 'Internal error', requestId } satisfies ErrorBody, 500);
 }
 
-export const onError: ErrorHandler<Env> = internalError;
+export const onError: ErrorHandler<Env> = (error, c) =>
+  error instanceof HTTPException && isRefusal(error.status)
+    ? refuse(c, error.status)
+    : internalError(error, c);
 
 export function pathParams<Schema extends v.GenericSchema>(schema: Schema) {
   return validator('param', schema, (result, c: Context<Env>) => {
@@ -112,24 +116,39 @@ export function jsonBody<Schema extends v.GenericSchema>(schema: Schema) {
 
 const statusText = {
   200: 'OK',
+  201: 'Created',
   400: 'Bad request',
   401: 'Unauthorized',
   403: 'Forbidden',
   404: 'Not found',
   409: 'Conflict',
   413: 'Payload too large',
+  429: 'Too many requests',
   500: 'Internal error',
 } as const;
 
 type Status = keyof typeof statusText;
+type Refusal = Exclude<Status, 200 | 201 | 500>;
+
+function isRefusal(status: number): status is Refusal {
+  return status in statusText && status >= 400 && status < 500;
+}
 
 function described(status: Status, schema: v.GenericSchema) {
   return [status, { description: statusText[status], schema }] as const;
 }
 
-export function responds(schema: v.GenericSchema, ...errors: Exclude<Status, 200 | 500>[]) {
+export function responds(schema: v.GenericSchema, ...errors: Refusal[]) {
+  return contract(200, schema, errors);
+}
+
+export function creates(schema: v.GenericSchema, ...errors: Refusal[]) {
+  return contract(201, schema, errors);
+}
+
+function contract(success: 200 | 201, schema: v.GenericSchema, errors: Refusal[]) {
   const contracts = new Map<number, { description: string; schema: v.GenericSchema }>([
-    described(200, schema),
+    described(success, schema),
     ...errors.map((status) => described(status, errorBody)),
     described(500, errorBody),
   ]);

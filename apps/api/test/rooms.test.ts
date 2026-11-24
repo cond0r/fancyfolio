@@ -92,6 +92,12 @@ describe.each<Route>(['auth', 'seed'])('POST /api/v1/rooms/%s', (route) => {
     await expectRefused(await post(route, body), 400, 'Bad request');
   });
 
+  it('refuses a body over its cap as 413', async () => {
+    const pad = route === 'auth' ? 'p'.repeat(8 * 1024) : '€'.repeat(LIMITS.roomSeed);
+    const res = await post(route, { ...bodyFor(route, newRoom()), pad });
+    await expectRefused(res, 413, 'Payload too large');
+  });
+
   it.each([
     ['without a secret key', 404, { LIVEBLOCKS_SECRET_KEY: undefined }],
     ['in production', 404, { VERCEL_ENV: 'production' }],

@@ -58,6 +58,19 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         ],
         "type": "object",
       },
+      "CreateTenant": {
+        "additionalProperties": false,
+        "properties": {
+          "subdomain": {
+            "description": "3 to 32 lower-case letters, digits and inner hyphens, no hyphens in positions 3 and 4, not reserved",
+            "type": "string",
+          },
+        },
+        "required": [
+          "subdomain",
+        ],
+        "type": "object",
+      },
       "ErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -827,6 +840,83 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
               },
             },
             "description": "Not found",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+    "/api/v1/tenants": {
+      "post": {
+        "operationId": "postApiV1Tenants",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenant",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant",
+                },
+              },
+            },
+            "description": "Created",
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Bad request",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Conflict",
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Too many requests",
           },
           "500": {
             "content": {

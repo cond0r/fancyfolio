@@ -53,7 +53,15 @@ const keys = new Map<string, MarkType>([
   ['e', 'code'],
 ]);
 
-const nesting: readonly MarkType[] = ['link', 'bold', 'italic', 'strike', 'code'];
+const nesting: readonly MarkType[] = [
+  'link',
+  'color',
+  'bold',
+  'italic',
+  'strike',
+  'highlight',
+  'code',
+];
 
 const tags = {
   link: 'span',
@@ -61,6 +69,8 @@ const tags = {
   italic: 'em',
   strike: 's',
   code: 'code',
+  highlight: 'mark',
+  color: 'span',
 } as const satisfies Record<MarkType, string>;
 
 function blockIn(editor: Editor, blockId: BlockId): Block | undefined {
@@ -115,6 +125,7 @@ function renderField(field: HTMLElement, block: Block | undefined, name: string)
     for (const mark of wanted.slice(depth)) {
       const element = document.createElement(tags[mark.type]);
       if (mark.type === 'link') element.dataset.ffLink = '';
+      if (mark.color !== undefined) element.dataset.ffColor = mark.color;
       (open.at(-1)?.element ?? top).append(element);
       open.push({ mark, element });
     }

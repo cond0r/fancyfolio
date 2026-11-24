@@ -3,7 +3,7 @@ import { containerDirective } from '../src/core/directive.ts';
 import { hasKeys, schema } from '../src/core/model.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Editor, Handlers, Selection } from '../src/core/types.ts';
+import type { AnyComponent, Editor, Handlers, Mark, Selection } from '../src/core/types.ts';
 import { join, room } from './collab.ts';
 import { callout, counter, metric, safeHref } from './generate.ts';
 
@@ -748,6 +748,8 @@ describe('mark commands', () => {
     return createEditor(markdown, { now: () => 0, newId: counter(), safeHref });
   }
 
+  const red = (from: number, to: number): Mark => ({ type: 'color', from, to, color: 'red' });
+
   it.each<[string, string, Selection, ...Parameters<Editor['can']>, string]>([
     [
       'bolds a partly bold range whole',
@@ -829,6 +831,62 @@ describe('mark commands', () => {
       { text: 'a\nb' },
       'x `ca`\n`bd` y\n',
     ],
+    [
+      'highlights a partly highlighted range whole',
+      'a ==bc== d\n',
+      caret('b0', 0, 4),
+      'toggleMark',
+      { mark: 'highlight' },
+      '==a bc== d\n',
+    ],
+    [
+      'types at the end of a highlight',
+      '==ab== c\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x' },
+      '==abx== c\n',
+    ],
+    [
+      'colours a partly red range all blue',
+      'a :color[bc]{tone="red"} d\n',
+      caret('b0', 0, 4),
+      'setColor',
+      { color: 'blue' },
+      ':color[a bc]{tone="blue"} d\n',
+    ],
+    [
+      'clears a colour',
+      ':color[bc]{tone="red"} d\n',
+      caret('b0', 0, 2),
+      'setColor',
+      { color: null },
+      'bc d\n',
+    ],
+    [
+      'types at the end of a colour',
+      ':color[ab]{tone="red"} c\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x' },
+      ':color[abx]{tone="red"} c\n',
+    ],
+    [
+      'merges touching equal colours',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'xy', marks: [red(0, 1), red(1, 2)] },
+      'ab:color[xy]{tone="red"}\n',
+    ],
+    [
+      'keeps touching different colours apart',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'xy', marks: [red(0, 1), { ...red(1, 2), color: 'blue' }] },
+      'ab:color[x]{tone="red"}:color[y]{tone="blue"}\n',
+    ],
   ])('%s in one undo step', (_name, source, selection, name, args, markdown) => {
     const editor = markedAt(source);
     select(editor, selection);
@@ -846,6 +904,51 @@ describe('mark commands', () => {
       caret('b0', 4, 8),
       'setLink',
       { href: 'javascript:alert(1)' },
+    ],
+    [
+      'a colour on a bold mark',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x', marks: [{ ...red(0, 1), type: 'bold' }] },
+    ],
+    [
+      'a colour off the palette',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x', marks: [{ ...red(0, 1), color: 'pink' }] },
+    ],
+    [
+      'a colour over code with an unbalanced bracket',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'x]', marks: [{ type: 'code', from: 0, to: 2 }, red(0, 2)] },
+    ],
+    [
+      'a colour over code 33 brackets deep',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      {
+        text: `${'['.repeat(33)}${']'.repeat(33)}`,
+        marks: [{ type: 'code', from: 0, to: 66 }, red(0, 66)],
+      },
+    ],
+    [
+      'a colour over 1000 escaped brackets and backslashes',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: '\\['.repeat(500), marks: [red(0, 1000)] },
+    ],
+    [
+      'overlapping colours',
+      'ab\n',
+      caret('b0', 2),
+      'insertText',
+      { text: 'xy', marks: [red(0, 2), { ...red(1, 2), color: 'blue' }] },
     ],
   ])('refuses %s and changes nothing', (_name, source, selection, name, args) => {
     const editor = markedAt(source);

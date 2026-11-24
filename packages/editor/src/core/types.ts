@@ -20,9 +20,16 @@ export type BlockKind = { readonly type: string; readonly props: Json };
 
 export type Slots = { readonly [slot: string]: readonly BlockId[] };
 
-export type MarkType = 'bold' | 'italic' | 'strike' | 'code' | 'link';
+export type MarkType = 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'highlight' | 'color';
 
-export type Span = { readonly from: number; readonly to: number; readonly href?: string };
+export type Color = 'red' | 'orange' | 'green' | 'blue' | 'purple';
+
+export type Span = {
+  readonly from: number;
+  readonly to: number;
+  readonly href?: string;
+  readonly color?: string;
+};
 
 export type Mark = Span & { readonly type: MarkType };
 
@@ -281,6 +288,7 @@ export type Commands = {
   readonly toggleMark: { readonly mark: MarkType };
   readonly setCase: { readonly to: 'upper' | 'lower' | 'capitalize' };
   readonly setLink: { readonly href: string | null };
+  readonly setColor: { readonly color: Color | null };
   readonly undo: NoArgs;
   readonly redo: NoArgs;
 };

@@ -404,6 +404,8 @@ const defaults: DefaultHandlers = {
   },
   setLink: (context, { href }) =>
     marked(context, 'link', (range) => (href === null ? [] : [{ ...range, href }])),
+  setColor: (context, { color }) =>
+    marked(context, 'color', (range) => (color === null ? [] : [{ ...range, color }])),
   undo: none,
   redo: none,
 };

@@ -177,6 +177,26 @@ describe('GFM and the canonical style', () => {
   });
 });
 
+describe('inline marks render', () => {
+  it.each([
+    ['==x==', '<p><mark>x</mark></p>'],
+    [':color[x]{tone="red"}', '<p><span class="ff-color-red">x</span></p>'],
+    [':color[x]', '<p>x</p>'],
+    [':color[x]{tone="pink"}', '<p>x</p>'],
+    [':color[x]{tone="__proto__"}', '<p>x</p>'],
+    [':color[x]{tone="red" style="x"}', '<p>x</p>'],
+    [':color[x]{tone="red" onclick="x"}', '<p>x</p>'],
+    [':color[x]{.red}', '<p>x</p>'],
+    [
+      ':color[a :color[b]{tone="blue"}]{tone="red"}',
+      '<p><span class="ff-color-red">a <span class="ff-color-blue">b</span></span></p>',
+    ],
+  ])('%j as %s, also once written back', (body, html) => {
+    expect(String(dialectHtml.processSync(body))).toBe(html);
+    expect(String(dialectHtml.processSync(stringifyMarkdown(parseMarkdown(body))))).toBe(html);
+  });
+});
+
 describe('a bare URL or email address stays text', () => {
   it.each(['https://example.test', 'www.example.test', 'ines@example.test'])(
     '%s parses as text and stringifies byte for byte',

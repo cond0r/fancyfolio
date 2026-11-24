@@ -115,6 +115,8 @@ const pieces = [
   '\\',
   '&amp;',
   '===',
+  '=',
+  'color[',
   '---',
   'é',
   '\u00a0',
@@ -135,7 +137,7 @@ export const kinds: readonly BlockKind[] = [
 
 export const markedKinds: readonly BlockKind[] = [...kinds, { type: marked.name, props: {} }];
 
-const markTypes = ['bold', 'italic', 'strike', 'code', 'link'] as const;
+const markTypes = ['bold', 'italic', 'strike', 'code', 'link', 'highlight', 'color'] as const;
 
 export function randomText(random: Random, max = 4): string {
   return Array.from({ length: 1 + random.int(max) }, () => random.pick(pieces)).join('');
@@ -157,6 +159,7 @@ function pair(random: Random, text: string): [number, number] {
 function spanIn(random: Random, text: string, type: Mark['type']): Span | undefined {
   const [from, to] = pair(random, text);
   if (from === to || (type === 'code' && text.slice(from, to).includes('\n'))) return undefined;
+  if (type === 'color') return { from, to, color: random.pick(['red', 'blue'] as const) };
   return type === 'link'
     ? { from, to, href: random.pick(['https://a.test', 'https://b.test']) }
     : { from, to };
@@ -315,7 +318,8 @@ function markProblems(text: string | undefined, marks: readonly Mark[]): boolean
     marks.some((mark, i) => {
       const before = marks[i - 1];
       const rank = (each: Mark) => markTypes.indexOf(each.type);
-      const joins = before?.type === mark.type && before.href === mark.href;
+      const joins =
+        before?.type === mark.type && before.href === mark.href && before.color === mark.color;
       return (
         mark.from < 0 ||
         mark.from >= mark.to ||
@@ -324,6 +328,7 @@ function markProblems(text: string | undefined, marks: readonly Mark[]): boolean
         inPair(mark.to) ||
         (mark.type === 'code' && text.slice(mark.from, mark.to).includes('\n')) ||
         (mark.type === 'link') !== (mark.href !== undefined) ||
+        (mark.type === 'color') !== (mark.color !== undefined) ||
         (before !== undefined && rank(before) > rank(mark)) ||
         (before?.type === mark.type &&
           (before.to > mark.from || (joins && before.to === mark.from)))

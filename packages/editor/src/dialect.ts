@@ -4,6 +4,7 @@ import {
   directiveFromMarkdown,
   directiveToMarkdown,
   type LeafDirective,
+  type TextDirective,
 } from 'mdast-util-directive';
 import { gfmFootnoteFromMarkdown, gfmFootnoteToMarkdown } from 'mdast-util-gfm-footnote';
 import {
@@ -23,7 +24,37 @@ import { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Processor, type Transformer, unified } from 'unified';
-import type { Construct, DialectFallback, State } from './types.ts';
+import type {
+  Code,
+  Color,
+  Construct,
+  DialectFallback,
+  Event,
+  Handle,
+  Resolver,
+  State,
+  Token,
+  TokenizeContext,
+  Unsafe,
+} from './types.ts';
+
+export const colors: { readonly [C in Color]: string } = Object.freeze({
+  red: 'ff-color-red',
+  orange: 'ff-color-orange',
+  green: 'ff-color-green',
+  blue: 'ff-color-blue',
+  purple: 'ff-color-purple',
+});
+
+export function isColor(value: unknown): value is Color {
+  return typeof value === 'string' && Object.hasOwn(colors, value);
+}
+
+export function colorOf({ name, attributes }: TextDirective): Color | undefined {
+  const tone = attributes?.tone;
+  const only = attributes != null && Object.keys(attributes).length === 1;
+  return name === 'color' && only && isColor(tone) ? tone : undefined;
+}
 
 const maxDepth = 100;
 const maxColumn = 100;
@@ -49,6 +80,215 @@ const columnGuard: Construct = {
     };
   },
 };
+
+const equals = 61;
+
+function group(code: Code): 1 | 2 | undefined {
+  if (code === null || code < 0) return 1;
+  const char = String.fromCharCode(code);
+  if (/\s/u.test(char)) return 1;
+  return /[\p{P}\p{S}]/u.test(char) ? 2 : undefined;
+}
+
+function spliced<T>(list: T[], start: number, remove: number, items: readonly T[]): void {
+  list.splice(start, remove);
+  for (let at = 0; at < items.length; at += 10_000) {
+    list.splice(start + at, 0, ...items.slice(at, at + 10_000));
+  }
+}
+
+function resolvedInside(events: Event[], context: TokenizeContext): Event[] {
+  const called = new Set<Resolver>();
+  let resolved = events;
+  for (const { resolveAll } of context.parser.constructs.insideSpan.null ?? []) {
+    if (resolveAll === undefined || called.has(resolveAll)) continue;
+    called.add(resolveAll);
+    resolved = resolveAll(resolved, context);
+  }
+  return resolved;
+}
+
+function opens([kind, token]: Event): boolean {
+  return kind === 'exit' && token.type === 'highlightSequenceTemporary' && token._open === true;
+}
+
+const resolveHighlights: Resolver = (events, context) => {
+  for (let index = 0; index < events.length; index += 1) {
+    const [kind, close] = events[index];
+    if (kind !== 'enter' || close.type !== 'highlightSequenceTemporary' || !close._close) continue;
+    let open = index - 1;
+    while (open >= 0 && !opens(events[open])) open -= 1;
+    if (open < 0) continue;
+    const opener = events[open][1];
+    opener.type = 'highlightSequence';
+    close.type = 'highlightSequence';
+    const whole: Token = { type: 'highlight', start: { ...opener.start }, end: { ...close.end } };
+    const text: Token = {
+      type: 'highlightText',
+      start: { ...opener.end },
+      end: { ...close.start },
+    };
+    const replaced: Event[] = [
+      ['enter', whole, context],
+      ['enter', opener, context],
+      ['exit', opener, context],
+      ['enter', text, context],
+      ...resolvedInside(events.slice(open + 1, index), context),
+      ['exit', text, context],
+      ['enter', close, context],
+      ['exit', close, context],
+      ['exit', whole, context],
+    ];
+    spliced(events, open - 1, index - open + 3, replaced);
+    index = open + replaced.length - 2;
+  }
+  for (const [, token] of events) {
+    if (token.type === 'highlightSequenceTemporary') token.type = 'data';
+  }
+  return events;
+};
+
+const highlight: Construct = {
+  name: 'highlight',
+  tokenize(effects, ok, nok) {
+    const before = this.previous;
+    let size = 0;
+    const more: State = (code) => {
+      if (code === equals) {
+        if (size > 1) return nok(code);
+        effects.consume(code);
+        size += 1;
+        return more;
+      }
+      if (size < 2) return nok(code);
+      const token = effects.exit('highlightSequenceTemporary');
+      const [left, right] = [group(before), group(code)];
+      token._open = !right || (right === 2 && Boolean(left));
+      token._close = !left || (left === 2 && Boolean(right));
+      return ok(code);
+    };
+    return (code) => {
+      if (before === equals && this.events.at(-1)?.[1].type !== 'characterEscape') return nok(code);
+      effects.enter('highlightSequenceTemporary');
+      return more(code);
+    };
+  },
+  resolveAll: resolveHighlights,
+};
+
+const handleHighlight: Handle = (node, _parent, state, info) => {
+  const tracker = state.createTracker(info);
+  let value = tracker.move('==');
+  value += state.containerPhrasing(node, { ...tracker.current(), before: value, after: '=' });
+  return value + tracker.move('==');
+};
+
+const highlightHandler = Object.assign(handleHighlight, {
+  peek: () => '=',
+  attention: () => ({ construct: 'phrasing', markers: ['='], sizes: [2] }),
+});
+
+const outsideText: Unsafe['notInConstruct'] = [
+  'autolink',
+  'destinationLiteral',
+  'destinationRaw',
+  'reference',
+  'titleQuote',
+  'titleApostrophe',
+];
+
+const markUnsafe: Unsafe[] = [
+  { character: '=', after: '(?==)|(?<==.)', inConstruct: 'phrasing', notInConstruct: outsideText },
+  { character: ':', after: 'color\\[', inConstruct: 'phrasing', notInConstruct: outsideText },
+];
+
+const [directiveText] = [directive().text?.[58]].flat();
+const colorOpener = ':color[';
+
+const opensColor: Construct = {
+  partial: true,
+  tokenize(effects, ok, nok) {
+    let at = 0;
+    const next: State = (code) => {
+      if (at === colorOpener.length) return ok(code);
+      if (code !== colorOpener.charCodeAt(at)) return nok(code);
+      effects.consume(code);
+      at += 1;
+      return next;
+    };
+    return (code) => {
+      effects.enter('data');
+      return next(code);
+    };
+  },
+};
+
+const colorDirective: Construct = {
+  name: 'dialectColor',
+  previous: directiveText?.previous,
+  tokenize(effects, ok, nok) {
+    if (directiveText === undefined) return nok;
+    const start = this.events.length;
+    const labelled: State = (code) =>
+      this.events.slice(start).some(([, token]) => token.type === 'directiveTextLabel')
+        ? ok(code)
+        : nok(code);
+    return effects.check(
+      opensColor,
+      directiveText.tokenize.call(this, effects, labelled, nok),
+      nok,
+    );
+  },
+};
+
+function remarkMarks(this: Processor) {
+  const data = this.data();
+  data.micromarkExtensions = [
+    ...(data.micromarkExtensions ?? []),
+    {
+      text: { [equals]: highlight, 58: colorDirective },
+      insideSpan: { null: [highlight] },
+      attentionMarkers: { null: [equals] },
+    },
+  ];
+  data.fromMarkdownExtensions = [
+    ...(data.fromMarkdownExtensions ?? []),
+    {
+      canContainEols: ['highlight'],
+      enter: {
+        highlight(token) {
+          this.enter({ type: 'highlight', children: [] }, token);
+        },
+      },
+      exit: {
+        highlight(token) {
+          this.exit(token);
+        },
+      },
+    },
+  ];
+  data.toMarkdownExtensions = [
+    ...(data.toMarkdownExtensions ?? []),
+    {
+      handlers: { highlight: highlightHandler },
+      unsafe: markUnsafe,
+    },
+  ];
+}
+
+function rendered(parent: Parents): void {
+  const children: Nodes[] = parent.children;
+  const kept = children.flatMap((child): Nodes[] => {
+    if ('children' in child) rendered(child);
+    if (child.type === 'highlight') Object.assign(child, { data: { hName: 'mark' } });
+    if (child.type !== 'textDirective') return [child];
+    const color = colorOf(child);
+    if (color === undefined) return child.children;
+    Object.assign(child, { data: { hName: 'span', hProperties: { className: [colors[color]] } } });
+    return [child];
+  });
+  (parent as { children: Nodes[] }).children = kept;
+}
 
 function remarkGfmParts(this: Processor) {
   const data = this.data();
@@ -89,14 +329,18 @@ export function remarkDialect(this: Processor): Transformer<Root> {
     ...(data.toMarkdownExtensions ?? []),
     {
       ...toMarkdown,
-      unsafe: toMarkdown.unsafe?.filter((rule) => ![rule.inConstruct].flat().includes('phrasing')),
+      unsafe: toMarkdown.unsafe?.filter(
+        (rule) => rule.afterNode !== undefined || ![rule.inConstruct].flat().includes('phrasing'),
+      ),
     },
   ];
+  remarkMarks.call(this);
   remarkGuard.call(this);
-  return () => {
+  return (tree) => {
     if (this.parser !== undefined && !guardedParsers.has(this.parser)) {
       throw new Error(misorderedMessage);
     }
+    rendered(tree);
   };
 }
 

@@ -35,8 +35,13 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
     const mark = button.dataset.ffMark;
     return mark !== undefined && isMarkType(mark) ? [{ button, mark }] : [];
   });
-  const menu = must(bar.querySelector<HTMLElement>('[role="menu"]'));
-  const opener = must(bar.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]'));
+  const menus = [...bar.querySelectorAll<HTMLButtonElement>('[aria-haspopup="menu"]')].map(
+    (opener) => {
+      const menu = opener.popoverTargetElement;
+      return { opener, menu: must(menu instanceof HTMLElement ? menu : null) };
+    },
+  );
+  const menuOf = (node: Node | null) => menus.find(({ menu }) => menu.contains(node));
   const linker = must(bar.querySelector<HTMLButtonElement>('[data-ff-linker]'));
   const form = must(bar.querySelector('form'));
   const input = must(form.querySelector('input'));
@@ -83,7 +88,7 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
   const hide = () => {
     bar.hidden = true;
     closeForm();
-    if (menu.matches(':popover-open')) menu.hidePopover();
+    for (const { menu } of menus) if (menu.matches(':popover-open')) menu.hidePopover();
   };
 
   const placeBar = (range: DOMRect) => {
@@ -113,7 +118,9 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
     bar.hidden = false;
     if (!bar.matches(':popover-open')) bar.showPopover();
     placeBar(range);
-    if (menu.matches(':popover-open')) placeMenu(menu, opener.getBoundingClientRect());
+    for (const { menu, opener } of menus) {
+      if (menu.matches(':popover-open')) placeMenu(menu, opener.getBoundingClientRect());
+    }
   };
 
   const schedule = () => {
@@ -169,7 +176,7 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
     run();
     place(root, store.get(editor.selection));
     if (focus instanceof HTMLElement && bar.contains(focus)) {
-      (menu.contains(focus) ? opener : focus).focus();
+      (menuOf(focus)?.opener ?? focus).focus();
     }
   };
 
@@ -193,13 +200,14 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
   const onBarKeyDown = (event: KeyboardEvent) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const focus = document.activeElement;
-    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const open = menuOf(focus);
     if (event.key === 'Escape') {
-      if (menu.contains(focus)) {
-        menu.hidePopover();
-        opener.focus();
+      if (open !== undefined) {
+        open.menu.hidePopover();
+        open.opener.focus();
       } else back();
-    } else if (focus instanceof HTMLElement && menu.contains(focus)) {
+    } else if (focus instanceof HTMLElement && open !== undefined) {
+      const items = [...open.menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
       const to = stepTo(items.length, items.indexOf(focus), event.key, 'ArrowUp', 'ArrowDown');
       if (to === undefined) return;
       items[to]?.focus();
@@ -223,15 +231,8 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
     const to = cases.find((each) => each === button.dataset.ffCase);
     if (mark !== undefined && isMarkType(mark)) act(() => editor.command('toggleMark', { mark }));
     if (to === undefined) return;
-    menu.hidePopover();
+    menuOf(button)?.menu.hidePopover();
     act(() => editor.command('setCase', { to }));
-  };
-
-  const onMenuToggle = (event: ToggleEvent) => {
-    if (event.newState !== 'open') return;
-    placeMenu(menu, opener.getBoundingClientRect());
-    if (document.activeElement === opener)
-      menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
   };
 
   const onPointerDown = (event: PointerEvent) => {
@@ -269,7 +270,15 @@ export function bindToolbar(bar: HTMLElement, editor: Editor): () => void {
   bar.addEventListener('keydown', onBarKeyDown, options);
   bar.addEventListener('click', onClick, options);
   form.addEventListener('submit', onSubmit, options);
-  menu.addEventListener('toggle', onMenuToggle, options);
+  for (const { menu, opener } of menus) {
+    const onMenuToggle = (event: ToggleEvent) => {
+      if (event.newState !== 'open') return;
+      placeMenu(menu, opener.getBoundingClientRect());
+      if (document.activeElement === opener)
+        menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    };
+    menu.addEventListener('toggle', onMenuToggle, options);
+  }
   document.addEventListener('selectionchange', schedule, options);
   document.addEventListener('pointerup', onPointerUp, options);
   document.addEventListener('pointercancel', onPointerUp, options);

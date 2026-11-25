@@ -17,19 +17,33 @@ async function caretAtEnd(page: Page, field: Locator) {
   await page.keyboard.press('End');
 }
 
-test('metric fields are edited in place and Enter in them adds nothing', async ({ page }) => {
-  await open(page);
-  const count = await fields(page).count();
-  await caretAtEnd(page, metric(page).nth(0));
-  await page.keyboard.type(' left');
-  await caretAtEnd(page, metric(page).nth(1));
-  await page.keyboard.type(' today');
-  await page.keyboard.press('Enter');
-  await caretAtEnd(page, metric(page).nth(0));
-  await page.keyboard.press('Enter');
-  await expect(metric(page)).toHaveText(['3 steps left', 'Checkout length today']);
-  await expect(fields(page)).toHaveCount(count);
-});
+for (const width of [1280, 390]) {
+  test.describe(`at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test('Enter in a metric value moves to its label; Enter in the label adds a paragraph below', async ({
+      page,
+    }) => {
+      await open(page);
+      const count = await fields(page).count();
+      await caretAtEnd(page, metric(page).nth(0));
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('x');
+      await expect(metric(page)).toHaveText(['3 steps', 'xCheckout length']);
+      await expect(fields(page)).toHaveCount(count);
+      await page.keyboard.press('Backspace');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('!');
+      await expect(metric(page)).toHaveText(['3 steps!', 'Checkout length']);
+      await caretAtEnd(page, metric(page).nth(1));
+      await page.keyboard.press('Enter');
+      await expect(fields(page)).toHaveCount(count + 1);
+      await page.keyboard.type('Below');
+      await expect(fields(page).nth(7)).toHaveText('Below');
+      await expect(metric(page)).toHaveText(['3 steps!', 'Checkout length']);
+    });
+  });
+}
 
 test('Enter in an empty last callout child moves the caret out of the callout', async ({
   page,

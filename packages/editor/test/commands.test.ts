@@ -3,7 +3,7 @@ import { containerDirective } from '../src/core/directive.ts';
 import { hasKeys, schema } from '../src/core/model.ts';
 import { paragraph } from '../src/core/paragraph.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, Editor, Handlers, Mark, Selection } from '../src/core/types.ts';
+import type { AnyComponent, Editor, Handlers, Mark, Parent, Selection } from '../src/core/types.ts';
 import { join, room } from './collab.ts';
 import { callout, counter, metric, safeHref } from './generate.ts';
 
@@ -276,15 +276,15 @@ describe('raw source commands', () => {
 });
 
 describe('a refused merge', () => {
-  function withPair(): Editor {
+  function withPair(markdown = plain, parent: Parent = null): Editor {
     const pair: AnyComponent = {
       ...withCommands('pair', {}),
       fields: ['a', 'b'],
       labels: { a: 'A', b: 'B' },
     };
-    const editor = editorAt(plain, [pair]);
+    const editor = editorAt(markdown, [pair, callout]);
     const block = { id: 'p', type: 'pair', props: {}, fields: { a: 'x', b: 'yz' } };
-    editor.dispatch({ kind: 'insertBlock', block, parent: null, index: 1 });
+    editor.dispatch({ kind: 'insertBlock', block, parent, index: 1 });
     return editor;
   }
 
@@ -323,13 +323,51 @@ describe('a refused merge', () => {
       'deleteForward',
       caret('b1', 0),
     ],
+    [
+      'on Enter from a selection to the next field',
+      { ...at('a', 0), to: 1 },
+      'insertBreak',
+      at('b', 0),
+    ],
   ] as const)('moves the caret %s with no op', (_name, selection, command, moved) => {
     const editor = withPair();
     select(editor, selection);
     expect(editor.command(command, {})).toBe(true);
     expect(editor.store.get(editor.ids)).toEqual(['b0', 'p', 'b1']);
+    expect(editor.doc().blocks.get('p')?.fields).toEqual({ a: 'x', b: 'yz' });
     expect(editor.store.get(editor.selection)).toEqual(moved);
+    expect(editor.undo()).toBe(true);
+    expect(editor.store.get(editor.ids)).toEqual(['b0', 'b1']);
   });
+
+  it.each([
+    ['at the top level', plain, null],
+    [
+      'in a callout slot',
+      ':::callout{tone="info"}\nInside\n:::\n',
+      { blockId: 'b0', slot: 'body' },
+    ],
+  ] as const)(
+    'inserts an empty paragraph after the block on Enter in its last field %s, in one undo step',
+    (_name, markdown, parent) => {
+      const editor = withPair(markdown, parent);
+      const list = () =>
+        parent === null ? editor.store.get(editor.ids) : editor.doc().blocks.get('b0')?.slots?.body;
+      const before = list() ?? [];
+      select(editor, at('b', 2));
+      expect(editor.command('insertBreak', {})).toBe(true);
+      expect(list()).toEqual(before.toSpliced(2, 0, 'b2'));
+      expect(editor.doc().blocks.get('b2')).toEqual({
+        id: 'b2',
+        type: 'paragraph',
+        props: {},
+        fields: { text: '' },
+      });
+      expect(editor.store.get(editor.selection)).toEqual(caret('b2', 0));
+      expect(editor.undo()).toBe(true);
+      expect(list()).toEqual(before);
+    },
+  );
 });
 
 describe('commands inside a slot', () => {

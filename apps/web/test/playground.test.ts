@@ -1,11 +1,11 @@
 import { isLinkUrl } from '@fancyfolio/contracts';
 import { createEditor } from '@fancyfolio/editor';
 import { createReactEditor } from '@fancyfolio/editor/react';
-import type { Editor, EditorProps } from '@fancyfolio/editor/types';
+import type { Block, DocView, Editor, EditorProps } from '@fancyfolio/editor/types';
 import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { callout, components, metric } from '../app/(app)/playground/components.ts';
+import { callout, components } from '../app/(app)/playground/components.ts';
 import { body } from '../app/(app)/playground/fixture.ts';
 import { Callout } from '../components/blocks/callout.tsx';
 import { Metric } from '../components/blocks/metric.tsx';
@@ -25,35 +25,19 @@ function docOf(body: readonly string[], texts: { readonly [id: string]: string }
   return { ids: ['p', 'c'], blocks, parentOf };
 }
 
+function withMetric(doc: ReturnType<typeof docOf>): DocView {
+  const metric = { id: 'm', type: 'metric', props: {}, fields: { value: '', label: '' } };
+  return { ...doc, blocks: new Map<string, Block>([...doc.blocks, ['m', metric]]) };
+}
+
 function caret(blockId: string, field = 'text', offset = 0) {
   return { kind: 'text', blockId, field, from: offset, to: offset } as const;
 }
 
 const lower = () => ({ ops: [{ kind: 'removeBlock', blockId: 'lower' }] as const });
 
-describe('the metric component', () => {
-  const block = { id: 'm', type: 'metric', props: {}, fields: { value: '42%', label: 'Faster' } };
-  const blocks = new Map([block, paragraph('p')].map((b) => [b.id, b]));
-  const doc = { ids: ['m', 'p'], blocks, parentOf: () => null };
-  const breakIn = (selection: ReturnType<typeof caret>) =>
-    metric.commands?.insertBreak?.(
-      { doc, selection, newId: () => 'n', shapeOf: () => undefined },
-      {},
-      lower,
-    );
-
-  it('claims Enter in either field and adds nothing', () => {
-    expect(breakIn(caret('m', 'value', 1))).toEqual({ ops: [] });
-    expect(breakIn(caret('m', 'label', 6))).toEqual({ ops: [] });
-  });
-
-  it('leaves Enter in any other block to the lower handlers', () => {
-    expect(breakIn(caret('p'))).toBeUndefined();
-  });
-});
-
 describe('the callout component', () => {
-  const breakAt = (doc: ReturnType<typeof docOf>, blockId: string) =>
+  const breakAt = (doc: DocView, blockId: string) =>
     callout.commands?.insertBreak?.(
       { doc, selection: caret(blockId), newId: () => 'n', shapeOf: () => undefined },
       {},
@@ -74,6 +58,7 @@ describe('the callout component', () => {
     ['a child that is not the last', docOf(['a', 'b']), 'a'],
     ['a last child with text', docOf(['a', 'b'], { b: 'Text' }), 'b'],
     ['a block outside the callout', docOf(['a']), 'p'],
+    ['an empty last child with two fields', withMetric(docOf(['a', 'm'])), 'm'],
   ])('leaves Enter in %s to the lower handlers', (_name, doc, blockId) => {
     expect(breakAt(doc, blockId)).toBeUndefined();
   });

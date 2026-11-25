@@ -1,10 +1,10 @@
-import { errorBody } from '@fancyfolio/contracts';
+import { errorBody, LIMITS } from '@fancyfolio/contracts';
 import { Hono } from 'hono';
 import * as v from 'valibot';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../src/db.ts';
 import app from '../src/index.ts';
-import { type Env, onError, shell } from '../src/shell.ts';
+import { type Env, jsonBody, onError, shell } from '../src/shell.ts';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -243,5 +243,29 @@ describe('a configuration error', () => {
     expect(JSON.parse(line)).not.toHaveProperty('message');
     expect(line).not.toContain('leaky');
     expect(line).not.toContain('424242');
+  });
+});
+
+describe('a JSON body', () => {
+  const notes = new Hono<Env>()
+    .use(shell)
+    .post('/notes', jsonBody(v.strictObject({ pad: v.string() })), (c) => c.json({}));
+
+  it.each([
+    ['one byte over the limit with its Content-Length', 413, 1, false],
+    ['one byte over the limit streamed without a length', 413, 1, true],
+    ['of exactly the limit with its Content-Length', 200, 0, false],
+    ['of exactly the limit streamed without a length', 200, 0, true],
+  ])('%s answers %i', async (_, status, over, stream) => {
+    const envelope = '{"pad":""}'.length;
+    const body = JSON.stringify({ pad: 'p'.repeat(LIMITS.jsonBodyBytes + over - envelope) });
+    const length = stream ? {} : { 'content-length': String(body.length) };
+    const res = await notes.request('/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...length },
+      body: stream ? new Blob([body]).stream() : body,
+      duplex: 'half',
+    } as RequestInit);
+    expect(res.status).toBe(status);
   });
 });

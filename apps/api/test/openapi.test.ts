@@ -31,6 +31,8 @@ describe('GET /api/openapi.json', () => {
       'CaseStudy',
       'Tenant',
       'Me',
+      'Profile',
+      'UpdateProfile',
       'CreateTenant',
     ]);
     const bundle = document.paths['/api/v1/sites/{key}'].get.responses;
@@ -63,7 +65,9 @@ describe('GET /api/openapi.json', () => {
       },
     ]);
     const sites = Object.keys(document.paths).filter(
-      (path) => !path.startsWith('/api/v1/rooms/') && path !== '/api/v1/tenants',
+      (path) =>
+        !path.startsWith('/api/v1/rooms/') &&
+        !['/api/v1/tenants', '/api/v1/me/profile'].includes(path),
     );
     expect(JSON.stringify(sites.map((path) => document.paths[path]))).not.toContain('"400"');
   });
@@ -92,7 +96,20 @@ describe('GET /api/openapi.json', () => {
       'updatedAt',
       'bodyMd',
     ]);
-    expect(JSON.stringify(document)).not.toMatch(/maxLength|maxItems/);
+    const answered = new Set(
+      JSON.stringify(
+        Object.values<Record<string, { responses: object }>>(document.paths).flatMap((item) =>
+          Object.values(item).map((operation) => operation.responses),
+        ),
+      ).match(/(?<=#\/components\/schemas\/)\w+/g),
+    );
+    expect(answered).toContain('Profile');
+    for (const name of answered) {
+      expect(JSON.stringify(document.components.schemas[name]), name).not.toMatch(
+        /maxLength|maxItems/,
+      );
+    }
+    expect(document.components.schemas.UpdateProfile.properties.displayName.maxLength).toBe(80);
   });
 
   it('is the same public document for every caller, holds no secret and answers only GET', async () => {

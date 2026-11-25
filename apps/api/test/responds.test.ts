@@ -142,6 +142,8 @@ describe('every route the API serves', () => {
         'GET /api/v1/sites/{key}',
         'GET /api/v1/sites/{key}/case-studies/{slug}',
         'GET /api/v1/me',
+        'GET /api/v1/me/profile',
+        'PUT /api/v1/me/profile',
         'POST /api/v1/tenants',
       ]),
     );
@@ -155,6 +157,8 @@ describe('every route the API serves', () => {
     for (const { route, responses } of documented) {
       const statuses: Record<string, string[]> = {
         'GET /api/v1/me': ['200', '401', '500'],
+        'GET /api/v1/me/profile': ['200', '401', '404', '500'],
+        'PUT /api/v1/me/profile': ['200', '400', '401', '404', '409', '413', '500'],
         'POST /api/v1/tenants': ['201', '400', '401', '409', '429', '500'],
         'POST /api/v1/rooms/auth': ['200', '400', '404', '500'],
         'POST /api/v1/rooms/seed': ['200', '400', '404', '409', '500'],

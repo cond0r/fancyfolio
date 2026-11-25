@@ -1,5 +1,13 @@
-import { type ErrorBody, errorBody, hostEnv, parseEnv, parseHost } from '@fancyfolio/contracts';
+import {
+  type ErrorBody,
+  errorBody,
+  hostEnv,
+  LIMITS,
+  parseEnv,
+  parseHost,
+} from '@fancyfolio/contracts';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { HTTPException } from 'hono/http-exception';
 import { describeRoute, resolver, validator } from 'hono-openapi';
 import * as v from 'valibot';
@@ -100,11 +108,17 @@ export function pathParams<Schema extends v.GenericSchema>(schema: Schema) {
   });
 }
 
+export const limitBody = (maxSize: number) =>
+  bodyLimit({ maxSize, onError: (c) => refuse(c, 413) });
+const jsonLimit = limitBody(LIMITS.jsonBodyBytes);
+
 export function jsonBody<Schema extends v.GenericSchema>(schema: Schema) {
   const parsed = validator('json', schema, (result, c: Context<Env>) => {
     if (!result.success) return refuse(c, 400);
   });
   const readable: MiddlewareHandler<Env> = async (c, next) => {
+    const tooLarge = await jsonLimit(c, async () => {});
+    if (tooLarge) return tooLarge;
     const isJson = await c.req.json().then(
       () => true,
       () => false,

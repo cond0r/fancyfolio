@@ -1,6 +1,5 @@
 import { LIMITS } from '@fancyfolio/contracts';
 import { Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
 import { csrf } from 'hono/csrf';
 import { openAPIRouteHandler } from 'hono-openapi';
 import { auth } from './auth.ts';
@@ -8,12 +7,20 @@ import { env } from './env.ts';
 import { ipGuard } from './middleware/ip-guard.ts';
 import { health } from './routes/health.ts';
 import { me } from './routes/me.ts';
+import { profileRoute } from './routes/profile.ts';
 import { rooms } from './routes/rooms.ts';
 import { sites } from './routes/sites.ts';
 import { tenantsRoute } from './routes/tenants.ts';
-import { appHostOnly, type Env, encodedPath, notFound, onError, refuse, shell } from './shell.ts';
+import {
+  appHostOnly,
+  type Env,
+  encodedPath,
+  limitBody,
+  notFound,
+  onError,
+  shell,
+} from './shell.ts';
 
-const limitBody = (maxSize: number) => bodyLimit({ maxSize, onError: (c) => refuse(c, 413) });
 const smallBody = limitBody(8 * 1024);
 const seedEnvelope = JSON.stringify({ room: `playground:${crypto.randomUUID()}`, seed: {} });
 // UTF-8 takes up to 3 bytes for each UTF-16 unit the seed limit counts
@@ -39,6 +46,7 @@ const app = new Hono<Env>({ getPath: encodedPath })
   .route('/v1/sites', sites)
   .route('/v1/rooms', rooms)
   .route('/v1/me', me)
+  .route('/v1/me/profile', profileRoute)
   .route('/v1/tenants', tenantsRoute);
 
 app.get(

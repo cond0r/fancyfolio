@@ -24,4 +24,5 @@ export const LIMITS = {
   experiences: 50,
   projects: 100,
   roomSeed: 200_000,
+  jsonBodyBytes: 1_048_576,
 } as const;

@@ -134,11 +134,12 @@ describe('invite-only sign-up', () => {
     expect((await signIn('ines.signup@example.test')).status).toBe(200);
   });
 
-  it('refuses an over-long name or a non-https or over-long image alike for invited, uninvited and registered emails, and on update', async () => {
+  it('refuses an over-long name, a NUL in the name, or a non-https or over-long image alike for invited, uninvited and registered emails, and on update', async () => {
     const longName = 'n'.repeat(LIMITS.displayName + 1);
     const imageUrl = (length: number) => `https://img.example.test/${'i'.repeat(length - 25)}`;
     const refused: Record<string, string>[] = [
       { name: longName },
+      { name: 'Fixture\u0000Person' },
       { image: 'javascript:alert(1)' },
       { image: imageUrl(LIMITS.url + 1) },
     ];

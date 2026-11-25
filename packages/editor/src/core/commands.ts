@@ -176,6 +176,31 @@ function merging(context: Context, offset: -1 | 1): Result {
   };
 }
 
+function nextField(
+  { doc, newId }: Context,
+  block: Block,
+  index: number,
+  names: readonly string[],
+): Result {
+  if (index === -1) return undefined;
+  const next = names[index + 1];
+  if (next !== undefined) return { ops: [], selection: caret(block.id, next, 0) };
+  const place = placeOf(doc, block.id);
+  if (place === undefined) return undefined;
+  const id = newId();
+  return {
+    ops: [
+      {
+        kind: 'insertBlock',
+        block: emptyParagraph(id),
+        parent: place.parent,
+        index: place.index + 1,
+      },
+    ],
+    selection: caret(id, 'text', 0),
+  };
+}
+
 function selected(context: Context): Result {
   const { selection } = context;
   if (selection.kind === 'blocks') return removing(context, selection.ids);
@@ -266,7 +291,10 @@ const defaults: DefaultHandlers = {
   },
   insertBreak(context) {
     const at = textAt(context);
-    if (at === undefined || soleField(at.block) !== at.field) return undefined;
+    if (at === undefined) return undefined;
+    const names = Object.keys(at.block.fields);
+    if (names.length > 1) return nextField(context, at.block, names.indexOf(at.field), names);
+    if (soleField(at.block) !== at.field) return undefined;
     const text = at.block.fields[at.field] ?? '';
     if (!movable(at.block.type, 'paragraph', text.slice(0, at.from), text.slice(at.to))) {
       return undefined;

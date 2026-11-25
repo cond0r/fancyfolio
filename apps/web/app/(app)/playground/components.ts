@@ -32,12 +32,6 @@ export const metric: Component<'metric', MetricProps, 'value' | 'label'> = {
     attributes: ['value', 'label'],
     inline: ['value', 'label'],
   }),
-  commands: {
-    insertBreak: ({ doc, selection }) =>
-      selection.kind === 'text' && doc.blocks.get(selection.blockId)?.type === 'metric'
-        ? { ops: [] }
-        : undefined,
-  },
 };
 
 const calloutCodec = containerDirective({
@@ -69,7 +63,8 @@ export const callout: Component<'callout', CalloutProps, never, 'body'> = {
       const child = doc.blocks.get(blockId);
       const parent = holding(doc, blockId);
       if (child === undefined || parent?.body.at(-1) !== blockId) return undefined;
-      if (Object.values(child.fields).some((text) => text !== '')) return undefined;
+      const texts = Object.values(child.fields);
+      if (texts.length !== 1 || texts.some((text) => text !== '')) return undefined;
       const id = newId();
       return {
         ops: [

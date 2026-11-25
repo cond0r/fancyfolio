@@ -8,7 +8,7 @@ Its checkout took nine steps.
 
 Three steps remained.
 
-::metric{value="3 steps" label="Checkout length"}
+::metric{value="**3** steps" label="Checkout *length*"}
 
 :::callout{tone="info"}
 The shop and its numbers are invented.

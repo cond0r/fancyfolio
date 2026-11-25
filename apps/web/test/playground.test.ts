@@ -198,7 +198,7 @@ describe('the playground fixture', () => {
     const fields = reloaded.doc().blocks.get(blockId)?.fields;
     expect(fields).toEqual({ value: `3 steps${quoted}`, label: `Checkout length${scripted}` });
     expect(markdown.split('\n').filter((line) => line.startsWith('::metric'))).toEqual([
-      '::metric{value="3 steps&#x22; onmouseover=&#x22;alert(1)" label="Checkout lengthjavascript:alert(1)"}',
+      '::metric{value="**3** steps&#x22; onmouseover=&#x22;alert(1)" label="Checkout *length*javascript:alert(1)"}',
     ]);
     const markup = renderToStaticMarkup(
       createElement(Metric, { fields: { value: fields?.value, label: fields?.label } }),

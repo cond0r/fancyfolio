@@ -119,6 +119,7 @@ export type Directive<Props, Field extends string> = {
   readonly props: StandardSchemaV1<unknown, Props>;
   readonly keys: readonly (keyof Props & string)[];
   readonly attributes: readonly Field[];
+  readonly inline?: readonly Field[];
   readonly label?: Field;
 };
 

@@ -81,11 +81,7 @@ for (const width of [1280, 390]) {
           expect(Math.min(size?.width ?? 0, size?.height ?? 0)).toBeGreaterThanOrEqual(24);
         }
       }
-      for (const [from, to] of [
-        [5, 5],
-        [5, 6],
-        [1, 2],
-      ] as const) {
+      for (const [from, to] of [[1, 2]] as const) {
         const [a, b] = await Promise.all([
           fields(page).nth(from).boundingBox(),
           fields(page).nth(to).boundingBox(),
@@ -98,6 +94,20 @@ for (const width of [1280, 390]) {
         await frame(page);
         await expect(toolbar(page)).toBeHidden();
       }
+      await select(page, 5, 0, 3);
+      await expect(toolbar(page)).toBeVisible();
+      // Every drag and a WebKit script selection clamp to the field they start in.
+      const spans = await page.evaluate(() => {
+        const [value, label] = [
+          ...document.querySelectorAll('[data-ff-editor] [data-field]'),
+        ].slice(5);
+        if (value === undefined || label === undefined) throw new Error('the metric has no fields');
+        const selection = document.getSelection();
+        selection?.setBaseAndExtent(value, 0, label, label.childNodes.length);
+        return selection !== null && !value.contains(selection.getRangeAt(0).endContainer);
+      });
+      await frame(page);
+      await expect(toolbar(page)).toBeVisible({ visible: !spans });
       await select(page, 0, 0, 5);
       await expect(toolbar(page)).toBeVisible();
       await page.mouse.click(5, 5);
@@ -193,6 +203,25 @@ for (const width of [1280, 390]) {
       await page.keyboard.press('ControlOrMeta+s');
       await expect(page.getByTestId('saved')).toContainText(
         '**Its** *checkout* ~~took~~ `nine` [steps](https://example.com).',
+      );
+    });
+
+    test('a metric value and label take marks that Mod+S saves inside the attributes', async ({
+      page,
+    }) => {
+      await open(page);
+      await select(page, 5, 0, 7);
+      await expect(toolbar(page)).toBeVisible();
+      await tool(page, 'Bold').click();
+      await expect(fields(page).nth(5).locator('strong')).toHaveText('3 steps');
+      await select(page, 6, 0, 8);
+      await expect(toolbar(page)).toBeVisible();
+      await tool(page, 'Text colour').click();
+      await tone(page, 'Blue').click();
+      await expect(fields(page).nth(6).locator('[data-ff-color="blue"]')).toHaveText('Checkout');
+      await page.keyboard.press('ControlOrMeta+s');
+      await expect(page.getByTestId('saved')).toContainText(
+        '::metric{value="**3 steps**" label=":color[Checkout]{tone=&#x22;blue&#x22;} *length*"}',
       );
     });
 

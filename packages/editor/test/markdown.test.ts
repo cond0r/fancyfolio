@@ -972,3 +972,172 @@ describe('directive blocks', () => {
     expect(savedWith(doc)).toBe(`${body}\n`);
   });
 });
+
+describe('metric fields hold marked markdown in their attributes', () => {
+  const metric: Component<'metric', NoProps, 'value' | 'label'> = {
+    name: 'metric',
+    props: noProps,
+    fields: ['value', 'label'],
+    labels: { value: 'Value', label: 'Label' },
+    marks: ['value', 'label'],
+    markdown: leafDirective({
+      name: 'metric',
+      props: noProps,
+      keys: [],
+      attributes: ['value', 'label'],
+      inline: ['value', 'label'],
+    }),
+  };
+  const registry = registryOf([metric], safeHref);
+  type Marked = { readonly value?: readonly Mark[]; readonly label?: readonly Mark[] };
+  const block = (value: string, label: string, marks: Marked = {}): Block => ({
+    id: 'm',
+    type: 'metric',
+    props: {},
+    fields: { value, label },
+    ...(Object.keys(marks).length > 0 && { marks }),
+  });
+  const m = (type: Mark['type'], from: number, to: number, more = {}): Mark => ({
+    type,
+    from,
+    to,
+    ...more,
+  });
+  const every = (text: string, q = Math.floor(text.length / 7)): Mark[] =>
+    (['bold', 'italic', 'strike', 'code', 'link', 'highlight', 'color'] as const).map((type, at) =>
+      m(type, at * q, at === 6 ? text.length : (at + 1) * q, {
+        ...(type === 'link' && { href: 'https://example.test' }),
+        ...(type === 'color' && { color: 'blue' }),
+      }),
+    );
+
+  function savedAndReloaded(doc: Doc): string {
+    const result = save(doc, registry);
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    const markdown = result.ok ? result.markdown : '';
+    const reloaded = load(markdown, newId, registry);
+    expect(shape(snapshot(reloaded))).toEqual(shape(snapshot(doc)));
+    expect(save({ ...reloaded, sources: new Map() }, registry)).toEqual({ ok: true, markdown });
+    return markdown;
+  }
+
+  it.each<[string, string, string, Marked]>([
+    [
+      'every mark in both fields',
+      'aabbccddeeffgg',
+      'Faster builds now',
+      { value: every('aabbccddeeffgg'), label: every('Faster builds now') },
+    ],
+    [
+      'nested and overlapping marks',
+      'abcd',
+      'abcdef',
+      {
+        value: [m('bold', 0, 4), m('italic', 1, 3), m('code', 2, 3)],
+        label: [m('bold', 0, 4), m('italic', 2, 6)],
+      },
+    ],
+    ['an empty value', '', 'Only **label**', { label: [m('italic', 0, 4)] }],
+    ['both fields empty', '', '', {}],
+  ])('saves %s byte for byte and reloads it equal', (_name, value, label, marks) => {
+    savedAndReloaded(docOf([block(value, label, marks)]));
+  });
+
+  it.each(seeds)('saves random marked fields so they reload equal (seed %i)', (seed) => {
+    const random = seeded(seed);
+    const types = ['bold', 'italic', 'strike', 'code', 'link', 'highlight', 'color'] as const;
+    const extra = ['"', "'", '{', '}', '[', ']', ':value[', ':label['];
+    const text = () => `${randomText(random, 3)}${random.pick(extra)}${randomText(random, 3)}`;
+    for (let run = 0; run < 100; run += 1) {
+      let doc = docOf([block(text(), text())]);
+      for (let count = random.int(6); count > 0; count -= 1) {
+        const field = random.pick(['value', 'label']);
+        const length = doc.blocks.get('m')?.fields[field]?.length ?? 0;
+        const [a, b] = [random.int(length + 1), random.int(length + 1)];
+        const [from, to, mark] = [Math.min(a, b), Math.max(a, b), random.pick(types)];
+        const href = random.pick(['https://a.test', 'https://b.test/(x) "y"']);
+        const color = random.pick(['red', 'blue'] as const);
+        const spans = [
+          { from, to, ...(mark === 'link' && { href }), ...(mark === 'color' && { color }) },
+        ];
+        try {
+          doc = apply(
+            doc,
+            { kind: 'markText', blockId: 'm', field, mark, from, to, spans },
+            registry,
+          ).doc;
+        } catch (error) {
+          if (!(error instanceof RangeError)) throw error;
+        }
+      }
+      savedAndReloaded(doc);
+    }
+  });
+
+  it.each<[string, string, Marked, string]>([
+    [
+      'value="3 steps" label="Checkout length"',
+      '3 steps',
+      {},
+      'value="3 steps" label="UpCheckout length"',
+    ],
+    ["value='single'", 'single', {}, 'value="single" label="Up"'],
+    ['value="- 5%"', '- 5%', {}, 'value="\\- 5%" label="Up"'],
+    ['value="1."', '1.', {}, 'value="1\\." label="Up"'],
+    ['value="# 1"', '# 1', {}, 'value="\\# 1" label="Up"'],
+    ['value="> 2x"', '> 2x', {}, 'value="\\> 2x" label="Up"'],
+    ['value="+ 3"', '+ 3', {}, 'value="\\+ 3" label="Up"'],
+    ['value="---"', '---', {}, 'value="\\---" label="Up"'],
+    ['value="*"', '*', {}, 'value="\\*" label="Up"'],
+    ['value="2*3*4"', '234', { value: [m('italic', 1, 2)] }, 'value="2*3*4" label="Up"'],
+    [
+      'value="&amp;lt;img src=x onerror=alert(1)&amp;gt;"',
+      '<img src=x onerror=alert(1)>',
+      {},
+      'value="\\<img src=x onerror=alert(1)>" label="Up"',
+    ],
+  ])(
+    'loads a metric with %s, saves it verbatim and edited in the new form',
+    (attributes, value, marks, edited) => {
+      const body = `::metric{${attributes}}\n`;
+      const doc = load(body, newId, registry);
+      const fields = doc.blocks.get(doc.ids[0] ?? '')?.fields;
+      expect(shape(snapshot(doc))).toEqual(shape([block(value, fields?.label ?? '', marks)]));
+      expect(save(doc, registry)).toEqual({ ok: true, markdown: body });
+      const op: Op = {
+        kind: 'insertText',
+        blockId: doc.ids[0] ?? '',
+        field: 'label',
+        offset: 0,
+        text: 'Up',
+      };
+      expect(savedAndReloaded(apply(doc, op, registry).doc)).toBe(`::metric{${edited}}\n`);
+    },
+  );
+
+  it.each([
+    'value="[x](javascript:alert(1))"',
+    'value="[x](javascript&#x3A;alert(1))"',
+    'value="[x](&amp;#x6A;avascript:alert(1))"',
+    'value="<b>x</b>"',
+    'value="&#x3C;b&#x3E;x"',
+    'value="![a](https://example.test/a.png)"',
+    'label=\':color[x]{tone="pink"}\'',
+    'value="1" tone="up"',
+  ])('loads a metric with %s as raw source saved verbatim', (attributes) => {
+    const body = `::metric{${attributes}}\n`;
+    const doc = load(body, newId, registry);
+    expect(shape(snapshot(doc))).toEqual([raw(body.trimEnd())]);
+    expect(save(doc, registry)).toEqual({ ok: true, markdown: body });
+  });
+
+  it('ends every nested attribute parse of 60 metrics holding fences in the guard outcome', () => {
+    const fences = (count: number) => ':::a\n'.repeat(count);
+    const encoded = (text: string) => text.replaceAll('\n', '&#10;');
+    const line = `::metric{value="${encoded(fences(10))}x" label="${encoded(fences(11))}"}\n`;
+    const doc = load(line.repeat(60), newId, registry);
+    expect(shape(snapshot(doc))).toEqual(
+      shape(Array.from({ length: 60 }, () => block(`${fences(10)}x`, fences(11)))),
+    );
+  });
+});

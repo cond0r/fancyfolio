@@ -24,11 +24,13 @@ export const metric: Component<'metric', MetricProps, 'value' | 'label'> = {
   props: metricProps,
   fields: ['value', 'label'],
   labels: { value: 'Metric value', label: 'Metric label' },
+  marks: ['value', 'label'],
   markdown: leafDirective({
     name: 'metric',
     props: metricProps,
     keys: [],
     attributes: ['value', 'label'],
+    inline: ['value', 'label'],
   }),
   commands: {
     insertBreak: ({ doc, selection }) =>

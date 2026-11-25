@@ -1,7 +1,14 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type { BlockContent, DefinitionContent, Paragraph, PhrasingContent } from 'mdast';
-import { textNodes, textOf } from './model.ts';
-import type { Codec, Container, Directive, TypedBlock } from './types.ts';
+import type {
+  BlockContent,
+  DefinitionContent,
+  Paragraph,
+  PhrasingContent,
+  RootContent,
+} from 'mdast';
+import { parseMarkdown, stringifyMarkdown } from '../dialect.ts';
+import { escapedInline, inlineOf, phrasing, textNodes, textOf } from './model.ts';
+import type { Codec, Container, Directive, Inline, Mark, TypedBlock } from './types.ts';
 
 function covers<Key extends string, Value>(
   value: { readonly [key: string]: Value },
@@ -41,11 +48,37 @@ function readParts<Props, Field extends string>(
       spec.keys.flatMap((key) => (values.has(key) ? [[key, values.get(key)]] : [])),
     ),
   );
-  const texts: [string, string][] = spec.attributes.map((name) => [name, values.get(name) ?? '']);
+  const texts: [string, string][] = [];
+  const marks: { [F in Field]?: readonly Mark[] } = {};
+  for (const name of spec.attributes) {
+    const value = values.get(name) ?? '';
+    const inline = spec.inline?.includes(name) ? inlineIn(value) : { text: value, marks: [] };
+    if (inline === undefined) return undefined;
+    texts.push([name, inline.text]);
+    if (inline.marks.length > 0) marks[name] = inline.marks;
+  }
   if (spec.label !== undefined) texts.push([spec.label, label]);
   const fields = Object.fromEntries(texts);
   if (read === undefined || !covers(fields, fieldNames(spec))) return undefined;
-  return { props: read.props, fields };
+  return { props: read.props, fields, marks };
+}
+
+function inlineIn(value: string): Inline | undefined {
+  const nodes = parseMarkdown(value).children;
+  const [only] = nodes;
+  if (only === undefined) return { text: '', marks: [] };
+  return nodes.length === 1 && only.type === 'paragraph'
+    ? inlineOf(only)
+    : { text: value, marks: [] };
+}
+
+function inlineSource(text: string, marks: readonly Mark[]): string {
+  const paragraph: Paragraph = { type: 'paragraph', children: phrasing(text, marks) };
+  return stringifyMarkdown({ type: 'root', children: [paragraph] }).replace(/\n$/, '');
+}
+
+function inlineEscaped(text: string, marks: readonly Mark[]): string {
+  return escapedInline(text, marks, () => '&#10;');
 }
 
 function attributeText(text: string): string {
@@ -60,6 +93,7 @@ function labelText(text: string): string {
 function attributesOf<Props, Field extends string, Slot extends string>(
   spec: Directive<Props, Field>,
   block: TypedBlock<Props, Field, Slot>,
+  inline = inlineSource,
 ): { readonly [key: string]: string } {
   const entries: [string, string][] = [];
   for (const key of spec.keys) {
@@ -67,7 +101,10 @@ function attributesOf<Props, Field extends string, Slot extends string>(
     if (typeof value === 'string') entries.push([key, attributeText(value)]);
   }
   for (const name of spec.attributes) {
-    if (block.fields[name] !== '') entries.push([name, attributeText(block.fields[name])]);
+    const text = block.fields[name];
+    if (text === '') continue;
+    const source = spec.inline?.includes(name) ? inline(text, block.marks?.[name] ?? []) : text;
+    entries.push([name, attributeText(source)]);
   }
   return Object.fromEntries(entries);
 }
@@ -82,6 +119,12 @@ function labelOf<Props, Field extends string, Slot extends string>(
 export function leafDirective<Props, const Field extends string>(
   spec: Directive<Props, Field>,
 ): Codec<Props, Field> {
+  const written = (block: TypedBlock<Props, Field>, inline = inlineSource): RootContent => ({
+    type: 'leafDirective',
+    name: spec.name,
+    attributes: attributesOf(spec, block, inline),
+    children: labelOf(spec, block),
+  });
   return {
     match: `leafDirective:${spec.name}`,
     read(node) {
@@ -92,11 +135,13 @@ export function leafDirective<Props, const Field extends string>(
         textOf({ type: 'paragraph', children: node.children }),
       );
     },
-    write: (block) => ({
-      type: 'leafDirective',
-      name: spec.name,
-      attributes: attributesOf(spec, block),
-      children: labelOf(spec, block),
+    write: (block) => written(block),
+    ...(spec.inline !== undefined && {
+      escaped: (block) =>
+        stringifyMarkdown({ type: 'root', children: [written(block, inlineEscaped)] }).replace(
+          /\n$/,
+          '',
+        ),
     }),
   };
 }

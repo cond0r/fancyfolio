@@ -16,6 +16,9 @@ const hostname = new RegExp(HOSTNAME_PATTERN);
 const httpsUrl = new RegExp(HTTPS_URL_PATTERN);
 const linkUrl = new RegExp(LINK_URL_PATTERN);
 const challengeToken = new RegExp(CHALLENGE_TOKEN_PATTERN);
+const calendarDate = /^([12]\d{3})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const versionToken =
+  /^(\d{4}-\d{2}-\d{2}) ([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d{1,6})?[+-](0\d|1[0-5])(:[0-5]\d)?$/;
 
 export function isSubdomain(value: string): boolean {
   return subdomain.test(value) && !RESERVED_SUBDOMAINS.includes(value);
@@ -34,7 +37,10 @@ export function isHttpsUrl(value: string): boolean {
 }
 
 export function isLinkUrl(value: string): boolean {
-  return value.length <= LIMITS.url && linkUrl.test(value);
+  if (value.length > LIMITS.url || !linkUrl.test(value)) return false;
+  if (value.startsWith('mailto:')) return true;
+  const url = URL.parse(value);
+  return url !== null && url.username === '' && url.password === '';
 }
 
 export function withinFenceLimit(markdown: string): boolean {
@@ -43,4 +49,16 @@ export function withinFenceLimit(markdown: string): boolean {
 
 export function isChallengeToken(value: string): boolean {
   return value.length <= LIMITS.challengeToken && challengeToken.test(value);
+}
+
+export function isCalendarDate(value: string): boolean {
+  const match = calendarDate.exec(value);
+  if (match === null) return false;
+  const [year, month, day] = match.slice(1).map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDate() === day;
+}
+
+export function isVersionToken(value: string): boolean {
+  const match = versionToken.exec(value);
+  return match !== null && isCalendarDate(match[1]);
 }

@@ -169,6 +169,14 @@ describe('isHttpsUrl and isLinkUrl', () => {
     expect(isHttpsUrl(value)).toBe(false);
     expect(isLinkUrl(value)).toBe(false);
   });
+
+  it.each([
+    ['credentials', 'https://ines:secret@ines.example/'],
+    ['a user only', 'https://ines@ines.example/'],
+    ['a bad host', 'https://exa%20mple/'],
+  ])('refuse a link with %s', (_name, value) => {
+    expect(isLinkUrl(value)).toBe(false);
+  });
 });
 
 describe('withinFenceLimit', () => {

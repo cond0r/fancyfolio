@@ -248,12 +248,13 @@ async function disagreements(
   );
 }
 
-function linkDisagreements(corpus: string[]) {
-  return verdictsDiffer(
+async function linksOnlyTheContractAccepts(corpus: string[]) {
+  const disagreements = await verdictsDiffer(
     sql`select url as value, app.links_valid(jsonb_build_array(jsonb_build_object('label', 'Site', 'url', url))) as accepted from unnest(${sql.param(corpus)}::text[]) as link(url)`,
     corpus,
     isLinkUrl,
   );
+  return disagreements.filter((verdict) => verdict.contract);
 }
 
 async function verdictsDiffer(query: SQL, corpus: string[], contract: (value: string) => boolean) {
@@ -290,8 +291,8 @@ describe('the contract predicates and the generated CHECKs', () => {
     expect(await disagreements(projects, column, name, urls, isHttpsUrl)).toEqual([]);
   });
 
-  it('give the same verdict on every profile link URL', async () => {
-    expect(await linkDisagreements(urls)).toEqual([]);
+  it('never accept a profile link URL the CHECK refuses', async () => {
+    expect(await linksOnlyTheContractAccepts(urls)).toEqual([]);
   });
 
   it.each([
@@ -313,10 +314,10 @@ describe('the contract predicates and the generated CHECKs on a seeded sweep', (
     ).toEqual([]);
   });
 
-  it('give the same verdict on every generated profile link URL', async () => {
+  it('never accept a generated profile link URL the CHECK refuses', async () => {
     const corpus = [...new Set(generated(5, urlPieces, 8))];
     expect(corpus.length).toBeGreaterThan(1_000);
-    expect(await linkDisagreements(corpus)).toEqual([]);
+    expect(await linksOnlyTheContractAccepts(corpus)).toEqual([]);
   });
 });
 

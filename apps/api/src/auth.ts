@@ -1,5 +1,5 @@
 import type { AuthContext, BetterAuthOptions, GenericEndpointContext } from '@better-auth/core';
-import { isHttpsUrl, LIMITS } from '@fancyfolio/contracts';
+import { boundedText, isHttpsUrl, LIMITS } from '@fancyfolio/contracts';
 import { authAdapter, authSchemaOptions } from '@fancyfolio/db';
 import { waitUntil } from '@vercel/functions';
 import { betterAuth } from 'better-auth';
@@ -17,7 +17,7 @@ const rateLimitRules = {
 const longestWindow = Math.max(...Object.values(rateLimitRules).map(({ window }) => window));
 const trustedDevice = 'trusted_device';
 const trustedDeviceMaxAge = 30 * 24 * 60 * 60;
-const displayName = v.pipe(v.string(), v.maxLength(LIMITS.displayName));
+const displayName = boundedText(LIMITS.displayName);
 const image = v.nullish(v.pipe(v.string(), v.check(isHttpsUrl)));
 const profileBodies = new Map<string, v.GenericSchema>([
   ['/sign-up/email', v.object({ name: displayName, image })],

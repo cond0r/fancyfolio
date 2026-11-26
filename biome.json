@@ -195,6 +195,7 @@
       "includes": [
         "apps/web/app/(app)/dashboard/case-studies/\\[id\\]/**",
         "apps/web/app/(app)/playground/**",
+        "apps/web/collab/**",
         "apps/web/test/**"
       ],
       "linter": {
@@ -570,6 +571,26 @@
                   "navigator": "The dialect does no I/O and reads no DOM or runtime global.",
                   "DOMParser": "The dialect does no I/O and reads no DOM or runtime global."
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/editor/src/colors.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**"],
+                    "message": "The colour palette imports nothing: apps/api and the dialect load it on its own."
+                  }
+                ]
               }
             }
           }

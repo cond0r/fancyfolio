@@ -14,6 +14,7 @@
   "dependencies": {
     "@fancyfolio/contracts": "workspace:*",
     "@fancyfolio/editor": "workspace:*",
+    "@liveblocks/client": "3.25.0",
     "next": "^16.4.6",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

@@ -1,7 +1,15 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { docOf } from '../src/core/model.ts';
 import { createEditor } from '../src/core/store.ts';
-import type { AnyComponent, CollabAdapter, Doc, Editor, Mark, Op } from '../src/core/types.ts';
+import type {
+  AnyComponent,
+  CollabAdapter,
+  Doc,
+  Editor,
+  Mark,
+  Op,
+  RemoteOp,
+} from '../src/core/types.ts';
 import { callout, counter, kinds, marked, randomOp, safeHref, seeded, seeds } from './generate.ts';
 
 export type Peer = { readonly editor: Editor; deliver(count: number): Promise<void> };
@@ -41,7 +49,7 @@ export const blank = { type: 'callout', props: { tone: 'info' } };
 const docFrom = (markdown: string) =>
   createEditor(markdown, { now: () => 0, newId: counter(), components, safeHref }).doc();
 
-export function convergence(open: Open, seedsRun: readonly number[] = seeds) {
+export function convergence(open: Open, runs = seeds.length) {
   async function peers(count: number, source: string | Doc = page) {
     errors.mockClear();
     const session = await open(count, typeof source === 'string' ? docFrom(source) : source);
@@ -77,11 +85,13 @@ export function convergence(open: Open, seedsRun: readonly number[] = seeds) {
     };
 
     it.each(
-      seedsRun.flatMap((seed) =>
-        [2, 3].flatMap((count) =>
-          (['plain text', 'marked text'] as const).map((on) => [seed, count, on] as const),
+      seeds
+        .slice(0, runs)
+        .flatMap((seed) =>
+          [2, 3].flatMap((count) =>
+            (['plain text', 'marked text'] as const).map((on) => [seed, count, on] as const),
+          ),
         ),
-      ),
     )('converge on the room document (seed %i, %i peers, %s)', async (seed, count, on) => {
       const variant = variants[on];
       const random = seeded(seed);
@@ -207,6 +217,26 @@ export function convergence(open: Open, seedsRun: readonly number[] = seeds) {
       }
     });
 
+    it('converge when A colours a code label while B deletes and retypes its bracket', async () => {
+      const label = docOf([
+        {
+          id: 'm0',
+          type: 'marked',
+          props: {},
+          fields: { text: 'x[y]z' },
+          marks: { text: [{ type: 'code', from: 0, to: 5 }] },
+        },
+      ]);
+      const { all, converged } = await peers(2, label);
+      const [a, b] = all;
+      const colour = { from: 0, to: 5, color: 'red' };
+      a.editor.dispatch({ kind: 'markText', ...on, mark: 'color', ...colour, spans: [colour] });
+      b.editor.dispatch({ kind: 'deleteText', ...on, from: 3, to: 4 });
+      await converged();
+      b.editor.dispatch({ ...type('m0', 3, ']'), marks: [{ type: 'code', from: 0, to: 1 }] });
+      await converged();
+    });
+
     it('keep the text and drop the marks a hostile peer sends', async () => {
       const { all, converged, session } = await peers(2, notes);
       const deep = `${'['.repeat(33)}${']'.repeat(33)}`;
@@ -261,17 +291,76 @@ export function convergence(open: Open, seedsRun: readonly number[] = seeds) {
     });
   });
 
+  describe('a raw peer', () => {
+    const markTypes = ['bold', 'italic', 'strike', 'code', 'link', 'highlight', 'color'] as const;
+    const retyped = (blockId: string, type: string, length: number): RemoteOp[] => [
+      { kind: 'setType', blockId, type, props: {} },
+      ...markTypes.map(
+        (mark): RemoteOp => ({
+          kind: 'markText',
+          blockId,
+          field: 'text',
+          mark,
+          from: 0,
+          to: length,
+          spans: [],
+        }),
+      ),
+    ];
+    const words = docOf([{ id: 'r0', type: 'raw', props: {}, fields: { text: 'plain words' } }]);
+
+    it('keeps the text when it turns a raw block into a paragraph', async () => {
+      const { converged, session } = await peers(2, words);
+      (await session.raw()).send(retyped('r0', 'paragraph', 11));
+      expect(await converged()).toEqual({ ok: true, markdown: 'plain words\n' });
+    });
+
+    it('converges when it turns a block raw and back while a peer bolds a word', async () => {
+      const plain = docOf([
+        { id: 'm0', type: 'marked', props: {}, fields: { text: 'plain words' } },
+      ]);
+      const { all, converged, session } = await peers(2, plain);
+      const raw = await session.raw();
+      all[0].editor.dispatch({
+        kind: 'markText',
+        blockId: 'm0',
+        field: 'text',
+        mark: 'bold',
+        from: 6,
+        to: 11,
+        spans: [{ from: 6, to: 11 }],
+      });
+      raw.send(retyped('m0', 'raw', 11));
+      await converged();
+      raw.send(retyped('m0', 'marked', 11));
+      await converged();
+      expect(all[0].editor.doc().blocks.get('m0')?.fields).toEqual({ text: 'plain words' });
+    });
+  });
+
   describe('collaborative undo', () => {
-    it("undoes only the undoing peer's text on every peer, and redoes it", async () => {
+    it("undoes only the undoing peer's text and marks on every peer, and redoes them", async () => {
       const { all, converged } = await peers(2);
       const [{ editor }, other] = all;
+      const bold = { from: 1, to: 7 };
       editor.dispatch(type('b0', 0, 'A'));
       other.editor.dispatch(type('b0', 7, 'B'));
       await converged();
+      editor.dispatch({
+        kind: 'markText',
+        blockId: 'b0',
+        field: 'text',
+        mark: 'bold',
+        ...bold,
+        spans: [bold],
+      });
+      expect(await converged()).toEqual({ ok: true, markdown: replaced('A**Before**.B') });
+      expect(editor.undo()).toBe(true);
       expect(editor.undo()).toBe(true);
       expect(await converged()).toEqual({ ok: true, markdown: replaced('Before.B') });
       expect(editor.command('redo', {})).toBe(true);
-      expect(await converged()).toEqual({ ok: true, markdown: replaced('ABefore.B') });
+      expect(editor.command('redo', {})).toBe(true);
+      expect(await converged()).toEqual({ ok: true, markdown: replaced('A**Before**.B') });
     });
   });
 }

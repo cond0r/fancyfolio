@@ -7,7 +7,8 @@ export const roomId = v.pipe(
   v.description('A playground room: playground: and a lower-case UUID'),
 );
 
-type RoomJson = null | boolean | number | string | RoomJson[] | { [key: string]: RoomJson };
+type RoomJson = null | boolean | number | string | RoomJson[] | RoomJsonObject;
+type RoomJsonObject = { [key: string]: RoomJson };
 
 function isRoomJson(value: unknown): value is RoomJson {
   const pending = [value];
@@ -31,13 +32,23 @@ function withinSeedLimit(seed: unknown): boolean {
 
 const name = v.pipe(v.string(), v.nonEmpty());
 
+const attributes = v.custom<RoomJsonObject>(
+  (value) =>
+    typeof value === 'object' && value !== null && !Array.isArray(value) && isRoomJson(value),
+);
+
+const roomField = v.union([
+  v.string(),
+  v.array(v.union([v.strictTuple([v.string()]), v.strictTuple([v.string(), attributes])])),
+]);
+
 const roomBlock = v.strictObject({
   type: name,
   props: v.custom<RoomJson>(isRoomJson),
   parent: v.nullable(name),
   slot: v.nullable(name),
   position: name,
-  fields: v.record(name, v.string()),
+  fields: v.record(name, roomField),
 });
 
 const roomBlocks = v.pipe(

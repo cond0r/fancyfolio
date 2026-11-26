@@ -205,6 +205,9 @@ importers:
       '@fancyfolio/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@fancyfolio/editor':
+        specifier: workspace:*
+        version: link:../../packages/editor
       '@liveblocks/node':
         specifier: 3.25.0
         version: 3.25.0(@types/json-schema@7.0.15)

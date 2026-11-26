@@ -1,4 +1,17 @@
+import { parseEnv } from '@fancyfolio/contracts';
 import type { NextConfig } from 'next';
+import * as v from 'valibot';
+
+const liveblocksEnv = v.object({
+  NEXT_PUBLIC_LIVEBLOCKS_BASE_URL: v.optional(v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//))),
+});
+
+function connectSource() {
+  const { NEXT_PUBLIC_LIVEBLOCKS_BASE_URL: url } = parseEnv(liveblocksEnv, process.env);
+  if (url === undefined) return [];
+  const { origin } = new URL(url);
+  return [`connect-src 'self' ${origin} ${origin.replace(/^http/, 'ws')}`];
+}
 
 function contentSecurityPolicy() {
   const devEval = process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : '';
@@ -9,6 +22,7 @@ function contentSecurityPolicy() {
     "object-src 'none'",
     "base-uri 'none'",
     "frame-ancestors 'none'",
+    ...connectSource(),
   ].join('; ');
 }
 

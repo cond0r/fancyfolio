@@ -35,4 +35,21 @@ describe('next.config.ts', () => {
     const [{ headers }] = (await config.headers?.()) ?? [];
     expect(headers[0].value).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval';");
   });
+
+  it.each([
+    ['http://localhost:1153', "connect-src 'self' http://localhost:1153 ws://localhost:1153"],
+    [
+      'https://rooms.example.test/v2',
+      "connect-src 'self' https://rooms.example.test wss://rooms.example.test",
+    ],
+  ])('lets the browser reach the Liveblocks server at %s', async (url, connect) => {
+    vi.stubEnv('NEXT_PUBLIC_LIVEBLOCKS_BASE_URL', url);
+    const [{ headers }] = (await config.headers?.()) ?? [];
+    expect(headers[0].value).toContain(`; ${connect}`);
+  });
+
+  it('refuses a Liveblocks server URL that is not http(s)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_LIVEBLOCKS_BASE_URL', 'javascript:alert(1); script-src *');
+    await expect(config.headers?.()).rejects.toThrow('Invalid environment');
+  });
 });

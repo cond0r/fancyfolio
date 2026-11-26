@@ -24,6 +24,7 @@ import { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Processor, type Transformer, unified } from 'unified';
+import { colors, isColor } from './colors.ts';
 import type {
   Code,
   Color,
@@ -38,17 +39,7 @@ import type {
   Unsafe,
 } from './types.ts';
 
-export const colors: { readonly [C in Color]: string } = Object.freeze({
-  red: 'ff-color-red',
-  orange: 'ff-color-orange',
-  green: 'ff-color-green',
-  blue: 'ff-color-blue',
-  purple: 'ff-color-purple',
-});
-
-export function isColor(value: unknown): value is Color {
-  return typeof value === 'string' && Object.hasOwn(colors, value);
-}
+export { colors, isColor };
 
 export function colorOf({ name, attributes }: TextDirective): Color | undefined {
   const tone = attributes?.tone;

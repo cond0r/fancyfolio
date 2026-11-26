@@ -2014,7 +2014,39 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
                           "properties": {
                             "fields": {
                               "additionalProperties": {
-                                "type": "string",
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                  },
+                                  {
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "additionalItems": false,
+                                          "items": [
+                                            {
+                                              "type": "string",
+                                            },
+                                          ],
+                                          "minItems": 1,
+                                          "type": "array",
+                                        },
+                                        {
+                                          "additionalItems": false,
+                                          "items": [
+                                            {
+                                              "type": "string",
+                                            },
+                                            {},
+                                          ],
+                                          "minItems": 2,
+                                          "type": "array",
+                                        },
+                                      ],
+                                    },
+                                    "type": "array",
+                                  },
+                                ],
                               },
                               "propertyNames": {
                                 "minLength": 1,

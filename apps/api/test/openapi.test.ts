@@ -38,6 +38,9 @@ describe('GET /api/openapi.json', () => {
       'UpdateExperience',
       'Deleted',
       'DeleteItem',
+      'Project',
+      'NewProject',
+      'UpdateProject',
       'CreateTenant',
     ]);
     const bundle = document.paths['/api/v1/sites/{key}'].get.responses;
@@ -80,19 +83,20 @@ describe('GET /api/openapi.json', () => {
 
   it('documents the idempotency key every create requires and the token every delete carries', async () => {
     const { document } = await getDocument();
-    expect(document.paths['/api/v1/me/experiences'].post.parameters).toEqual([
-      {
-        in: 'header',
-        name: 'idempotency-key',
-        required: true,
-        schema: { type: 'string', format: 'uuid' },
-        description: 'A new uuid per form; sending it again answers the item it created',
-      },
-    ]);
-    expect(
-      document.paths['/api/v1/me/experiences/{id}'].delete.requestBody.content['application/json']
-        .schema,
-    ).toEqual({ $ref: '#/components/schemas/DeleteItem' });
+    for (const items of ['/api/v1/me/experiences', '/api/v1/me/projects']) {
+      expect(document.paths[items].post.parameters).toEqual([
+        {
+          in: 'header',
+          name: 'idempotency-key',
+          required: true,
+          schema: { type: 'string', format: 'uuid' },
+          description: 'A new uuid per form; sending it again answers the item it created',
+        },
+      ]);
+      expect(
+        document.paths[`${items}/{id}`].delete.requestBody.content['application/json'].schema,
+      ).toEqual({ $ref: '#/components/schemas/DeleteItem' });
+    }
     expect(document.components.schemas.DeleteItem.required).toEqual(['updatedAt']);
   });
 

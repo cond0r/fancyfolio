@@ -9,6 +9,7 @@ import { experiencesRoute } from './routes/experiences.ts';
 import { health } from './routes/health.ts';
 import { me } from './routes/me.ts';
 import { profileRoute } from './routes/profile.ts';
+import { projectsRoute } from './routes/projects.ts';
 import { rooms } from './routes/rooms.ts';
 import { sites } from './routes/sites.ts';
 import { tenantsRoute } from './routes/tenants.ts';
@@ -49,6 +50,7 @@ const app = new Hono<Env>({ getPath: encodedPath })
   .route('/v1/me', me)
   .route('/v1/me/profile', profileRoute)
   .route('/v1/me/experiences', experiencesRoute)
+  .route('/v1/me/projects', projectsRoute)
   .route('/v1/tenants', tenantsRoute);
 
 app.get(

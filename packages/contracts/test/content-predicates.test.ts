@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  hasNoCredentials,
   isChallengeToken,
   isHostname,
   isHttpsUrl,
@@ -174,7 +175,9 @@ describe('isHttpsUrl and isLinkUrl', () => {
     ['credentials', 'https://ines:secret@ines.example/'],
     ['a user only', 'https://ines@ines.example/'],
     ['a bad host', 'https://exa%20mple/'],
+    ['a backslash', 'https://a\\b@evil.example'],
   ])('refuse a link with %s', (_name, value) => {
+    expect(hasNoCredentials(value)).toBe(false);
     expect(isLinkUrl(value)).toBe(false);
   });
 });

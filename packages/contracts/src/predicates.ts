@@ -36,11 +36,15 @@ export function isHttpsUrl(value: string): boolean {
   return value.length <= LIMITS.url && httpsUrl.test(value);
 }
 
-export function isLinkUrl(value: string): boolean {
-  if (value.length > LIMITS.url || !linkUrl.test(value)) return false;
-  if (value.startsWith('mailto:')) return true;
+export function hasNoCredentials(value: string): boolean {
+  if (value.includes('\\')) return false;
   const url = URL.parse(value);
   return url !== null && url.username === '' && url.password === '';
+}
+
+export function isLinkUrl(value: string): boolean {
+  if (value.length > LIMITS.url || !linkUrl.test(value)) return false;
+  return value.startsWith('mailto:') || hasNoCredentials(value);
 }
 
 export function withinFenceLimit(markdown: string): boolean {

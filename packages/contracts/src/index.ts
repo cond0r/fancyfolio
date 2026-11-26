@@ -7,6 +7,7 @@ export * from './limits.ts';
 export * from './me.ts';
 export * from './predicates.ts';
 export * from './profile.ts';
+export * from './projects.ts';
 export * from './reserved.ts';
 export * from './room.ts';
 export * from './sites.ts';

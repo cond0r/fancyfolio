@@ -108,6 +108,12 @@ export function pathParams<Schema extends v.GenericSchema>(schema: Schema) {
   });
 }
 
+export function requestHeaders<Schema extends v.GenericSchema>(schema: Schema) {
+  return validator('header', schema, (result, c: Context<Env>) => {
+    if (!result.success) return refuse(c, 400);
+  });
+}
+
 export const limitBody = (maxSize: number) =>
   bodyLimit({ maxSize, onError: (c) => refuse(c, 413) });
 const jsonLimit = limitBody(LIMITS.jsonBodyBytes);
@@ -139,6 +145,7 @@ const statusText = {
   413: 'Payload too large',
   429: 'Too many requests',
   500: 'Internal error',
+  503: 'Service unavailable',
 } as const;
 
 type Status = keyof typeof statusText;

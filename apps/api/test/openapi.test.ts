@@ -33,6 +33,11 @@ describe('GET /api/openapi.json', () => {
       'Me',
       'Profile',
       'UpdateProfile',
+      'Experience',
+      'NewExperience',
+      'UpdateExperience',
+      'Deleted',
+      'DeleteItem',
       'CreateTenant',
     ]);
     const bundle = document.paths['/api/v1/sites/{key}'].get.responses;
@@ -67,9 +72,28 @@ describe('GET /api/openapi.json', () => {
     const sites = Object.keys(document.paths).filter(
       (path) =>
         !path.startsWith('/api/v1/rooms/') &&
-        !['/api/v1/tenants', '/api/v1/me/profile'].includes(path),
+        !path.startsWith('/api/v1/me/') &&
+        path !== '/api/v1/tenants',
     );
     expect(JSON.stringify(sites.map((path) => document.paths[path]))).not.toContain('"400"');
+  });
+
+  it('documents the idempotency key every create requires and the token every delete carries', async () => {
+    const { document } = await getDocument();
+    expect(document.paths['/api/v1/me/experiences'].post.parameters).toEqual([
+      {
+        in: 'header',
+        name: 'idempotency-key',
+        required: true,
+        schema: { type: 'string', format: 'uuid' },
+        description: 'A new uuid per form; sending it again answers the item it created',
+      },
+    ]);
+    expect(
+      document.paths['/api/v1/me/experiences/{id}'].delete.requestBody.content['application/json']
+        .schema,
+    ).toEqual({ $ref: '#/components/schemas/DeleteItem' });
+    expect(document.components.schemas.DeleteItem.required).toEqual(['updatedAt']);
   });
 
   it('describes the fields as strictly as the response contracts enforce them', async () => {

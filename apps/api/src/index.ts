@@ -5,6 +5,7 @@ import { openAPIRouteHandler } from 'hono-openapi';
 import { auth } from './auth.ts';
 import { env } from './env.ts';
 import { ipGuard } from './middleware/ip-guard.ts';
+import { experiencesRoute } from './routes/experiences.ts';
 import { health } from './routes/health.ts';
 import { me } from './routes/me.ts';
 import { profileRoute } from './routes/profile.ts';
@@ -47,6 +48,7 @@ const app = new Hono<Env>({ getPath: encodedPath })
   .route('/v1/rooms', rooms)
   .route('/v1/me', me)
   .route('/v1/me/profile', profileRoute)
+  .route('/v1/me/experiences', experiencesRoute)
   .route('/v1/tenants', tenantsRoute);
 
 app.get(

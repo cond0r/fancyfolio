@@ -71,6 +71,31 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         ],
         "type": "object",
       },
+      "DeleteItem": {
+        "additionalProperties": false,
+        "properties": {
+          "updatedAt": {
+            "description": "The updatedAt value read with the item, sent back unchanged",
+            "type": "string",
+          },
+        },
+        "required": [
+          "updatedAt",
+        ],
+        "type": "object",
+      },
+      "Deleted": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+        ],
+        "type": "object",
+      },
       "ErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -84,6 +109,53 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         "required": [
           "error",
           "requestId",
+        ],
+        "type": "object",
+      },
+      "Experience": {
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string",
+          },
+          "endsOn": {
+            "anyOf": [
+              {
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "id": {
+            "type": "string",
+          },
+          "location": {
+            "type": "string",
+          },
+          "role": {
+            "type": "string",
+          },
+          "startsOn": {
+            "type": "string",
+          },
+          "summaryMd": {
+            "type": "string",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "company",
+          "role",
+          "location",
+          "startsOn",
+          "endsOn",
+          "summaryMd",
+          "updatedAt",
         ],
         "type": "object",
       },
@@ -179,6 +251,54 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         "required": [
           "email",
           "tenant",
+        ],
+        "type": "object",
+      },
+      "NewExperience": {
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string",
+          },
+          "endsOn": {
+            "anyOf": [
+              {
+                "description": "A calendar date, YYYY-MM-DD",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "location": {
+            "maxLength": 80,
+            "type": "string",
+          },
+          "role": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string",
+          },
+          "startsOn": {
+            "description": "A calendar date, YYYY-MM-DD",
+            "type": "string",
+          },
+          "summaryMd": {
+            "description": "Markdown with at most 10 ::: fences",
+            "maxLength": 2000,
+            "type": "string",
+          },
+        },
+        "required": [
+          "company",
+          "role",
+          "location",
+          "startsOn",
+          "endsOn",
+          "summaryMd",
         ],
         "type": "object",
       },
@@ -494,6 +614,59 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
         ],
         "type": "object",
       },
+      "UpdateExperience": {
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string",
+          },
+          "endsOn": {
+            "anyOf": [
+              {
+                "description": "A calendar date, YYYY-MM-DD",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "location": {
+            "maxLength": 80,
+            "type": "string",
+          },
+          "role": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string",
+          },
+          "startsOn": {
+            "description": "A calendar date, YYYY-MM-DD",
+            "type": "string",
+          },
+          "summaryMd": {
+            "description": "Markdown with at most 10 ::: fences",
+            "maxLength": 2000,
+            "type": "string",
+          },
+          "updatedAt": {
+            "description": "The updatedAt value read with the item, sent back unchanged",
+            "type": "string",
+          },
+        },
+        "required": [
+          "company",
+          "role",
+          "location",
+          "startsOn",
+          "endsOn",
+          "summaryMd",
+          "updatedAt",
+        ],
+        "type": "object",
+      },
       "UpdateProfile": {
         "additionalProperties": false,
         "properties": {
@@ -611,6 +784,416 @@ exports[`GET /api/openapi.json > serves the document generated from the contract
               },
             },
             "description": "Unauthorized",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+    },
+    "/api/v1/me/experiences": {
+      "get": {
+        "operationId": "getApiV1MeExperiences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Experience",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+      "post": {
+        "operationId": "postApiV1MeExperiences",
+        "parameters": [
+          {
+            "description": "A new uuid per form; sending it again answers the item it created",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewExperience",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Experience",
+                },
+              },
+            },
+            "description": "Created",
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Bad request",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Conflict",
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Payload too large",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Service unavailable",
+          },
+        },
+      },
+    },
+    "/api/v1/me/experiences/{id}": {
+      "delete": {
+        "operationId": "deleteApiV1MeExperiencesById",
+        "parameters": [
+          {
+            "description": "The id of one of your items",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteItem",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Bad request",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Conflict",
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Payload too large",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+      "get": {
+        "operationId": "getApiV1MeExperiencesById",
+        "parameters": [
+          {
+            "description": "The id of one of your items",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Experience",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Internal error",
+          },
+        },
+      },
+      "put": {
+        "operationId": "putApiV1MeExperiencesById",
+        "parameters": [
+          {
+            "description": "The id of one of your items",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateExperience",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Experience",
+                },
+              },
+            },
+            "description": "OK",
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Bad request",
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Unauthorized",
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Not found",
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Conflict",
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody",
+                },
+              },
+            },
+            "description": "Payload too large",
           },
           "500": {
             "content": {

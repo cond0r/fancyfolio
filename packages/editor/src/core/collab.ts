@@ -1,5 +1,5 @@
 import { caretIn } from './commands.ts';
-import { marksIn, sliced } from './marks.ts';
+import { coverage, marksIn, sliced } from './marks.ts';
 import { mapIn } from './ops.ts';
 import { placeOf } from './tree.ts';
 import type {
@@ -8,6 +8,7 @@ import type {
   Change,
   Doc,
   DocView,
+  MarkType,
   Parent,
   Planned,
   Presence,
@@ -15,6 +16,16 @@ import type {
   RemoteOp,
   Selection,
 } from './types.ts';
+
+const markTypes: readonly MarkType[] = [
+  'bold',
+  'italic',
+  'strike',
+  'code',
+  'link',
+  'highlight',
+  'color',
+];
 
 function putIn(change: Change, id: BlockId): Block {
   const block = change.put.find((each) => each.id === id);
@@ -70,6 +81,25 @@ export function lowered(steps: readonly Planned[]): RemoteOp[] {
           ? []
           : [{ kind: 'deleteText', blockId, field, from: offset, to: offset + tail.length }];
       return [...cut, { kind: 'insertBlock', block, ...listedIn(change, op.newId) }];
+    }
+    if (op.kind === 'setType') {
+      const block = putIn(change, op.blockId);
+      return [
+        op,
+        ...Object.entries(block.fields).flatMap(([field, text]) =>
+          markTypes.map(
+            (mark): RemoteOp => ({
+              kind: 'markText',
+              blockId: op.blockId,
+              field,
+              mark,
+              from: 0,
+              to: text.length,
+              spans: coverage(marksIn(block, field), mark, 0, text.length),
+            }),
+          ),
+        ),
+      ];
     }
     if (op.kind !== 'mergeBlocks') return [op];
     if (inverse.kind !== 'splitBlock') throw new Error('a merge inverts to a split');

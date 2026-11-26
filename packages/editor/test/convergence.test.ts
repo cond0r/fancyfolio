@@ -151,6 +151,29 @@ describe('collaborative undo', () => {
     expect(converged()).toEqual({ ok: true, markdown: page });
   });
 
+  it('lowers a type change with the marks of every field it keeps', () => {
+    const [{ editor, sent }] = peers(1).all;
+    const bold = { kind: 'markText', blockId: 'b0', field: 'text', from: 0, to: 6 } as const;
+    const retype = {
+      kind: 'setType',
+      blockId: 'b0',
+      type: 'heading',
+      props: { level: 2 },
+    } as const;
+    editor.dispatch({ ...bold, mark: 'bold', spans: [{ from: 0, to: 6 }] });
+    editor.dispatch(retype);
+    const marks = ['bold', 'italic', 'strike', 'code', 'link', 'highlight', 'color'] as const;
+    expect(sent[1]).toEqual([
+      retype,
+      ...marks.map((mark) => ({
+        ...bold,
+        mark,
+        to: 7,
+        spans: mark === 'bold' ? [{ from: 0, to: 6 }] : [],
+      })),
+    ]);
+  });
+
   const heading = { type: 'heading', props: { level: 2 } };
   it.each<[string, readonly Op[]]>([
     ['an op on a missing block', [type('b0', 0, 'x'), remove('missing')]],
@@ -177,14 +200,22 @@ describe('remote ops', () => {
       redo: () => false,
     };
     const editor = createEditor(page, { now: () => 0, newId: counter(), components, collab });
+    const last = editor.blocks.get('b4');
+    const untouched = last && editor.store.get(last);
+    const unmarked = { blockId: 'b4', field: 'text', mark: 'bold', spans: [] } as const;
     deliver([
       type('gone', 0, 'x'),
       { ...type('b0', 0, 'x'), field: 'nope' },
       type('b0', 0, 'kept '),
       { kind: 'setType', blockId: 'b1', type: 'heading', props: { level: 2 } },
+      { ...unmarked, kind: 'markText', from: 0, to: 6 },
+      { ...unmarked, kind: 'markText', from: 0, to: 0 },
+      { kind: 'insertBlock', block: { ...blank, id: 'c', fields: {} }, parent: null, index: 0 },
     ]);
     expect(errors).toHaveBeenCalledOnce();
-    const markdown = 'kept Before.\n\n##\n\nFirst\n\nSecond\n\nAfter.\n';
+    expect(last && editor.store.get(last)).toBe(untouched);
+    const markdown =
+      ':::callout{tone="info"}\n:::\n\nkept Before.\n\n##\n\nFirst\n\nSecond\n\nAfter.\n';
     expect(editor.markdown()).toEqual({ ok: true, markdown });
   });
 });

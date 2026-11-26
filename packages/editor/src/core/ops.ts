@@ -262,13 +262,18 @@ function fitsSlot(op: Op, component: Registered) {
   if (component.markdown === undefined) refuse(op, 'raw source stays at the top level');
 }
 
-function slotsFor(op: Op, component: Registered, slots: Slots | undefined): Slots | undefined {
+function slotsFor(
+  op: Op,
+  component: Registered,
+  slots: Slots | undefined,
+  raw: boolean,
+): Slots | undefined {
   const names = component.slots ?? [];
   if (names.length === 0 && slots === undefined) return undefined;
+  const given = Object.entries(slots ?? {});
   const fresh =
-    slots !== undefined &&
-    Object.keys(slots).length === names.length &&
-    names.every((name) => Object.hasOwn(slots, name) && slots[name]?.length === 0);
+    (raw || given.length === names.length) &&
+    given.every(([name, ids]) => names.includes(name) && ids.length === 0);
   if (names.length === 0 || !fresh) refuse(op, 'slots start empty');
   return Object.fromEntries(names.map((name) => [name, []]));
 }
@@ -321,6 +326,23 @@ export function movable(from: string, to: string, kept: string, moved: string): 
   return isRaw(from) && isRaw(to) && kept === '';
 }
 
+function sameMarks(a: readonly Mark[], b: readonly Mark[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((mark, i) => {
+      const other = b[i];
+      return (
+        other !== undefined &&
+        mark.type === other.type &&
+        mark.from === other.from &&
+        mark.to === other.to &&
+        mark.href === other.href &&
+        mark.color === other.color
+      );
+    })
+  );
+}
+
 function moving(op: Op, from: string, to: string, kept: string, moved: string) {
   if (movable(from, to, kept, moved)) return;
   if (isRaw(from) === isRaw(to)) refuse(op, 'raw source is never joined or cut');
@@ -368,7 +390,7 @@ function inserting(
   const component = componentOf(op, registry, block.type);
   const props = propsOf(op, component, block.props);
   const fields = fieldsFor(component, block.fields) ?? refuse(op, 'fields do not fit the type');
-  const slots = slotsFor(op, component, block.slots);
+  const slots = slotsFor(op, component, block.slots, raw);
   const list = listIn(op, view, parent);
   if (parent !== null) fitsSlot(op, component);
   const next = putAt(op, list, op.index, block.id);
@@ -441,18 +463,18 @@ function planned(
       const text = textIn(op, block, component, field);
       const from = offsetIn(op, text, op.from);
       const to = offsetIn(op, text, op.to);
-      if (from >= to) refuse(op, 'empty range');
+      if (from >= to && !raw) refuse(op, 'empty range');
       const spans = op.spans.filter((span) => {
         const inside = span.from >= from && span.to <= to;
         if (!inside) fail?.('span outside the range');
         return inside;
       });
       const old = marksIn(block, field);
+      const next = remarked(block, field, text, covered(old, mark, from, to, spans));
+      const unchanged = sameMarks(marksIn(next, field), old);
+      if (from >= to && !unchanged) refuse(op, 'empty range');
       return {
-        change: {
-          put: [remarked(block, field, text, covered(old, mark, from, to, spans))],
-          drop: [],
-        },
+        change: { put: raw && unchanged ? [] : [next], drop: [] },
         inverse: {
           kind: 'markText',
           blockId,
@@ -544,7 +566,7 @@ function planned(
           Object.hasOwn(block.fields, name) ? block.fields[name] : '',
         ]),
       );
-      moving(op, block.type, op.type, '', Object.values(fields).join(''));
+      if (!raw) moving(op, block.type, op.type, '', Object.values(fields).join(''));
       const kept = block.slots ?? {};
       const names = target.slots ?? [];
       const orphans = Object.entries(kept).flatMap(([name, ids]) =>
@@ -704,7 +726,7 @@ export function planAll(
       );
     }
   }
-  for (const [id, after] of blocks) {
+  for (const [id, after] of newId === undefined ? [] : blocks) {
     const before = view.blocks.get(id);
     if (before === undefined || after === undefined || isRaw(before.type) === isRaw(after.type)) {
       continue;

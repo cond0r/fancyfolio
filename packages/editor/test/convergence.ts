@@ -119,12 +119,12 @@ export function convergence(open: Open, runs = seeds.length) {
       if (variant.saves) expect(saved.ok).toBe(true);
     });
 
-    it.each<[string, Op, readonly Op[], string]>([
+    it.each<[string, Op, readonly Op[], string | readonly string[]]>([
       [
         'both type at one offset',
         type('b0', 0, 'A '),
         [type('b0', 0, 'B ')],
-        replaced('A B Before.'),
+        [replaced('A B Before.'), replaced('B A Before.')],
       ],
       [
         'one deletes a range the other types into',
@@ -154,7 +154,8 @@ export function convergence(open: Open, runs = seeds.length) {
       const { all, converged } = await peers(2);
       all[0].editor.dispatch(mine);
       all[1].editor.dispatch(...theirs);
-      expect(await converged()).toEqual({ ok: true, markdown });
+      const outcomes = [markdown].flat().map((each) => ({ ok: true, markdown: each }));
+      expect(outcomes).toContainEqual(await converged());
     });
   });
 

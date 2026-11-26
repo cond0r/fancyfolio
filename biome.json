@@ -539,7 +539,8 @@
                       "!remark-parse",
                       "!remark-stringify",
                       "!unified",
-                      "!./types.ts"
+                      "!./types.ts",
+                      "!./colors.ts"
                     ],
                     "message": "The dialect imports only its own parser and serializer packages."
                   }

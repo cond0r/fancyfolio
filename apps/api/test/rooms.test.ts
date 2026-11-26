@@ -1,33 +1,23 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { LIMITS } from '@fancyfolio/contracts';
 import { createClient } from '@liveblocks/client';
 import { Liveblocks, type LiveblocksError } from '@liveblocks/node';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { startLiveblocksDev } from '../../../tests/liveblocks-dev.ts';
 import app from '../src/index.ts';
 
-let devServer: ChildProcess;
+let stopDevServer = () => {};
 let baseUrl: string;
 const silent = createServer(() => {});
 await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
 const silentUrl = `http://127.0.0.1:${Object(silent.address()).port}`;
 
 beforeAll(async () => {
-  const cli = new URL('../node_modules/.bin/liveblocks', import.meta.url).pathname;
-  devServer = spawn(cli, ['dev', '-P', '--no-persist', '--no-check'], { detached: true });
-  baseUrl = await new Promise((resolve, reject) => {
-    let output = '';
-    devServer.stdout?.on('data', (chunk) => {
-      output += chunk;
-      const listening = /running at (http:\/\/[\w.:]+)/.exec(output);
-      if (listening !== null) resolve(listening[1]);
-    });
-    devServer.on('exit', (code) => reject(new Error(`liveblocks dev exited ${code}: ${output}`)));
-  });
+  ({ baseUrl, stop: stopDevServer } = await startLiveblocksDev());
 });
 
 afterAll(() => {
-  if (devServer.pid !== undefined) process.kill(-devServer.pid, 'SIGTERM');
+  stopDevServer();
   silent.close();
 });
 
@@ -148,6 +138,24 @@ it('seeds a room once when two seeds race and keeps the first copy', async () =>
 });
 
 const withBlock = (patch: object) => ({ version: 'v1', blocks: { b1: { ...block, ...patch } } });
+const marked = (attributes: object) => withBlock({ fields: { text: [['x', attributes]] } });
+
+it('stores a marked seed as its text segments', async () => {
+  const room = newRoom();
+  const text = [
+    ['bold ', { bold: true }],
+    ['italic ', { italic: true }],
+    ['strike ', { strike: true }],
+    ['code ', { code: true }],
+    ['marked ', { highlight: true, color: 'blue' }],
+    ['link', { link: 'https://example.test/case' }],
+    [' plain'],
+  ];
+  expect((await post('seed', { room, seed: withBlock({ fields: { text } }) })).status).toBe(200);
+  expect(await devRooms().getStorageDocument(room, 'json')).toEqual(
+    withBlock({ fields: { text } }),
+  );
+});
 
 it.each([
   ['over the size cap', withBlock({ fields: { text: 'a'.repeat(LIMITS.roomSeed) } })],
@@ -158,6 +166,12 @@ it.each([
   ['a field that is not text', withBlock({ fields: { text: 7 } })],
   ['props posing as live data', withBlock({ props: [{ liveblocksType: 'LiveMap' }] })],
   ['props nested past the stack', withBlock({ props: { nested: 'NESTED' } })],
+  ['a javascript: link', marked({ link: 'javascript:alert(1)' })],
+  ['a colour named __proto__', marked({ color: '__proto__' })],
+  ['a colour off the palette', marked({ color: 'pink' })],
+  ['a mark flag that is not true', marked({ bold: 'yes' })],
+  ['an attribute that is no mark', marked({ style: 'color: red' })],
+  ['an attribute keyed __proto__', marked(JSON.parse('{"__proto__":true}'))],
 ])('refuses a seed with %s as 400 and writes nothing', async (_, bad) => {
   const room = newRoom();
   const deep = `${'['.repeat(100_000)}0${']'.repeat(100_000)}`;

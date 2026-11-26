@@ -1,4 +1,5 @@
 import {
+  isLinkUrl,
   parseEnv,
   type RoomSeed,
   roomAuthRequest,
@@ -6,6 +7,7 @@ import {
   roomSeedRequest,
   roomToken,
 } from '@fancyfolio/contracts';
+import { isColor } from '@fancyfolio/editor/colors';
 import { Liveblocks, LiveblocksError, type PlainLsonObject } from '@liveblocks/node';
 import { Hono } from 'hono';
 import * as v from 'valibot';
@@ -28,13 +30,34 @@ function bounded<T>(call: (options: { signal: AbortSignal }) => Promise<T>): Pro
   return Promise.race([call({ signal }), timedOut]);
 }
 
+const flags = ['bold', 'italic', 'strike', 'code', 'highlight'];
+
+function isMark([key, value]: [string, unknown]): boolean {
+  if (key === 'link') return typeof value === 'string' && isLinkUrl(value);
+  if (key === 'color') return isColor(value);
+  return flags.includes(key) && value === true;
+}
+
+const markedSeedRequest = v.pipe(
+  roomSeedRequest,
+  v.check(({ seed }) =>
+    Object.values(seed.blocks).every((block) =>
+      Object.values(block.fields).every(
+        (field) =>
+          typeof field === 'string' ||
+          field.every(([, marks = {}]) => Object.entries(marks).every(isMark)),
+      ),
+    ),
+  ),
+);
+
 type Plain = PlainLsonObject['data'][string];
 
 function storage(seed: RoomSeed): PlainLsonObject {
   const blocks = Object.entries(seed.blocks).map(([id, block]): [string, Plain] => {
     const fields = Object.entries(block.fields).map(([name, text]): [string, Plain] => [
       name,
-      { liveblocksType: 'LiveText', data: [[text]] },
+      { liveblocksType: 'LiveText', data: typeof text === 'string' ? [[text]] : text },
     ]);
     const map: Plain = { liveblocksType: 'LiveMap', data: Object.fromEntries(fields) };
     return [id, { liveblocksType: 'LiveObject', data: { ...block, fields: map } }];
@@ -58,7 +81,7 @@ export const rooms = new Hono<Env>()
     if (status !== 200) throw new Error('Room access token refused', { cause: error });
     return c.json(v.parse(roomToken, JSON.parse(body)));
   })
-  .post('/seed', responds(roomSeeded, 400, 404, 409), jsonBody(roomSeedRequest), async (c) => {
+  .post('/seed', responds(roomSeeded, 400, 404, 409), jsonBody(markedSeedRequest), async (c) => {
     const liveblocks = playgroundRooms();
     if (liveblocks === undefined) return notFound(c);
     const { room, seed } = c.req.valid('json');

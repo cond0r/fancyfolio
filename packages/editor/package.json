@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./dialect": "./src/dialect.ts",
+    "./colors": "./src/colors.ts",
     "./types": "./src/types.ts",
     "./react": "./src/react/editor.tsx",
     "./chrome.css": "./src/chrome.css",

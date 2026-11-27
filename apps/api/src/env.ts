@@ -36,14 +36,17 @@ export const CLIENT_IP_HEADERS = [
 
 export const emailLength = 254;
 
+const appOrigin = v.pipe(
+  v.string(),
+  v.regex(/^(https:\/\/[a-z0-9.-]+|http:\/\/(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$/),
+);
+const secret = v.pipe(v.string(), v.regex(/^[\x21-\x7e]{32,}$/));
+
 export const apiEnv = v.pipe(
   v.object({
     AUTH_DATABASE_URL: v.pipe(v.string(), v.check(isDatabaseUrl)),
-    BETTER_AUTH_SECRET: v.pipe(v.string(), v.regex(/^[\x21-\x7e]{32,}$/)),
-    BETTER_AUTH_URL: v.pipe(
-      v.string(),
-      v.regex(/^(https:\/\/[a-z0-9.-]+|http:\/\/(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$/),
-    ),
+    BETTER_AUTH_SECRET: secret,
+    BETTER_AUTH_URL: appOrigin,
     CLIENT_IP_HEADER: v.picklist(CLIENT_IP_HEADERS),
     SIGNUP_ALLOWLIST: v.pipe(
       v.optional(v.string(), ''),
@@ -55,6 +58,8 @@ export const apiEnv = v.pipe(
       ),
       v.array(v.pipe(v.string(), v.email(), v.maxLength(emailLength))),
     ),
+    WEB_URL: appOrigin,
+    REVALIDATE_SECRET: secret,
     VERCEL_ENV: liveblocksEnv.entries.VERCEL_ENV,
   }),
   v.forward(
@@ -63,6 +68,18 @@ export const apiEnv = v.pipe(
         VERCEL_ENV !== 'production' || BETTER_AUTH_URL.startsWith('https://'),
     ),
     ['BETTER_AUTH_URL'],
+  ),
+  v.forward(
+    v.check(
+      ({ WEB_URL, VERCEL_ENV }) => VERCEL_ENV !== 'production' || WEB_URL.startsWith('https://'),
+    ),
+    ['WEB_URL'],
+  ),
+  v.forward(
+    v.check(
+      ({ REVALIDATE_SECRET, BETTER_AUTH_SECRET }) => REVALIDATE_SECRET !== BETTER_AUTH_SECRET,
+    ),
+    ['REVALIDATE_SECRET'],
   ),
 );
 

@@ -6,11 +6,19 @@ import { apiEnv, databaseEnv, localEnv, seedOwnerEnv } from '../src/env.ts';
 
 const required = {
   AUTH_DATABASE_URL: 'postgres://ff_auth:pw@pooler.example.test:6543/postgres',
-  BETTER_AUTH_SECRET: 'auth-secret-0123456789abcdef-0123456789',
+  BETTER_AUTH_SECRET: 'pw-secret-K3-auth-0123456789abcdef-0123456789',
   BETTER_AUTH_URL: 'https://app.example.test',
   CLIENT_IP_HEADER: 'x-real-ip',
+  WEB_URL: 'https://app.example.test',
+  REVALIDATE_SECRET: 'revalidate-secret-0123456789abcdef-0123',
 };
 const parsed = { ...required, SIGNUP_ALLOWLIST: [] };
+const origins = ['BETTER_AUTH_URL', 'WEB_URL'];
+const secrets = ['BETTER_AUTH_SECRET', 'REVALIDATE_SECRET'];
+
+function rows(names: string[], values: string[]): [string, string][] {
+  return names.flatMap((name) => values.map((value): [string, string] => [name, value]));
+}
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -42,19 +50,21 @@ describe('parseEnv', () => {
     },
   );
 
-  it('refuses to start the API until every auth setting is set, naming each missing one', async () => {
+  it('refuses to start the API until every auth and revalidation setting is set, naming each missing one', async () => {
     for (const name of Object.keys(required)) vi.stubEnv(name, undefined);
     await expect(import('../src/index.ts')).rejects.toThrow(
       new Error(
-        'Invalid environment: AUTH_DATABASE_URL (missing), BETTER_AUTH_SECRET (missing), BETTER_AUTH_URL (missing), CLIENT_IP_HEADER (missing)',
+        'Invalid environment: AUTH_DATABASE_URL (missing), BETTER_AUTH_SECRET (missing), BETTER_AUTH_URL (missing), CLIENT_IP_HEADER (missing), WEB_URL (missing), REVALIDATE_SECRET (missing)',
       ),
     );
   });
 
   it.each([
-    ['BETTER_AUTH_URL', 'https://app.example.test:8443'],
-    ['BETTER_AUTH_URL', 'http://localhost:3200'],
-    ['BETTER_AUTH_URL', 'http://127.0.0.1:3000'],
+    ...rows(origins, [
+      'https://app.example.test:8443',
+      'http://localhost:3200',
+      'http://127.0.0.1:3000',
+    ]),
     ['CLIENT_IP_HEADER', 'x-forwarded-for'],
     ['CLIENT_IP_HEADER', 'x-vercel-forwarded-for'],
   ])('accepts %s=%j', (name, value) => {
@@ -64,14 +74,20 @@ describe('parseEnv', () => {
   it.each([
     ['AUTH_DATABASE_URL', 'https://ff_auth:pw-secret-K3@db.example.test/x'],
     ['AUTH_DATABASE_URL', 'postgres://ff_auth:pw-secret-K3@db.example.test/x?sslmode=require'],
-    ['BETTER_AUTH_SECRET', 'pw-secret-K3-too-short'],
-    ['BETTER_AUTH_SECRET', 'pw-secret-K3 with a space 0123456789abcdef'],
-    ['BETTER_AUTH_URL', 'http://app.example.test'],
-    ['BETTER_AUTH_URL', 'https://app.example.test/'],
-    ['BETTER_AUTH_URL', 'https://app.example.test/api/auth'],
-    ['BETTER_AUTH_URL', 'https://App.example.test'],
-    ['BETTER_AUTH_URL', 'https://user:pw-secret-K3@app.example.test'],
-    ['BETTER_AUTH_URL', 'javascript:alert(1)'],
+    ...rows(secrets, [
+      'pw-secret-K3-too-short',
+      'pw-secret-K3 with a space 0123456789abcdef',
+      'pw-secret-K3-\u00e9-0123456789abcdef-0123',
+    ]),
+    ['REVALIDATE_SECRET', required.BETTER_AUTH_SECRET],
+    ...rows(origins, [
+      'http://app.example.test',
+      'https://app.example.test/',
+      'https://app.example.test/api/auth',
+      'https://App.example.test',
+      'https://user:pw-secret-K3@app.example.test',
+      'javascript:alert(1)',
+    ]),
     ['CLIENT_IP_HEADER', 'X-Real-IP'],
     ['CLIENT_IP_HEADER', 'cf-connecting-ip'],
     ['SIGNUP_ALLOWLIST.1', 'ines@example.test,pw-secret-K3'],
@@ -83,15 +99,18 @@ describe('parseEnv', () => {
     expect(inspect(error, { depth: 10 })).not.toContain('pw-secret-K3');
   });
 
-  it('refuses an http BETTER_AUTH_URL in production without printing it', () => {
-    const production = { ...required, VERCEL_ENV: 'production' };
-    expect(parseEnv(apiEnv, production).BETTER_AUTH_URL).toBe(required.BETTER_AUTH_URL);
-    const error = refusal(() =>
-      parseEnv(apiEnv, { ...production, BETTER_AUTH_URL: 'http://localhost:3200' }),
-    );
-    expect(error.message).toBe('Invalid environment: BETTER_AUTH_URL (malformed)');
-    expect(inspect(error, { depth: 10 })).not.toContain('localhost');
-  });
+  it.each(['BETTER_AUTH_URL', 'WEB_URL'] as const)(
+    'refuses an http %s in production without printing it',
+    (name) => {
+      const production = { ...required, VERCEL_ENV: 'production' };
+      expect(parseEnv(apiEnv, production)[name]).toBe(required[name]);
+      const error = refusal(() =>
+        parseEnv(apiEnv, { ...production, [name]: 'http://localhost:3200' }),
+      );
+      expect(error.message).toBe(`Invalid environment: ${name} (malformed)`);
+      expect(inspect(error, { depth: 10 })).not.toContain('localhost');
+    },
+  );
 
   it('reads SIGNUP_ALLOWLIST as trimmed lower-case emails, empty when unset', () => {
     expect(parseEnv(apiEnv, required)).toEqual(parsed);

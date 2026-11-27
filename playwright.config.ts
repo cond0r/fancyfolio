@@ -28,6 +28,8 @@ export default defineConfig({
       BETTER_AUTH_SECRET: 'unused-auth-secret-Z7-0123456789abcdef',
       BETTER_AUTH_URL: 'http://localhost:3200',
       CLIENT_IP_HEADER: 'x-forwarded-for',
+      WEB_URL: 'http://localhost:3200',
+      REVALIDATE_SECRET: 'e2e-revalidate-secret-Z7-0123456789abcdef',
       ROOT_DOMAIN: 'localhost',
       VERCEL_TELEMETRY_DISABLED: '1',
     },

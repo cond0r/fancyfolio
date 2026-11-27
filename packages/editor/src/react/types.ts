@@ -4,6 +4,7 @@ import type {
   Block,
   BlockId,
   BlockOf,
+  CollabAdapter,
   Editor,
   HeadingProps,
   Json,
@@ -64,11 +65,23 @@ export type BlockChrome = {
 export type RenderBlockChrome = (chrome: BlockChrome) => ReactNode;
 
 export type EditorProps = {
-  readonly markdown: string;
   readonly onRender?: (blockId: BlockId) => void;
   readonly renderBlockChrome?: RenderBlockChrome;
   readonly safeHref?: SafeHref;
-} & Saving;
+} & (
+  | { readonly markdown: string; readonly collab?: undefined }
+  | { readonly collab: CollabAdapter; readonly markdown?: undefined }
+) &
+  Saving;
+
+export type SurfaceProps = {
+  readonly editor: Editor;
+  readonly views: ViewMap;
+  readonly components: ReadonlyMap<string, Registered>;
+  readonly insert: readonly Insertion[];
+  readonly onRender: ((blockId: BlockId) => void) | undefined;
+  readonly renderBlockChrome: RenderBlockChrome | undefined;
+};
 
 export type ViewMap = ReadonlyMap<string, ComponentType<ViewProps<Block>>>;
 

@@ -1,14 +1,22 @@
 'use client';
 
 import { useAtomValue } from 'jotai/react';
-import { type ComponentType, useCallback, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useState } from 'react';
 import type { heading } from '../core/heading.ts';
 import { registryOf } from '../core/registry.ts';
 import { createEditor } from '../core/store.ts';
-import type { AnyComponent, Editor, SaveState } from '../core/types.ts';
+import type {
+  AnyComponent,
+  Doc,
+  Editor,
+  OnSave,
+  SaveState,
+  Saving,
+  Version,
+} from '../core/types.ts';
 import { bindSelection } from '../dom/chrome.ts';
 import { bindEditor } from '../dom/field.ts';
-import { Block } from './block.tsx';
+import { Block, Placeholder } from './block.tsx';
 import { Chrome } from './chrome.tsx';
 import { Slash } from './slash.tsx';
 import { Toolbar } from './toolbar.tsx';
@@ -18,6 +26,7 @@ import type {
   Insert,
   Insertion,
   ReactEditorOptions,
+  SurfaceProps,
   ViewMap,
   Views,
 } from './types.ts';
@@ -54,6 +63,45 @@ const texts: Insert<readonly []> = [
   { type: 'heading', props: { level: 3 }, label: 'Heading 3' },
 ];
 
+function Surface({ editor, views, components, insert, onRender, renderBlockChrome }: SurfaceProps) {
+  const ids = useAtomValue(editor.ids, { store: editor.store });
+  const bind = useCallback(
+    (root: HTMLDivElement) => {
+      const unbind = [bindEditor(root, editor), bindSelection(root, editor)];
+      return () => {
+        for (const run of unbind) run();
+      };
+    },
+    [editor],
+  );
+  return (
+    <div ref={bind} data-ff-editor="" tabIndex={-1}>
+      {ids.map((id) => (
+        <Block
+          key={id}
+          id={id}
+          editor={editor}
+          views={views}
+          components={components}
+          onRender={onRender}
+        />
+      ))}
+      {ids.length === 0 && <Placeholder />}
+      <Chrome editor={editor} insert={insert} render={renderBlockChrome} />
+      <Status editor={editor} />
+      <span data-ff-live="" aria-live="polite" />
+      <Slash editor={editor} insert={insert} />
+      <Toolbar editor={editor} />
+    </div>
+  );
+}
+
+function savingOf(version: Version | undefined, onSave: OnSave | undefined): Saving {
+  return version === undefined || onSave === undefined ? {} : { version, onSave };
+}
+
+const nothing: Doc = { ids: [], blocks: new Map(), sources: new Map() };
+
 export function createReactEditor<const P extends readonly AnyComponent[]>(
   options: ReactEditorOptions<P>,
 ): ComponentType<EditorProps>;
@@ -68,50 +116,43 @@ export function createReactEditor({
 }): ComponentType<EditorProps> {
   const all: ViewMap = new Map(Object.entries({ ...builtins, ...views }));
   const registered = registryOf(components).components;
+  const base = { now: Date.now, newId: () => crypto.randomUUID(), components };
   return function ReactEditor({
     markdown,
+    collab,
     onRender,
     renderBlockChrome,
     safeHref,
-    ...saving
+    version,
+    onSave,
   }: EditorProps) {
-    const [editor] = useState(() =>
-      createEditor(markdown, {
-        now: Date.now,
-        newId: () => crypto.randomUUID(),
-        components,
+    const [plain] = useState(() =>
+      markdown === undefined
+        ? undefined
+        : createEditor(markdown, { ...base, safeHref, ...savingOf(version, onSave) }),
+    );
+    const [joined, setJoined] = useState<Editor>();
+    useEffect(() => {
+      if (collab === undefined) return;
+      const editor = createEditor(nothing, {
+        ...base,
+        collab,
         safeHref,
-        ...saving,
-      }),
-    );
-    const ids = useAtomValue(editor.ids, { store: editor.store });
-    const bind = useCallback(
-      (root: HTMLDivElement) => {
-        const unbind = [bindEditor(root, editor), bindSelection(root, editor)];
-        return () => {
-          for (const run of unbind) run();
-        };
-      },
-      [editor],
-    );
-    return (
-      <div ref={bind} data-ff-editor="" tabIndex={-1}>
-        {ids.map((id) => (
-          <Block
-            key={id}
-            id={id}
-            editor={editor}
-            views={all}
-            components={registered}
-            onRender={onRender}
-          />
-        ))}
-        <Chrome editor={editor} insert={insert} render={renderBlockChrome} />
-        <Status editor={editor} />
-        <span data-ff-live="" aria-live="polite" />
-        <Slash editor={editor} insert={insert} />
-        <Toolbar editor={editor} />
-      </div>
+        ...savingOf(version, onSave),
+      });
+      setJoined(editor);
+      return () => editor.disconnect();
+    }, [collab, safeHref, version, onSave]);
+    const editor = plain ?? joined;
+    return editor === undefined ? null : (
+      <Surface
+        editor={editor}
+        views={all}
+        components={registered}
+        insert={insert}
+        onRender={onRender}
+        renderBlockChrome={renderBlockChrome}
+      />
     );
   };
 }

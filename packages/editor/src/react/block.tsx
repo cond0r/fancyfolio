@@ -31,6 +31,23 @@ const Field = memo(function Field({ editor, blockId, field, label }: FieldProps)
   );
 });
 
+export function Placeholder() {
+  return (
+    <p>
+      <span
+        role="textbox"
+        tabIndex={0}
+        aria-label="Type something"
+        contentEditable
+        suppressContentEditableWarning
+        data-field="text"
+        data-empty=""
+        data-ff-placeholder=""
+      />
+    </p>
+  );
+}
+
 export const Block = memo(function Block({ id, editor, views, components, onRender }: BlockProps) {
   const block = useAtomValue(atomOf(editor, id), { store: editor.store });
   const flag = useCallback(

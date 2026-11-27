@@ -1,10 +1,11 @@
 'use client';
 
-import { isLinkUrl } from '@fancyfolio/contracts';
+import { isLinkUrl, type RoomSeed } from '@fancyfolio/contracts';
 import '@fancyfolio/editor/chrome.css';
 import type { OnSave } from '@fancyfolio/editor/types';
 import dynamic from 'next/dynamic';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { connectRoom } from '../../../collab/liveblocks';
 import { Callout } from '../../../components/blocks/callout';
 import { Metric } from '../../../components/blocks/metric';
 
@@ -38,6 +39,67 @@ const Editor = dynamic(
   { ssr: false },
 );
 
+type Joined = Awaited<ReturnType<typeof connectRoom>>;
+
+const unchanging = () => () => undefined;
+const roomParam = () => new URLSearchParams(window.location.search).get('room');
+const unread = () => undefined;
+
+function seed(request: { readonly room: string; readonly seed: RoomSeed }) {
+  return fetch('/api/v1/rooms/seed', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(5_000),
+  });
+}
+
+function useRoom(id: string | null | undefined, body: string, onSave: OnSave) {
+  const [joined, setJoined] = useState<Joined>();
+  useEffect(() => {
+    if (id === null || id === undefined) return;
+    let left = false;
+    let leave = () => {};
+    Promise.all([
+      import('@liveblocks/client'),
+      import('../../../collab/liveblocks'),
+      import('./components'),
+    ])
+      .then(([{ createClient }, { connectRoom }, { components }]) => {
+        if (left) return undefined;
+        const baseUrl = process.env.NEXT_PUBLIC_LIVEBLOCKS_BASE_URL;
+        const client = createClient({
+          authEndpoint: '/api/v1/rooms/auth',
+          ...(baseUrl !== undefined && { baseUrl }),
+        });
+        const entered = client.enterRoom(`playground:${id}`, { initialPresence: {} });
+        leave = entered.leave;
+        return connectRoom(entered.room, body, '1', {
+          now: Date.now,
+          newId: () => crypto.randomUUID(),
+          components,
+          safeHref: isLinkUrl,
+          seed,
+          onSave,
+        });
+      })
+      .then(
+        (next) => {
+          if (!left && next !== undefined) setJoined(next);
+        },
+        (error: unknown) => {
+          if (!left) console.error(error);
+        },
+      );
+    return () => {
+      left = true;
+      leave();
+      setJoined(undefined);
+    };
+  }, [id, body, onSave]);
+  return joined;
+}
+
 export function Playground({ body }: { readonly body: string }) {
   const commits = useRef<HTMLOutputElement>(null);
   const onRender = useCallback((id: string) => commits.current?.append(`${id} `), []);
@@ -49,16 +111,21 @@ export function Playground({ body }: { readonly body: string }) {
     if (saved.current !== null) saved.current.textContent = markdown;
     return { ok: true, version: String(latest.current) };
   }, []);
+  const room = useSyncExternalStore(unchanging, roomParam, unread);
+  const joined = useRoom(room, body, onSave);
   return (
     <>
       <div className="pl-16 md:pl-2 [&_h1]:mb-6 [&_h1]:text-4xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:font-mono [&_figure]:mt-3 [&_figure_p]:mt-3 [&_aside]:mt-0 [&_aside]:pt-4">
-        <Editor
-          markdown={body}
-          version="1"
-          onSave={onSave}
-          onRender={onRender}
-          safeHref={isLinkUrl}
-        />
+        {room === null && (
+          <Editor
+            markdown={body}
+            version="1"
+            onSave={onSave}
+            onRender={onRender}
+            safeHref={isLinkUrl}
+          />
+        )}
+        {joined !== undefined && <Editor {...joined} onRender={onRender} safeHref={isLinkUrl} />}
       </div>
       <output ref={commits} hidden data-testid="commits" />
       <output ref={saved} hidden data-testid="saved" />

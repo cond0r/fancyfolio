@@ -1,7 +1,7 @@
 import type { RoomSeed } from '@fancyfolio/contracts';
 import { createEditor } from '@fancyfolio/editor';
 import { components, convergence, errors, safeHref } from '@fancyfolio/editor/testing';
-import type { Doc, OnSave } from '@fancyfolio/editor/types';
+import type { Doc, OnSave, Presence } from '@fancyfolio/editor/types';
 import { createClient, LiveMap, LiveObject, LiveText, type Room } from '@liveblocks/client';
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import { startLiveblocksDev } from '../../../tests/liveblocks-dev.ts';
@@ -115,6 +115,15 @@ async function intrude(id: string, blockId?: string) {
   return { room, blocks, text: text instanceof LiveText ? text : undefined };
 }
 
+function presenceOf(
+  adapter: ReturnType<typeof liveblocksAdapter>,
+  apply: (others: readonly Presence[]) => void = () => undefined,
+) {
+  const presenting = adapter.onPresence?.(apply);
+  if (presenting === undefined) throw new Error('the adapter has no presence');
+  return presenting;
+}
+
 it('drops an invalid record or block with one console.error on every editor', async () => {
   const session = await openRoom(2, pageOf('Kept.\n'));
   errors.mockClear();
@@ -192,4 +201,56 @@ it('saves with the room version and refuses a version issued outside the room', 
   current = 'v9';
   expect(await a.save()).toEqual({ ok: false, reason: 'stale' });
   expect(sent).toEqual(['v1', 'v2', 'v3']);
+});
+
+it('drops each hostile presence with one console.error while another peer moves', async () => {
+  const page = pageOf('Kept.\n');
+  const [blockId = ''] = page.ids;
+  const session = await openRoom(1, page);
+  let seen: readonly Presence[] = [];
+  presenceOf(await session.raw(), (others) => {
+    seen = others;
+  });
+  errors.mockClear();
+  const at = { blockId, field: 'text', from: 0, to: 0 };
+  for (const hostile of [
+    { ...at, from: 3, to: 1 },
+    { ...at, from: -1 },
+    { ...at, to: 0.5 },
+    { ...at, from: '0' },
+    { ...at, userId: 'Guest 0' },
+  ]) {
+    enter(session.id).updatePresence({ at: hostile });
+  }
+  await vi.waitFor(() => expect(errors).toHaveBeenCalledTimes(5));
+  const mover = enter(session.id);
+  for (const offset of [1, 2, 3, 4]) {
+    mover.updatePresence({ at: { ...at, from: offset, to: offset } });
+    await vi.waitFor(() => expect(seen).toEqual([expect.objectContaining({ to: offset })]));
+  }
+  expect(errors).toHaveBeenCalledTimes(5);
+});
+
+it('never shows a peer presence ahead of its text', async () => {
+  const page = pageOf('x\n');
+  const [blockId = ''] = page.ids;
+  const session = await openRoom(1, page);
+  const viewer = await intrude(session.id, blockId);
+  const ahead: number[] = [];
+  let last = 0;
+  presenceOf(liveblocksAdapter(viewer.room), (others) => {
+    for (const { to } of others) {
+      last = to;
+      if (to > (viewer.text?.length ?? 0)) ahead.push(to);
+    }
+  });
+  const author = await session.raw();
+  const presenting = presenceOf(author);
+  for (let offset = 1; offset <= 20; offset += 1) {
+    author.send([{ kind: 'insertText', blockId, field: 'text', offset, text: 'z' }]);
+    presenting.publish({ blockId, field: 'text', from: offset + 1, to: offset + 1 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  await vi.waitFor(() => expect(last).toBe(21));
+  expect(ahead).toEqual([]);
 });

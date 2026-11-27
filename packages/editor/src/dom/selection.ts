@@ -83,6 +83,16 @@ export function place(root: HTMLElement, selection: Selection): void {
   dom.setBaseAndExtent(...point(field, selection.from), ...point(field, selection.to));
 }
 
+export function rangeRect(root: HTMLElement, at: Omit<TextSelection, 'kind'>): DOMRect | undefined {
+  const field = fieldElement(root, at.blockId, at.field);
+  if (field === undefined) return undefined;
+  const range = root.ownerDocument.createRange();
+  range.setStart(...point(field, at.from));
+  range.setEnd(...point(field, at.to));
+  const rect = range.collapsed ? range.getClientRects()[0] : range.getBoundingClientRect();
+  return rect === undefined || rect.height === 0 ? field.getBoundingClientRect() : rect;
+}
+
 export function offsetAtPoint(field: HTMLElement, x: number, y: number): number | undefined {
   const document = field.ownerDocument;
   const position = document.caretPositionFromPoint?.(x, y);

@@ -360,6 +360,8 @@ export type Editor = {
   markdown(): SaveResult;
   readonly saveState: Atom<SaveState>;
   save(): Promise<SaveOutcome>;
+  readonly receiving: boolean;
+  readonly others: Atom<readonly Presence[]>;
   setPresence(others: readonly Presence[]): void;
   presence(blockId: BlockId): Atom<readonly Presence[]>;
   disconnect(): void;

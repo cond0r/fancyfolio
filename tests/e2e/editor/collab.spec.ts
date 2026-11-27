@@ -1,4 +1,5 @@
-import { test as base, expect, type Page } from '@playwright/test';
+import { test as base, expect, type Locator, type Page } from '@playwright/test';
+import { frame } from '../frame.ts';
 
 const body = [
   'Field notes from Larkspur Outfitters',
@@ -15,6 +16,10 @@ const body = [
 const fields = (page: Page) => page.locator('[data-ff-editor] [data-field]');
 const placeholder = (page: Page) => page.locator('[data-ff-editor] [data-ff-placeholder]');
 const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Text formatting' });
+const chrome = (page: Page) => page.locator('[data-ff-chrome]');
+const peer = (page: Page) => page.locator('[data-ff-presence] [data-ff-peer]');
+const present = (page: Page) => page.locator('[data-ff-editor] [data-block-id][data-present]');
+const blockOf = (inner: Locator) => inner.locator('xpath=ancestor::*[@data-block-id][1]');
 
 type Peers = {
   readonly a: Page;
@@ -74,6 +79,28 @@ async function caretAt(page: Page, index: number, offset: number) {
 async function select(page: Page, index: number, from: number, to: number) {
   await caretAt(page, index, from);
   for (let step = from; step < to; step += 1) await page.keyboard.press('Shift+ArrowRight');
+}
+
+async function boxOf(locator: Locator) {
+  const box = await locator.boundingBox();
+  if (box === null) throw new Error('the element has no box');
+  return box;
+}
+
+async function markedAtCaret(author: Page, viewer: Page) {
+  const caret = await author.evaluate(() => {
+    const rect = document.getSelection()?.getRangeAt(0).getClientRects()[0];
+    if (rect === undefined) throw new Error('the author has no caret');
+    return { x: rect.x, y: rect.y };
+  });
+  await expect
+    .poll(async () => {
+      const box = await peer(viewer).boundingBox();
+      return box === null
+        ? Infinity
+        : Math.max(Math.abs(box.x - caret.x), Math.abs(box.y - caret.y));
+    })
+    .toBeLessThanOrEqual(2);
 }
 
 async function dragAcross(page: Page, from: number, to: number) {
@@ -167,4 +194,102 @@ test('an emptied room shows the placeholder; the first character makes one parag
     await expect(fields(page)).toHaveText(['X']);
     await expect(page.locator('[data-ff-editor] [data-block-type="paragraph"]')).toHaveCount(1);
   }
+});
+
+test('B marks the block A edits at A caret, in bold and coloured text too', async ({
+  peers: { a, b },
+}) => {
+  await select(a, 2, 4, 12);
+  await a.keyboard.press('ControlOrMeta+b');
+  await select(a, 2, 18, 22);
+  await toolbar(a).getByRole('button', { name: 'Text colour', exact: true }).click();
+  await a.getByRole('menuitemradio', { name: 'Blue', exact: true }).click();
+  await expect(fields(b).nth(2).locator('[data-ff-color="blue"]')).toHaveText('nine');
+  for (const offset of [8, 23]) {
+    await caretAt(a, 2, offset);
+    await markedAtCaret(a, b);
+    await a.keyboard.type('xyz');
+    await markedAtCaret(a, b);
+  }
+  await expect(fields(b).nth(2)).toHaveText('Its checxyzkout took nixyzne steps.');
+  await expect(present(b)).toHaveCount(1);
+  await expect(blockOf(fields(b).nth(2))).toHaveAttribute('data-present', '');
+});
+
+test('remote typing and presence keep B chrome hidden, its toolbar and its renders', async ({
+  peers: { a, b },
+}) => {
+  await select(b, 4, 6, 11);
+  await expect(toolbar(b)).toBeVisible();
+  const line = await boxOf(fields(b).nth(4));
+  await b.mouse.move(1278, line.y + line.height / 2);
+  await expect(chrome(b)).not.toHaveAttribute('data-ff-target');
+  await caretAt(a, 4, 0);
+  await a.keyboard.type('So ');
+  await expect(fields(b).nth(4)).toHaveText('So Three steps remained.');
+  const commits = b.getByTestId('commits');
+  await expect(commits).toContainText(
+    (await blockOf(fields(b).nth(4)).getAttribute('data-block-id')) ?? '',
+  );
+  await frame(b);
+  await commits.evaluate((node) => node.replaceChildren());
+  for (let step = 0; step < 12; step += 1) await a.keyboard.press('ArrowRight');
+  await markedAtCaret(a, b);
+  await expect(chrome(b)).not.toHaveAttribute('data-ff-target');
+  await expect(commits).toHaveText('');
+  expect(await b.evaluate(() => document.getSelection()?.toString())).toBe('steps');
+  const picked = await b.evaluate(() => {
+    const rect = document.getSelection()?.getRangeAt(0).getBoundingClientRect();
+    if (rect === undefined) throw new Error('B has no selection');
+    return { left: rect.left, right: rect.right, top: rect.top };
+  });
+  await expect(toolbar(b)).toBeVisible();
+  const bar = await boxOf(toolbar(b));
+  expect(bar.x).toBeLessThanOrEqual(picked.left);
+  expect(bar.x + bar.width).toBeGreaterThanOrEqual(picked.right);
+  expect(bar.y + bar.height).toBeLessThanOrEqual(picked.top);
+});
+
+test('hover and the drop line on B pass through A marker to the block beneath', async ({
+  peers: { a, b },
+}) => {
+  await caretAt(a, 4, 5);
+  await markedAtCaret(a, b);
+  const marker = await boxOf(peer(b));
+  const over = { x: marker.x + marker.width / 2, y: marker.y + marker.height / 2 };
+  const beneath = blockOf(fields(b).nth(4));
+  await b.mouse.move(over.x, over.y);
+  await expect(chrome(b)).toHaveAttribute(
+    'data-ff-target',
+    (await beneath.getAttribute('data-block-id')) ?? '',
+  );
+  const moved = blockOf(fields(b).nth(0));
+  await moved.hover();
+  await expect(chrome(b)).toHaveAttribute(
+    'data-ff-target',
+    (await moved.getAttribute('data-block-id')) ?? '',
+  );
+  const grip = await boxOf(b.locator('[data-ff-grip]'));
+  await b.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await b.mouse.down();
+  await b.mouse.move(over.x, over.y, { steps: 5 });
+  const target = await boxOf(beneath);
+  await expect
+    .poll(async () => {
+      const drop = await b.locator('[data-ff-drop]').boundingBox();
+      if (drop === null) return Infinity;
+      const middle = drop.y + drop.height / 2;
+      return Math.min(Math.abs(middle - target.y), Math.abs(middle - target.y - target.height));
+    })
+    .toBeLessThanOrEqual(2);
+  await b.keyboard.press('Escape');
+  await b.mouse.up();
+});
+
+test('closing B removes its marker on A', async ({ peers: { a, b } }) => {
+  await caretAt(b, 2, 3);
+  await markedAtCaret(b, a);
+  await b.close();
+  await expect(peer(a)).toHaveCount(0);
+  await expect(present(a)).toHaveCount(0);
 });

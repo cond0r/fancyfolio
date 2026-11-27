@@ -23,7 +23,8 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'apps/api/node_modules/.bin/liveblocks dev --port 1153 --no-persist --no-check',
+      command:
+        'apps/api/node_modules/.bin/liveblocks dev --host 127.0.0.1 --port 1153 --no-persist --no-check',
       port: 1153,
       gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
       reuseExistingServer: false,

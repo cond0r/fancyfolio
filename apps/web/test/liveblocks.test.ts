@@ -115,18 +115,24 @@ async function intrude(id: string, blockId?: string) {
   return { room, blocks, text: text instanceof LiveText ? text : undefined };
 }
 
-it('drops an invalid record with one console.error on every editor', async () => {
+it('drops an invalid record or block with one console.error on every editor', async () => {
   const session = await openRoom(2, pageOf('Kept.\n'));
   errors.mockClear();
   const { room, blocks } = await intrude(session.id);
   const record = { type: 'paragraph', props: {}, parent: null, slot: null, position: '9' };
+  const text = () => new LiveMap([['text', new LiveText('x')]]);
   room.batch(() => {
     blocks.set('plain', new LiveObject({ ...record, fields: new LiveMap([['text', 'not live']]) }));
     blocks.set('owned', new LiveObject({ ...record, owner: 'admin', fields: new LiveMap() }));
+    blocks.set('chart', new LiveObject({ ...record, type: 'chart', fields: text() }));
+    blocks.set(
+      'h9',
+      new LiveObject({ ...record, type: 'heading', props: { level: 9 }, fields: text() }),
+    );
   });
-  await vi.waitFor(() => expect(errors).toHaveBeenCalledTimes(4));
+  await vi.waitFor(() => expect(errors).toHaveBeenCalledTimes(8));
   const joiner = await session.joiner();
-  expect(errors).toHaveBeenCalledTimes(6);
+  expect(errors).toHaveBeenCalledTimes(12);
   for (const editor of [...session.peers.map((peer) => peer.editor), joiner]) {
     expect(editor.markdown()).toEqual({ ok: true, markdown: 'Kept.\n' });
   }

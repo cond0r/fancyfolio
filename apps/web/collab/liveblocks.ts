@@ -12,6 +12,7 @@ import type {
   MarkType,
   OnSave,
   RemoteOp,
+  Saving,
   Span,
   Version,
 } from '@fancyfolio/editor/types';
@@ -255,7 +256,7 @@ export function seedOf(doc: Doc, version: Version): RoomSeed {
   return { version, blocks };
 }
 
-export function liveblocksAdapter(room: Room): CollabAdapter & { readonly doc: Doc } {
+export function liveblocksAdapter(room: Room): CollabAdapter {
   const snapshot = room.getStorageSnapshot();
   if (snapshot === null) throw new Error('the room storage is not loaded');
   const root: LiveObject<LsonObject> = snapshot;
@@ -306,14 +307,32 @@ export function liveblocksAdapter(room: Room): CollabAdapter & { readonly doc: D
     }
   }
 
-  const initial = readBlocks(root, refused);
-  const placed = placesOf(initial, gone);
-  for (const [id, read] of initial) {
-    const place = placed.get(id) ?? read;
-    known.set(id, { ...place, type: read.block.type, props: keyOf(read.block.props) });
+  function track(): Doc {
+    const reads = readBlocks(root, refused);
+    const placed = placesOf(reads, gone);
+    known.clear();
+    for (const [id, read] of reads) {
+      const place = placed.get(id) ?? read;
+      known.set(id, { ...place, type: read.block.type, props: keyOf(read.block.props) });
+    }
+    relink();
+    return docOf(reads, placed);
   }
-  const doc = docOf(initial, placed);
-  relink();
+
+  function joining(doc: Doc): RemoteOp[] {
+    const insert = (id: BlockId, parent: Parent): RemoteOp[] => {
+      const block = doc.blocks.get(id);
+      if (block === undefined) return [];
+      const lists = Object.entries(block.slots ?? {});
+      const slots = Object.fromEntries(lists.map(([slot]) => [slot, []]));
+      const emptied = block.slots === undefined ? block : { ...block, slots };
+      const children = lists.flatMap(([slot, list]) =>
+        list.toReversed().flatMap((child) => insert(child, { blockId: id, slot })),
+      );
+      return [{ kind: 'insertBlock', block: emptied, parent, index: 0 }, ...children];
+    };
+    return doc.ids.toReversed().flatMap((id) => insert(id, null));
+  }
 
   function restructure(touched: Touched): RemoteOp[] {
     const now = readBlocks(root, refused);
@@ -526,10 +545,10 @@ export function liveblocksAdapter(room: Room): CollabAdapter & { readonly doc: D
     }
   }
 
-  const unsubscribe = room.subscribe(root, received, { isDeep: true });
+  track();
+  let unsubscribe = room.subscribe(root, received, { isDeep: true });
 
   return {
-    doc,
     send(ops) {
       const touched = new Map<BlockId, Set<string>>();
       const retyped = new Map<BlockId, Set<string>>();
@@ -544,10 +563,15 @@ export function liveblocksAdapter(room: Room): CollabAdapter & { readonly doc: D
       queueMicrotask(() => listener(remarks(touched)));
     },
     onRemote(apply) {
+      unsubscribe();
+      const doc = track();
+      const stop = room.subscribe(root, received, { isDeep: true });
+      unsubscribe = stop;
       listener = apply;
+      apply(joining(doc));
       return () => {
-        listener = () => undefined;
-        unsubscribe();
+        if (listener === apply) listener = () => undefined;
+        stop();
       };
     },
     undo() {
@@ -592,13 +616,12 @@ function seeded(room: Room, root: LiveObject<LsonObject>): Promise<void> {
   });
 }
 
-export async function joinRoom(
+export async function connectRoom(
   room: Room,
   markdown: string,
   version: Version,
-  options: JoinOptions,
-): Promise<Editor> {
-  const { seed, onSave, ...editing } = options;
+  { seed, onSave, ...editing }: JoinOptions,
+): Promise<{ readonly collab: CollabAdapter } & Saving> {
   const { root } = await bounded(room.getStorage(), 'Room storage');
   if (root.get('blocks') === undefined) {
     const page = createEditor(markdown, editing).doc();
@@ -615,12 +638,26 @@ export async function joinRoom(
     if (typeof stored !== 'string') throw new Error('the room has no version');
     return stored;
   };
-  if (onSave === undefined) return createEditor(collab.doc, { ...editing, collab });
+  if (onSave === undefined) return { collab };
   const saving: OnSave = async (text) => {
     const stored = await onSave(text, current());
     if (stored.ok)
       room.history.disable(() => room.batch(() => root.set('version', stored.version)));
     return stored;
   };
-  return createEditor(collab.doc, { ...editing, collab, version: current(), onSave: saving });
+  return { collab, version: current(), onSave: saving };
+}
+
+export async function joinRoom(
+  room: Room,
+  markdown: string,
+  version: Version,
+  options: JoinOptions,
+): Promise<Editor> {
+  const { seed: _seed, onSave: _onSave, ...editing } = options;
+  const joined = await connectRoom(room, markdown, version, options);
+  return createEditor(
+    { ids: [], blocks: new Map(), sources: new Map() },
+    { ...editing, ...joined },
+  );
 }

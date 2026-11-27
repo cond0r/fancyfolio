@@ -10,12 +10,14 @@ import type {
   Doc,
   Editor,
   OnSave,
+  Presence,
   SaveState,
   Saving,
   Version,
 } from '../core/types.ts';
 import { bindSelection } from '../dom/chrome.ts';
 import { bindEditor } from '../dom/field.ts';
+import { bindPresence } from '../dom/presence.ts';
 import { Block, Placeholder } from './block.tsx';
 import { Chrome } from './chrome.tsx';
 import { Slash } from './slash.tsx';
@@ -65,6 +67,7 @@ const texts: Insert<readonly []> = [
 
 function Surface({ editor, views, components, insert, onRender, renderBlockChrome }: SurfaceProps) {
   const ids = useAtomValue(editor.ids, { store: editor.store });
+  const peers = useCallback((layer: HTMLDivElement) => bindPresence(layer, editor), [editor]);
   const bind = useCallback(
     (root: HTMLDivElement) => {
       const unbind = [bindEditor(root, editor), bindSelection(root, editor)];
@@ -88,6 +91,7 @@ function Surface({ editor, views, components, insert, onRender, renderBlockChrom
       ))}
       {ids.length === 0 && <Placeholder />}
       <Chrome editor={editor} insert={insert} render={renderBlockChrome} />
+      <div ref={peers} data-ff-presence="" aria-hidden="true" />
       <Status editor={editor} />
       <span data-ff-live="" aria-live="polite" />
       <Slash editor={editor} insert={insert} />
@@ -101,6 +105,13 @@ function savingOf(version: Version | undefined, onSave: OnSave | undefined): Sav
 }
 
 const nothing: Doc = { ids: [], blocks: new Map(), sources: new Map() };
+
+function own(editor: Editor): Omit<Presence, 'userId'> | null {
+  const selection = editor.store.get(editor.selection);
+  if (selection.kind !== 'text') return null;
+  const { blockId, field, from, to } = selection;
+  return { blockId, field, from, to };
+}
 
 export function createReactEditor<const P extends readonly AnyComponent[]>(
   options: ReactEditorOptions<P>,
@@ -141,7 +152,15 @@ export function createReactEditor({
         ...savingOf(version, onSave),
       });
       setJoined(editor);
-      return () => editor.disconnect();
+      const presenting = collab.onPresence?.((others) => editor.setPresence(others));
+      const publish = () => presenting?.publish(own(editor));
+      const unsubscribe = editor.store.sub(editor.selection, publish);
+      publish();
+      return () => {
+        unsubscribe();
+        presenting?.stop();
+        editor.disconnect();
+      };
     }, [collab, safeHref, version, onSave]);
     const editor = plain ?? joined;
     return editor === undefined ? null : (

@@ -3,14 +3,15 @@ import { createEditor } from '@fancyfolio/editor';
 import type {
   Block,
   BlockId,
-  CollabAdapter,
   Doc,
   Editor,
   EditorOptions,
+  EditorProps,
   Json,
   Mark,
   MarkType,
   OnSave,
+  Presence,
   RemoteOp,
   Saving,
   Span,
@@ -36,6 +37,8 @@ type Attributes = { [key: string]: string | boolean };
 type Plain = null | boolean | number | string | Plain[] | { [key: string]: Plain };
 type Touched = Map<BlockId, Set<string>>;
 type Cleared = { [key: string]: null };
+type Collab = NonNullable<EditorProps['collab']>;
+type Own = Omit<Presence, 'userId'>;
 
 const ROOM_TIMEOUT_MS = 5_000;
 const markTypes: readonly MarkType[] = [
@@ -48,6 +51,11 @@ const markTypes: readonly MarkType[] = [
   'color',
 ];
 const recordShape = roomSeed.pipe[0];
+const offset = v.pipe(v.number(), v.safeInteger(), v.minValue(0));
+const peerAt = v.pipe(
+  v.strictObject({ blockId: v.string(), field: v.string(), from: offset, to: offset }),
+  v.check(({ from, to }) => from <= to),
+);
 const low = 0x30;
 const high = 0x7a;
 
@@ -162,6 +170,22 @@ const sameParent = (a: Parent, b: Parent) =>
 const before = (a: [string, BlockId], b: [string, BlockId]) =>
   a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
 
+function peersOf(others: ReturnType<Room['getOthers']>, refused: Set<number>): Presence[] {
+  return others.flatMap(({ connectionId, presence }) => {
+    if (presence.at === undefined || presence.at === null) return [];
+    const parsed = v.safeParse(peerAt, presence.at);
+    if (!parsed.success) {
+      if (!refused.has(connectionId)) {
+        refused.add(connectionId);
+        console.error(`Peer ${connectionId} sent a presence outside the schema`);
+      }
+      return [];
+    }
+    refused.delete(connectionId);
+    return [{ userId: `Guest ${connectionId}`, ...parsed.output }];
+  });
+}
+
 function blocksIn(root: LiveObject<LsonObject>): LiveMap<string, Lson> {
   const blocks = root.get('blocks');
   if (!(blocks instanceof LiveMap)) throw new Error('the room has no blocks');
@@ -256,7 +280,7 @@ export function seedOf(doc: Doc, version: Version): RoomSeed {
   return { version, blocks };
 }
 
-export function liveblocksAdapter(room: Room): CollabAdapter {
+export function liveblocksAdapter(room: Room): Collab {
   const snapshot = room.getStorageSnapshot();
   if (snapshot === null) throw new Error('the room storage is not loaded');
   const root: LiveObject<LsonObject> = snapshot;
@@ -574,6 +598,29 @@ export function liveblocksAdapter(room: Room): CollabAdapter {
         stop();
       };
     },
+    onPresence(apply) {
+      let mine: Own | null = null;
+      const refusedPeers = new Set<number>();
+      const send = () => room.updatePresence({ at: mine });
+      const stops = [
+        room.subscribe('others', (others) => apply(peersOf(others, refusedPeers))),
+        room.subscribe('storage-status', (status) => {
+          if (status === 'synchronized') send();
+        }),
+      ];
+      apply(peersOf(room.getOthers(), refusedPeers));
+      return {
+        publish(next) {
+          mine = next;
+          if (room.getStorageStatus() === 'synchronized') send();
+        },
+        stop() {
+          for (const stop of stops) stop();
+          mine = null;
+          send();
+        },
+      };
+    },
     undo() {
       if (!room.history.canUndo()) return false;
       room.history.undo();
@@ -621,7 +668,7 @@ export async function connectRoom(
   markdown: string,
   version: Version,
   { seed, onSave, ...editing }: JoinOptions,
-): Promise<{ readonly collab: CollabAdapter } & Saving> {
+): Promise<{ readonly collab: Collab } & Saving> {
   const { root } = await bounded(room.getStorage(), 'Room storage');
   if (root.get('blocks') === undefined) {
     const page = createEditor(markdown, editing).doc();

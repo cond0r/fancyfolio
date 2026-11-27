@@ -10,6 +10,7 @@ import type {
   Json,
   MarkType,
   NoProps,
+  Presence,
   Registered,
   SafeHref,
   Saving,
@@ -64,13 +65,22 @@ export type BlockChrome = {
 
 export type RenderBlockChrome = (chrome: BlockChrome) => ReactNode;
 
+export type Presenting = {
+  publish(mine: Omit<Presence, 'userId'> | null): void;
+  stop(): void;
+};
+
+export type Collab = CollabAdapter & {
+  readonly onPresence?: (apply: (others: readonly Presence[]) => void) => Presenting;
+};
+
 export type EditorProps = {
   readonly onRender?: (blockId: BlockId) => void;
   readonly renderBlockChrome?: RenderBlockChrome;
   readonly safeHref?: SafeHref;
 } & (
   | { readonly markdown: string; readonly collab?: undefined }
-  | { readonly collab: CollabAdapter; readonly markdown?: undefined }
+  | { readonly collab: Collab; readonly markdown?: undefined }
 ) &
   Saving;
 

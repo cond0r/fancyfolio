@@ -49,6 +49,7 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   let revision = 0;
   const others = atom<readonly Presence[]>([]);
   let connected = true;
+  let receiving = false;
 
   const view: DocView = {
     get ids() {
@@ -137,6 +138,15 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
   }
 
   function receive(ops: readonly RemoteOp[]) {
+    receiving = true;
+    try {
+      applyRemote(ops);
+    } finally {
+      receiving = false;
+    }
+  }
+
+  function applyRemote(ops: readonly RemoteOp[]) {
     for (const op of ops) {
       if ('blockId' in op && view.blocks.get(op.blockId) === undefined) continue;
       const near = op.kind === 'removeBlock' ? neighbours(view, op.blockId) : [];
@@ -295,6 +305,10 @@ export function createEditor(source: string | Doc, options: EditorOptions): Edit
     markdown: check,
     saveState,
     save: persist,
+    get receiving() {
+      return receiving;
+    },
+    others,
     setPresence(next) {
       store.set(others, next);
     },

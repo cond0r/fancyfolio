@@ -17,6 +17,7 @@
   --ff-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.12);
   --ff-fade: 120ms;
   --ff-gutter: 80px;
+  --ff-peer: #7e22ce;
 }
 
 :where([data-ff-editor] [data-block-id][data-selected]) {
@@ -61,6 +62,41 @@
   inset: 0;
   z-index: 1;
   pointer-events: none;
+}
+
+:where([data-ff-presence]) {
+  position: absolute;
+  inset: 0;
+  overflow-x: clip;
+  pointer-events: none;
+}
+
+:where([data-ff-peer]) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  background: var(--ff-peer);
+  pointer-events: none;
+}
+
+:where([data-ff-peer][data-range]) {
+  background: color-mix(in srgb, var(--ff-peer) 20%, transparent);
+  box-shadow: inset 2px 0 var(--ff-peer);
+}
+
+:where([data-ff-peer-label]) {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  border-radius: 4px 4px 4px 0;
+  padding: 0 4px;
+  background: var(--ff-peer);
+  color: #fff;
+  font:
+    600 11px / 16px system-ui,
+    sans-serif;
+  white-space: nowrap;
 }
 
 :where([data-ff-editor] [data-field]:focus) {

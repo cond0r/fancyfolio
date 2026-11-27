@@ -78,8 +78,13 @@ afterEach(() => {
 afterAll(async () => {
   vi.restoreAllMocks();
   const query = rows(drizzle(auth));
+  await query(sql`
+    delete from rate_limits
+    where key like '203.0.113.18_|%'
+      or key like '%.inv@example.test|%'
+      or split_part(key, '|', 1) in (select id::text from users where email like '%.inv@example.test')
+  `);
   await query(sql`delete from users where email like '%.inv@example.test'`);
-  await query(sql`delete from rate_limits where key like '203.0.113.18_|%'`);
   await Promise.all([auth.end(), owner.end()]);
 });
 

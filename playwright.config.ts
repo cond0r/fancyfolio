@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const liveblocks = 'http://localhost:1153';
+const liveblocks = 'http://127.0.0.1:1153';
 
 export default defineConfig({
   testDir: 'tests/e2e',

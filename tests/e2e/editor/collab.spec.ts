@@ -36,7 +36,7 @@ const test = base.extend<{ peers: Peers }>({
     const contexts = [await browser.newContext({ baseURL }), await browser.newContext({ baseURL })];
     const [a, b] = await Promise.all(contexts.map((context) => context.newPage()));
     if (a === undefined || b === undefined) throw new Error('the peers have no pages');
-    await b.routeWebSocket(/localhost:1153/, (page) => {
+    await b.routeWebSocket(/:1153\//, (page) => {
       const server = page.connectToServer();
       server.onMessage((message) => {
         if (held === undefined) page.send(message);

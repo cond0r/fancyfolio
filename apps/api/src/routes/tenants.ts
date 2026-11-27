@@ -3,6 +3,7 @@ import { profiles, tenants } from '@fancyfolio/db';
 import { Hono } from 'hono';
 import { auth, underAccountLimit } from '../auth.ts';
 import { db } from '../db.ts';
+import { invalidates } from '../middleware/invalidate.ts';
 import { requireSession, type SessionEnv } from '../middleware/session.ts';
 import { creates, jsonBody, refuse } from '../shell.ts';
 
@@ -48,6 +49,7 @@ export const tenantsRoute = new Hono<SessionEnv>().post(
       return refuse(c, 429);
     const claimed = await claimSite(userId, c.req.valid('json').subdomain);
     if ('conflict' in claimed) return refuse(c, 409, claimed.conflict);
+    invalidates(c, `tenant:${claimed.tenant.id}`, `site:${claimed.tenant.subdomain}`);
     return c.json(claimed.tenant, 201);
   },
 );

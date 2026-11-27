@@ -3,6 +3,7 @@ import { and, eq, type SQL, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Context } from 'hono';
 import { db } from '../db.ts';
+import { invalidates } from '../middleware/invalidate.ts';
 import type { SessionEnv } from '../middleware/session.ts';
 import { errorCode } from '../shell.ts';
 
@@ -13,9 +14,11 @@ export function asOwner<T>(
   c: Context<SessionEnv>,
   fn: (tx: TenantTransaction, tenantId: string) => Promise<T>,
 ): Promise<T | null> {
-  return db.withTenant({ kind: 'user', userId: c.get('user').id }, async (tx, tenantId) =>
-    tenantId === null ? null : fn(tx, tenantId),
-  );
+  return db.withTenant({ kind: 'user', userId: c.get('user').id }, async (tx, tenantId) => {
+    if (tenantId === null) return null;
+    invalidates(c, `tenant:${tenantId}`);
+    return fn(tx, tenantId);
+  });
 }
 
 export function busyOnLockTimeout(error: unknown): 'busy' {

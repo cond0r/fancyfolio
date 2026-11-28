@@ -182,7 +182,9 @@ export function bindChrome(
   }
 
   const unsubscribe = store.sub(editor.selection, () => {
-    if (root.contains(document.activeElement)) overlay.set({ selected: focused() });
+    if (!editor.receiving && root.contains(document.activeElement)) {
+      overlay.set({ selected: focused() });
+    }
   });
   return () => {
     controller.abort();

@@ -160,11 +160,17 @@ export function bindField(field: HTMLElement, editor: Editor, blockId: BlockId, 
   };
   show();
   const root = field.closest<HTMLElement>('[data-ff-editor]');
-  const selection = editor.store.get(editor.selection);
-  const focused = root?.contains(field.ownerDocument.activeElement) ?? false;
-  const mine = selection.kind === 'text' && selection.blockId === blockId;
-  if (root !== null && focused && mine && selection.field === name) place(root, selection);
-  return editor.store.sub(block, show);
+  const keep = (focused: boolean) => {
+    const selection = editor.store.get(editor.selection);
+    const mine = selection.kind === 'text' && selection.blockId === blockId;
+    if (root !== null && focused && mine && selection.field === name) place(root, selection);
+  };
+  keep(root?.contains(field.ownerDocument.activeElement) ?? false);
+  return editor.store.sub(block, () => {
+    show();
+    // Remote apply writes the remapped selection only after the block.
+    queueMicrotask(() => keep(field.ownerDocument.activeElement === field));
+  });
 }
 
 export function deleteBlock(root: HTMLElement, editor: Editor, blockId: BlockId): void {

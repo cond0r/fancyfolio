@@ -74,6 +74,7 @@ export type {
   SaveOutcome,
   SaveResult,
   SaveState,
+  Saving,
   Source,
   Span,
   Stored,

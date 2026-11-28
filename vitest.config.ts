@@ -1,10 +1,14 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 
-const authEnv = {
+const revalidateEnv = { REVALIDATE_SECRET: 'unused-revalidate-secret-Z7-0123456789abcdef' };
+
+const apiEnv = {
   AUTH_DATABASE_URL: 'postgres://ff_auth:unused-password-Z7@127.0.0.1:1/fancyfolio',
   BETTER_AUTH_SECRET: 'unused-auth-secret-Z7-0123456789abcdef',
   BETTER_AUTH_URL: 'http://localhost:3200',
   CLIENT_IP_HEADER: 'x-forwarded-for',
+  WEB_URL: 'http://127.0.0.1:1',
+  ...revalidateEnv,
 };
 
 export default defineConfig({
@@ -22,7 +26,7 @@ export default defineConfig({
           env: {
             DATABASE_URL: 'postgres://ff_app:unused-password-Z7@127.0.0.1:1/fancyfolio',
             ROOT_DOMAIN: 'fancyfolio.test',
-            ...authEnv,
+            ...apiEnv,
           },
         },
       },
@@ -34,7 +38,9 @@ export default defineConfig({
           css: { include: [/palette\.css/] },
         },
       },
-      { test: { name: 'web', root: 'apps/web', include: ['test/**/*.test.ts'] } },
+      {
+        test: { name: 'web', root: 'apps/web', include: ['test/**/*.test.ts'], env: revalidateEnv },
+      },
       {
         test: {
           name: 'db',
@@ -42,7 +48,7 @@ export default defineConfig({
           include: ['test/**/*.test.ts', '../../apps/api/test/db/**/*.test.ts'],
           globalSetup: ['test/setup.ts'],
           fileParallelism: false,
-          env: { ROOT_DOMAIN: 'fancyfolio.test', ...authEnv },
+          env: { ROOT_DOMAIN: 'fancyfolio.test', ...apiEnv },
         },
       },
     ],

@@ -12,7 +12,7 @@ import { HTTPException } from 'hono/http-exception';
 import { describeRoute, resolver, validator } from 'hono-openapi';
 import * as v from 'valibot';
 
-export type Env = { Variables: { requestId: string } };
+export type Env = { Variables: { requestId: string; tags: string[] | undefined } };
 
 // Hono routes on the decoded path, and its wildcard middleware never matches a decoded newline.
 export function encodedPath(request: Request): string {

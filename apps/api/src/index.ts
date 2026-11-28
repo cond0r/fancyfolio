@@ -4,6 +4,7 @@ import { csrf } from 'hono/csrf';
 import { openAPIRouteHandler } from 'hono-openapi';
 import { auth } from './auth.ts';
 import { env } from './env.ts';
+import { invalidate } from './middleware/invalidate.ts';
 import { ipGuard } from './middleware/ip-guard.ts';
 import { experiencesRoute } from './routes/experiences.ts';
 import { health } from './routes/health.ts';
@@ -42,6 +43,7 @@ const app = new Hono<Env>({ getPath: encodedPath })
   .route('/auth', authRoutes)
   .route('/health', health)
   .use('/v1/*', csrf({ origin: env.BETTER_AUTH_URL }))
+  .use('/v1/*', invalidate)
   .use('/v1/tenants', smallBody)
   .use('/v1/rooms/auth', smallBody)
   .use('/v1/rooms/seed', seedBody)

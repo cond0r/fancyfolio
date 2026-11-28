@@ -5,3 +5,7 @@ export const apiEnv = v.intersect([
   hostEnv,
   v.object({ API_URL: v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//)) }),
 ]);
+
+export const revalidateEnv = v.object({
+  REVALIDATE_SECRET: v.pipe(v.string(), v.regex(/^[\x21-\x7e]{32,}$/)),
+});
